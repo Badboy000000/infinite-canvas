@@ -7,6 +7,8 @@ import urllib.error
 import os
 import re
 import random
+import sys
+import subprocess
 import time
 import shutil
 import asyncio
@@ -173,11 +175,13 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
 OUTPUT_OUTPUT_DIR = os.path.join(ASSETS_DIR, "output")
+ASSET_LIBRARY_DIR = os.path.join(ASSETS_DIR, "library")
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
 API_ENV_FILE = os.path.join(BASE_DIR, "API", ".env")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 CONVERSATION_DIR = os.path.join(DATA_DIR, "conversations")
 CANVAS_DIR = os.path.join(DATA_DIR, "canvases")
+ASSET_LIBRARY_PATH = os.path.join(DATA_DIR, "asset_library.json")
 API_PROVIDERS_FILE = os.path.join(DATA_DIR, "api_providers.json")
 GLOBAL_CONFIG_FILE = os.path.join(BASE_DIR, "global_config.json")
 CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -634,6 +638,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(ASSETS_DIR, exist_ok=True)
 os.makedirs(OUTPUT_INPUT_DIR, exist_ok=True)
 os.makedirs(OUTPUT_OUTPUT_DIR, exist_ok=True)
+os.makedirs(ASSET_LIBRARY_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(WORKFLOW_DIR, exist_ok=True)
 os.makedirs(CONVERSATION_DIR, exist_ok=True)
@@ -667,13 +672,38 @@ def update_allowed_file(path: str) -> bool:
         return False
     return path in {"main.py", "VERSION"} or path.startswith("static/")
 
-def github_json(url: str):
-    req = urllib.request.Request(url, headers={
+# 缓存 GitHub Tree API 响应（含 ETag），减少 60 次/h 限流压力
+GITHUB_TREE_CACHE: Dict[str, Any] = {"etag": "", "data": None, "expires_at": 0.0}
+
+def github_json(url: str, use_etag_cache: bool = False):
+    headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "Infinite-Canvas-Updater",
-    })
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8", errors="replace"))
+    }
+    cache_key = url
+    if use_etag_cache and cache_key == GITHUB_TREE_URL:
+        if GITHUB_TREE_CACHE["data"] and time.time() < GITHUB_TREE_CACHE["expires_at"]:
+            return GITHUB_TREE_CACHE["data"]
+        if GITHUB_TREE_CACHE["etag"]:
+            headers["If-None-Match"] = GITHUB_TREE_CACHE["etag"]
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            etag = resp.headers.get("ETag", "")
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            if use_etag_cache and cache_key == GITHUB_TREE_URL:
+                GITHUB_TREE_CACHE.update({
+                    "etag": etag,
+                    "data": payload,
+                    "expires_at": time.time() + 600,  # 10 分钟内复用
+                })
+            return payload
+    except urllib.error.HTTPError as exc:
+        # 304 表示对方树未变，沿用缓存
+        if exc.code == 304 and use_etag_cache and GITHUB_TREE_CACHE["data"]:
+            GITHUB_TREE_CACHE["expires_at"] = time.time() + 600
+            return GITHUB_TREE_CACHE["data"]
+        raise
 
 def github_bytes(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "Infinite-Canvas-Updater"})
@@ -690,12 +720,72 @@ def safe_update_target(path: str) -> str:
         raise ValueError(f"更新路径不安全：{rel}")
     return target
 
+def schedule_self_restart(delay_seconds: int = 3) -> bool:
+    """派生脱离父进程的小脚本，等几秒后启动启动服务脚本，并干掉当前 PID。"""
+    delay = max(1, int(delay_seconds or 3))
+    pid = os.getpid()
+    try:
+        if os.name == "nt":
+            launcher = os.path.join(BASE_DIR, "启动服务.bat")
+            if not os.path.exists(launcher):
+                launcher = os.path.join(BASE_DIR, "start.bat")
+            bat_path = os.path.join(BASE_DIR, "_self_restart.bat")
+            script = (
+                "@echo off\r\n"
+                "chcp 65001 >nul\r\n"
+                f"timeout /t {delay} /nobreak >nul\r\n"
+                f"taskkill /F /PID {pid} >nul 2>&1\r\n"
+                f"cd /d \"{BASE_DIR}\"\r\n"
+                f"if exist \"{launcher}\" start \"\" \"{launcher}\"\r\n"
+                "del \"%~f0\"\r\n"
+            )
+            with open(bat_path, "w", encoding="utf-8") as f:
+                f.write(script)
+            subprocess.Popen(
+                ["cmd", "/c", bat_path],
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+            )
+        else:
+            launcher = os.path.join(BASE_DIR, "mac-启动服务.command")
+            if not os.path.exists(launcher):
+                launcher = os.path.join(BASE_DIR, "start.sh")
+            sh_path = os.path.join(BASE_DIR, "_self_restart.sh")
+            script = (
+                "#!/bin/sh\n"
+                f"sleep {delay}\n"
+                f"kill -9 {pid} 2>/dev/null\n"
+                f"cd \"{BASE_DIR}\"\n"
+                f"if [ -x \"{launcher}\" ]; then nohup \"{launcher}\" >/dev/null 2>&1 &\n"
+                f"elif [ -f \"{launcher}\" ]; then nohup /bin/sh \"{launcher}\" >/dev/null 2>&1 &\n"
+                "fi\n"
+                "rm -- \"$0\"\n"
+            )
+            with open(sh_path, "w", encoding="utf-8") as f:
+                f.write(script)
+            os.chmod(sh_path, 0o755)
+            subprocess.Popen(
+                ["/bin/sh", sh_path],
+                start_new_session=True,
+                close_fds=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        return True
+    except Exception as exc:
+        logging.exception("schedule_self_restart failed: %s", exc)
+        return False
+
+class UpdateRequest(BaseModel):
+    auto_restart: bool = False
+    restart_delay: int = 3
+
 @app.post("/api/update-from-github")
-def update_from_github():
+def update_from_github(req: UpdateRequest = UpdateRequest()):
     if not UPDATE_LOCK.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="正在更新中，请稍后再试")
     try:
-        tree_data = github_json(GITHUB_TREE_URL)
+        tree_data = github_json(GITHUB_TREE_URL, use_etag_cache=True)
         entries = tree_data.get("tree") or []
         files = []
         for entry in entries:
@@ -723,12 +813,16 @@ def update_from_github():
                 f.write(data)
             os.replace(temp_path, target)
             updated.append(rel)
+        restart_scheduled = False
+        if req.auto_restart and updated:
+            restart_scheduled = schedule_self_restart(req.restart_delay)
         return {
             "ok": True,
             "updated": updated,
             "count": len(updated),
             "backup_dir": backup_root if os.path.exists(backup_root) else "",
             "restart_required": True,
+            "restart_scheduled": restart_scheduled,
         }
     except urllib.error.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"GitHub 下载失败：HTTP {exc.code}") from exc
@@ -736,6 +830,89 @@ def update_from_github():
         raise HTTPException(status_code=502, detail=f"无法连接 GitHub：{exc.reason}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"更新失败：{exc}") from exc
+    finally:
+        UPDATE_LOCK.release()
+
+def list_update_backups() -> List[Dict[str, Any]]:
+    root = os.path.join(DATA_DIR, "update_backups")
+    if not os.path.isdir(root):
+        return []
+    items = []
+    for name in sorted(os.listdir(root), reverse=True):
+        bp = os.path.join(root, name)
+        if not os.path.isdir(bp):
+            continue
+        file_count = 0
+        for _, _, fs in os.walk(bp):
+            file_count += len(fs)
+        try:
+            created_at = os.path.getmtime(bp)
+        except OSError:
+            created_at = 0.0
+        items.append({
+            "name": name,
+            "file_count": file_count,
+            "created_at": created_at,
+        })
+    return items
+
+@app.get("/api/update-backups")
+def get_update_backups():
+    return {"backups": list_update_backups()}
+
+class RollbackRequest(BaseModel):
+    name: str = ""
+    auto_restart: bool = False
+    restart_delay: int = 3
+
+@app.post("/api/update-rollback")
+def rollback_update(req: RollbackRequest):
+    if not req.name:
+        raise HTTPException(status_code=400, detail="缺少备份名称")
+    if not UPDATE_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="正在更新中，请稍后再试")
+    try:
+        backup_root_abs = os.path.abspath(os.path.join(DATA_DIR, "update_backups"))
+        backup_dir = os.path.abspath(os.path.join(backup_root_abs, req.name))
+        if os.path.commonpath([backup_root_abs, backup_dir]) != backup_root_abs:
+            raise HTTPException(status_code=400, detail="备份路径不安全")
+        if not os.path.isdir(backup_dir):
+            raise HTTPException(status_code=404, detail="备份不存在")
+        restored = []
+        skipped = []
+        for dirpath, _, filenames in os.walk(backup_dir):
+            for fn in filenames:
+                src = os.path.join(dirpath, fn)
+                rel = os.path.relpath(src, backup_dir).replace("\\", "/")
+                if not update_allowed_file(rel):
+                    skipped.append(rel)
+                    continue
+                try:
+                    target = safe_update_target(rel)
+                except ValueError:
+                    skipped.append(rel)
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                temp_path = f"{target}.rollback_tmp"
+                with open(src, "rb") as fin, open(temp_path, "wb") as fout:
+                    shutil.copyfileobj(fin, fout)
+                os.replace(temp_path, target)
+                restored.append(rel)
+        restart_scheduled = False
+        if req.auto_restart and restored:
+            restart_scheduled = schedule_self_restart(req.restart_delay)
+        return {
+            "ok": True,
+            "restored": restored,
+            "skipped": skipped,
+            "count": len(restored),
+            "restart_required": True,
+            "restart_scheduled": restart_scheduled,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"回滚失败：{exc}") from exc
     finally:
         UPDATE_LOCK.release()
 
@@ -846,7 +1023,7 @@ class MsGenerateRequest(BaseModel):
 
 class CanvasLLMRequest(BaseModel):
     message: str = Field(min_length=1, max_length=LLM_MESSAGE_MAX_LENGTH)
-    system_prompt: str = "You are a helpful assistant."
+    system_prompt: str = ""
     model: str = ""
     messages: List[Dict[str, Any]] = []
     provider: str = "comfly"
@@ -878,6 +1055,18 @@ class CanvasAssetCheckRequest(BaseModel):
 class CanvasAssetDownloadRequest(BaseModel):
     urls: List[str] = []
     filename: str = "canvas-output-images.zip"
+
+class AssetLibraryCategoryRequest(BaseModel):
+    name: str = "新文件夹"
+    type: str = "image"
+
+class AssetLibraryAddRequest(BaseModel):
+    category_id: str = ""
+    url: str = ""
+    name: str = ""
+
+class AssetLibraryRenameRequest(BaseModel):
+    name: str = ""
 
 # --- 负载均衡 ---
 
@@ -1384,6 +1573,49 @@ def output_file_from_url(url):
     if os.path.commonpath([output_root, path]) != output_root or not os.path.exists(path):
         return None
     return path
+
+def default_asset_library():
+    return {
+        "categories": [
+            {"id": "characters", "name": "角色", "type": "image", "items": []},
+            {"id": "scenes", "name": "场景", "type": "image", "items": []},
+            {"id": "workflows", "name": "工作流", "type": "workflow", "items": []},
+        ],
+        "updated_at": now_ms(),
+    }
+
+def load_asset_library():
+    if not os.path.exists(ASSET_LIBRARY_PATH):
+        lib = default_asset_library()
+        save_asset_library(lib)
+        return lib
+    try:
+        with open(ASSET_LIBRARY_PATH, "r", encoding="utf-8") as f:
+            lib = json.load(f)
+    except Exception:
+        lib = default_asset_library()
+    cats = lib.get("categories") if isinstance(lib.get("categories"), list) else []
+    if not any(c.get("type") == "workflow" for c in cats):
+        cats.append({"id": "workflows", "name": "工作流", "type": "workflow", "items": []})
+    lib["categories"] = cats
+    lib["updated_at"] = int(lib.get("updated_at") or now_ms())
+    return lib
+
+def save_asset_library(lib):
+    lib["updated_at"] = now_ms()
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(ASSET_LIBRARY_PATH, "w", encoding="utf-8") as f:
+        json.dump(lib, f, ensure_ascii=False, indent=2)
+
+def find_asset_category(lib, category_id):
+    for cat in lib.get("categories", []):
+        if cat.get("id") == category_id:
+            return cat
+    return None
+
+def sanitize_asset_name(name, fallback="asset"):
+    name = re.sub(r'[\\/:*?"<>|]+', "_", str(name or fallback)).strip()
+    return name[:120] or fallback
 
 def content_type_for_path(path):
     ext = os.path.splitext(path)[1].lower()
@@ -2737,7 +2969,8 @@ async def canvas_llm(payload: CanvasLLMRequest):
     # 判断协议：APIMart 异步 vs 标准 OpenAI
     _llm_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
     _is_apimart = is_apimart_provider(_llm_provider)
-    upstream_messages = [{"role": "system", "content": payload.system_prompt or SYSTEM_PROMPT}]
+    system_prompt = (payload.system_prompt or "").strip()
+    upstream_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
     for item in payload.messages[-MAX_HISTORY_MESSAGES:]:
         role = item.get("role")
         content = item.get("content")
@@ -2894,6 +3127,94 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
     encoded = urllib.parse.quote(filename)
     headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"}
     return Response(buffer.getvalue(), media_type="application/zip", headers=headers)
+
+@app.get("/api/asset-library")
+async def get_asset_library():
+    return {"library": load_asset_library()}
+
+@app.post("/api/asset-library/categories")
+async def create_asset_library_category(payload: AssetLibraryCategoryRequest):
+    lib = load_asset_library()
+    cat_type = "workflow" if str(payload.type or "").lower() == "workflow" else "image"
+    category = {"id": f"cat_{uuid.uuid4().hex[:12]}", "name": sanitize_asset_name(payload.name, "新文件夹"), "type": cat_type, "items": []}
+    lib.setdefault("categories", []).append(category)
+    save_asset_library(lib)
+    return {"library": lib, "category": category}
+
+@app.patch("/api/asset-library/categories/{category_id}")
+async def rename_asset_library_category(category_id: str, payload: AssetLibraryRenameRequest):
+    lib = load_asset_library()
+    cat = find_asset_category(lib, category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+    cat["name"] = sanitize_asset_name(payload.name, cat.get("name") or "新文件夹")
+    save_asset_library(lib)
+    return {"library": lib, "category": cat}
+
+@app.delete("/api/asset-library/categories/{category_id}")
+async def delete_asset_library_category(category_id: str):
+    lib = load_asset_library()
+    cat = find_asset_category(lib, category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+    if cat.get("type") == "workflow" and category_id == "workflows":
+        raise HTTPException(status_code=400, detail="默认工作流分类不能删除")
+    lib["categories"] = [c for c in lib.get("categories", []) if c.get("id") != category_id]
+    save_asset_library(lib)
+    return {"library": lib}
+
+@app.post("/api/asset-library/items")
+async def add_asset_library_item(payload: AssetLibraryAddRequest):
+    lib = load_asset_library()
+    cat = find_asset_category(lib, payload.category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+    if cat.get("type") != "image":
+        raise HTTPException(status_code=400, detail="该分类暂不支持添加图片")
+    src = output_file_from_url(payload.url)
+    if not src:
+        raise HTTPException(status_code=400, detail="只支持保存本地 /assets 或 /output 图片")
+    ext = os.path.splitext(src)[1].lower() or ".png"
+    if ext not in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:
+        ext = ".png"
+    safe_name = sanitize_asset_name(payload.name or os.path.basename(src), "asset")
+    if not os.path.splitext(safe_name)[1]:
+        safe_name += ext
+    dest_name = f"lib_{uuid.uuid4().hex[:12]}_{safe_name}"
+    dest_path = os.path.join(ASSET_LIBRARY_DIR, dest_name)
+    shutil.copy2(src, dest_path)
+    item = {"id": f"asset_{uuid.uuid4().hex[:12]}", "name": os.path.splitext(safe_name)[0][:120], "url": f"/assets/library/{dest_name}", "created_at": now_ms()}
+    cat.setdefault("items", []).append(item)
+    save_asset_library(lib)
+    return {"library": lib, "item": item}
+
+@app.patch("/api/asset-library/items/{item_id}")
+async def rename_asset_library_item(item_id: str, payload: AssetLibraryRenameRequest):
+    lib = load_asset_library()
+    for cat in lib.get("categories", []):
+        for item in cat.get("items", []):
+            if item.get("id") == item_id:
+                item["name"] = sanitize_asset_name(payload.name, item.get("name") or "asset")
+                save_asset_library(lib)
+                return {"library": lib, "item": item}
+    raise HTTPException(status_code=404, detail="资产不存在")
+
+@app.delete("/api/asset-library/items/{item_id}")
+async def delete_asset_library_item(item_id: str):
+    lib = load_asset_library()
+    removed = None
+    for cat in lib.get("categories", []):
+        keep = []
+        for item in cat.get("items", []):
+            if item.get("id") == item_id:
+                removed = item
+            else:
+                keep.append(item)
+        cat["items"] = keep
+    if not removed:
+        raise HTTPException(status_code=404, detail="资产不存在")
+    save_asset_library(lib)
+    return {"library": lib}
 
 @app.put("/api/canvases/{canvas_id}")
 async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
