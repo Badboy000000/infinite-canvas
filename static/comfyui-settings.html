@@ -509,6 +509,8 @@
         function escapeAttr(s){ return escapeHtml(s); }
         function fieldKind(f){
             if(f.type === 'image') return 'image';
+            if(f.bind_prompt === true) return 'prompt';
+            if(f.bind_prompt === false) return 'setting';
             const key = `${f.input || ''} ${f.name || ''}`.toLowerCase();
             if(f.type === 'textarea' || /prompt|text|提示词|正向|负向/.test(key)) return 'prompt';
             return 'setting';
@@ -730,6 +732,11 @@
             }
             if(key === 'random_enabled'){
                 delete previewRandomActive[fieldId];
+            }
+            if(key === 'bind_prompt'){
+                renderPreview();
+                if(popupNodeId === f.node) refreshPopupBody();
+                return;
             }
             // 改名字 / 类型时不需要整页重渲染，浮窗自身刷新即可
             if(key === 'name' || key === 'min' || key === 'max' || key === 'step' || key === 'default' || key === 'options' || key === 'random_enabled'){
@@ -1096,8 +1103,17 @@
             }
             const friendlyName = inputLabel(inputKey);
             const showOriginal = friendlyName !== inputKey;
+            const promptSlotHint = active && (f.type === 'textarea' || f.type === 'text') ? `
+                <div class="extras-row" style="display:flex;align-items:center;gap:8px;padding-top:6px;border-top:1px dashed var(--line)">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;user-select:none">
+                        <input type="checkbox" ${f.bind_prompt !== false ? 'checked' : ''} onmousedown="event.stopPropagation()" onclick="event.stopPropagation();updateField('${active?f.id:''}','bind_prompt',this.checked?true:false)"
+                            style="width:14px;height:14px;accent-color:var(--text)">
+                        <span>作为画布「提示词连接槽」（关闭后可在画布面板单独编辑此项）</span>
+                    </label>
+                </div>
+            ` : '';
             return `
-                <div class="input-row ${active?'is-active':''} ${showExtras?'has-extras':''}">
+                <div class="input-row ${active?'is-active':''} ${showExtras|| (active && (f.type === 'textarea' || f.type === 'text'))?'has-extras':''}">
                     <div class="check-toggle ${active?'checked':''}" onclick="toggleField('${escapeAttr(nodeId)}','${escapeAttr(inputKey)}')">
                         ${active ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}
                     </div>
@@ -1110,6 +1126,7 @@
                         ${TYPES.map(t=>`<option value="${t.v}" ${active && f.type===t.v?'selected':''}>${typeLabel(t.v)}</option>`).join('')}
                     </select>
                     ${active ? renderExtras(f) : ''}
+                    ${promptSlotHint}
                 </div>
             `;
         }

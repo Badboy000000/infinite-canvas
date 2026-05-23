@@ -4459,6 +4459,8 @@ class WorkflowField(BaseModel):
     max: Optional[float] = None
     step: Optional[float] = None
     options: List[str] = []
+    # None = 自动判断；True = 作为画布提示词槽；False = 面板可调参数
+    bind_prompt: Optional[bool] = None
     random_enabled: bool = False
 
 class WorkflowConfig(BaseModel):

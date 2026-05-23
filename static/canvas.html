@@ -16,12 +16,13 @@
             } catch(e) {}
         })();
     </script>
-    <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.05.22"></script>
-    <script src="/static/vendor/js/lucide.js?v=2026.05.22"></script>
-    <script src="/static/js/theme.js?v=2026.05.22"></script>
-    <script src="/static/js/i18n.js?v=2026.05.22"></script>
+    <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.05.22.1"></script>
+    <script src="/static/vendor/js/lucide.js?v=2026.05.22.1"></script>
+    <script src="/static/js/theme.js?v=2026.05.22.1"></script>
+    <script src="/static/js/i18n.js?v=2026.05.22.1"></script>
+    <script src="/static/ltx-director-timeline.js?v=2026.05.22.1"></script>
     <style>
-        @import url('/static/vendor/css/fonts.css?v=2026.05.22');
+        @import url('/static/vendor/css/fonts.css?v=2026.05.22.1');
         :root { --ease:cubic-bezier(.4,0,.2,1); --page:#f8fafc; --grid:#d9e1ea; --panel:rgba(255,255,255,.92); --card:rgba(255,255,255,.96); --card-solid:#fff; --soft:#f8fafc; --soft-2:#f1f5f9; --line:#e8edf3; --line-2:#cbd5e1; --text:#111827; --muted:#64748b; --faint:#94a3b8; --shadow:rgba(15,23,42,.08); --strong:#111827; --strong-text:#fff; }
         .theme-dark { --page:#0b1020; --grid:rgba(148,163,184,.16); --panel:rgba(17,24,39,.9); --card:rgba(15,23,42,.96); --card-solid:#111827; --soft:#1e293b; --soft-2:#263449; --line:#334155; --line-2:#64748b; --text:#f8fafc; --muted:#cbd5e1; --faint:#94a3b8; --shadow:rgba(0,0,0,.28); --strong:#f8fafc; --strong-text:#0f172a; }
         * { box-sizing:border-box; }
@@ -107,7 +108,8 @@
         .node { position:absolute; min-width:220px; min-height:96px; border:1px solid var(--line); border-radius:22px; background:var(--card); box-shadow:0 16px 42px var(--shadow); overflow:visible; user-select:none; z-index:2; }
         .node::before { content:""; position:absolute; inset:0; border-radius:inherit; background:var(--card); pointer-events:none; z-index:-1; overflow:hidden; }
         .node.sized { display:flex; flex-direction:column; }
-        .node.selected { outline:2px solid var(--strong); outline-offset:2px; }
+        .node.selected { outline:2px solid var(--strong); outline-offset:2px; z-index:10; }
+        .node:hover { z-index:5; }
         .node-head { height:42px; flex:0 0 42px; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 12px; border-bottom:1px solid var(--line); border-radius:21px 21px 0 0; overflow:hidden; cursor:move; }
         .node-title { font-size:11px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
         /* 一键运行级联状态徽章 */
@@ -252,6 +254,22 @@
         .loop-variable-editor.is-disabled .loop-token-chip { opacity:.6; }
         .generator-node { width:380px; }
         .comfy-node { width:420px; height:460px; }
+        .ltxDirector-node,
+        .ltx-director-node { width:1000px; height:800px; }
+        .node.sized.ltxDirector-node .node-body,
+        .node.sized.ltx-director-node .node-body { overflow:hidden; padding:8px 10px 10px; }
+        .node.sized.ltxDirector-node .ltx-director-body,
+        .node.sized.ltx-director-node .ltx-director-body { height:100%; display:flex; flex-direction:column; min-height:0; }
+        .ltx-director-body { display:flex; flex-direction:column; gap:8px; min-height:0; flex:1; }
+        .ltx-params-row { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:6px; flex-shrink:0; }
+        .ltx-params-row .field { display:flex; flex-direction:column; gap:3px; min-width:0; }
+        .ltx-params-row .setting-title { font-size:9px; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+        .ltx-params-row .setting-input { width:100%; height:30px; padding:0 8px; border-radius:10px; border:1px solid var(--line); background:var(--soft); font-size:11px; font-weight:700; color:var(--text); }
+        .ltx-director-timeline-host { flex:1; min-height:0; min-width:0; overflow:hidden; }
+        .ltx-director-timeline-host .pr-wrapper { height:100%; }
+        .ltx-director-timeline-host .pr-viewport { max-height:100%; }
+        .node.sized.ltxDirector-node .gen-run-row,
+        .node.sized.ltx-director-node .gen-run-row { margin-top:auto; flex-shrink:0; }
         .generator-body { min-height:0; }
         .node.sized.generator-node .generator-body { height:100%; display:flex; flex-direction:column; }
         .node.sized.comfy-node .node-body { overflow:hidden; }
@@ -330,12 +348,21 @@
         .output-time-pill { position:absolute; top:7px; right:7px; min-width:38px; height:22px; padding:0 8px; border-radius:999px; display:flex; align-items:center; justify-content:center; background:rgba(17,24,39,.86); color:#fff; font-size:10px; font-weight:900; z-index:3; pointer-events:none; box-shadow:0 6px 18px rgba(15,23,42,.18); }
         .output-time-pill.running { background:rgba(37,99,235,.9); }
         @keyframes spin { to { transform:rotate(360deg); } }
-        .port { position:absolute; top:50%; width:44px; height:44px; border-radius:50%; cursor:crosshair; transform:translateY(-50%); z-index:3; }
-        .port::after { content:""; position:absolute; left:15px; top:15px; width:14px; height:14px; border-radius:50%; border:2px solid #fff; background:#111827; box-shadow:0 0 0 1px #94a3b8; transition:transform .14s var(--ease); }
+        .port { position:absolute; top:50%; width:44px; height:44px; border-radius:50%; cursor:crosshair; transform:translateY(-50%); z-index:8; pointer-events:auto; }
+        .port::after { content:""; position:absolute; left:15px; top:15px; width:14px; height:14px; border-radius:50%; border:2px solid #fff; background:#111827; box-shadow:0 0 0 1px #94a3b8; transition:transform .14s var(--ease); pointer-events:none; }
         .port:hover::after { transform:scale(1.25); }
         .port.in { left:-29px; cursor:crosshair; }
-        .port.out { right:-15px; }
+        .port.out { right:-22px; }
         .node > .port { top:50%; }
+        /* 高大节点：端口固定在标题栏高度，避免落在节点中部难以点击 */
+        .ltxDirector-node > .port,
+        .comfy-node > .port,
+        .generator-node > .port,
+        .msgen-node > .port,
+        .video-node > .port,
+        .llm-node > .port {
+            top:21px;
+        }
         .group-node,.promptGroup-node { min-width:260px; background:rgba(255,255,255,.96); border:1px solid #e8edf3; box-shadow:0 16px 42px rgba(15,23,42,.08); z-index:0; }
         .group-node .node-head,.promptGroup-node .node-head { background:#fff; border-bottom:1px solid #f1f5f9; }
         .llm-node { width:420px; }
@@ -789,7 +816,7 @@
             .gate-list { grid-template-columns:repeat(3, minmax(0, 1fr)); }
         }
     </style>
-    <link rel="stylesheet" href="/static/css/theme.css?v=2026.05.22">
+    <link rel="stylesheet" href="/static/css/theme.css?v=2026.05.22.1">
 </head>
 <body>
     <div id="shell" class="shell no-canvas">
@@ -813,6 +840,7 @@
                     <button class="tool-btn" onclick="addMsGenNode()"><i data-lucide="cloud-lightning" class="w-4 h-4"></i><span data-i18n="canvas.msGenerate">MS生成</span></button>
                     <button class="tool-btn" onclick="addVideoNode()"><i data-lucide="clapperboard" class="w-4 h-4"></i><span data-i18n="canvas.videoGenerate">视频生成</span></button>
                     <button class="tool-btn" onclick="addComfyNode()"><i data-lucide="workflow" class="w-4 h-4"></i>ComfyUI</button>
+                    <button class="tool-btn" onclick="addLTXDirectorNode()"><i data-lucide="film" class="w-4 h-4"></i><span data-i18n="canvas.ltxDirector">LTX Director</span></button>
                     <button class="tool-btn" onclick="addOutputNode()"><i data-lucide="circle-dot" class="w-4 h-4"></i>Output</button>
                     <button class="tool-btn" onclick="groupSelectedImages()"><i data-lucide="group" class="w-4 h-4"></i><span data-i18n="canvas.group">分组</span></button>
                 </div>
@@ -869,6 +897,7 @@
                 <button class="menu-btn" onclick="menuAdd('msgen')"><i data-lucide="cloud-lightning" class="w-4 h-4"></i><span data-i18n="canvas.modelscopeGenerate">Modelscope生成</span></button>
                 <button class="menu-btn" onclick="menuAdd('video')"><i data-lucide="clapperboard" class="w-4 h-4"></i><span data-i18n="canvas.videoGenerateNode">视频生成</span></button>
                 <button class="menu-btn" onclick="menuAdd('comfy')"><i data-lucide="workflow" class="w-4 h-4"></i><span data-i18n="canvas.comfyGenerate">ComfyUI 生成</span></button>
+                <button class="menu-btn" onclick="menuAdd('ltxDirector')"><i data-lucide="film" class="w-4 h-4"></i><span data-i18n="canvas.ltxDirector">LTX Director</span></button>
                 <button class="menu-btn" onclick="menuAdd('output')"><i data-lucide="circle-dot" class="w-4 h-4"></i>Output</button>
             </div>
             <div id="linkCreateMenu" class="create-menu"></div>
@@ -1802,6 +1831,19 @@
                 requestAnimationFrame(refreshGeometry);
             });
         }
+        function stripNodeForPersist(node){
+            if(!node || typeof node !== 'object') return node;
+            const copy = {...node};
+            delete copy._ltxEditor;
+            delete copy._pending;
+            delete copy._cascadeIdx;
+            delete copy._cascadeFailed;
+            if(copy.running) copy.running = false;
+            return copy;
+        }
+        function cloneNodesForPersist(list){
+            return JSON.parse(JSON.stringify((list || []).map(stripNodeForPersist)));
+        }
         function scheduleSave(){
             if(!canvas || applyingRemoteCanvas) return;
             localCanvasDirty = true;
@@ -1853,7 +1895,7 @@
                     body:JSON.stringify({
                         title:canvas.title,
                         icon:canvas.icon || '🧩',
-                        nodes,
+                        nodes:cloneNodesForPersist(nodes),
                         connections,
                         viewport,
                         logs:canvas.logs || [],
@@ -2146,7 +2188,7 @@
         }
         function openSmartCanvasPage(id){
             if(!id) return;
-            window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=2026.05.22`;
+            window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=2026.05.22.1`;
         }
         function toggleEmojiPicker(id, event){
             event?.preventDefault();
@@ -3130,6 +3172,54 @@
                 alert(err.message || tr('canvas.msFailed'));
             }
         }
+        const LTX_DIRECTOR_WORKFLOW = 'LTXDirectorv2-API.json';
+        const LTX_DIRECTOR_WF_NODE = '46';
+        const LTX_DIRECTOR_SEED_NODE = '94:28';
+        const LTX_SEGMENT_COLORS = ['#e07b3a', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#f59e0b'];
+
+        function defaultLTXSegment(start=0, length=120){
+            return {
+                id:uid('ltxseg'),
+                type:'text',
+                prompt:'',
+                start,
+                length,
+                color:LTX_SEGMENT_COLORS[0],
+                strength:1,
+                imageRef:null
+            };
+        }
+        function addLTXDirectorNode(point){
+            const p = point || defaultPoint(180, 0);
+            return addNode({
+                id:uid('ltxdir'),
+                type:'ltxDirector',
+                x:p.x,
+                y:p.y,
+                w:1000,
+                h:800,
+                globalPrompt:'',
+                durationFrames:120,
+                durationSeconds:5,
+                frameRate:24,
+                customWidth:0,
+                customHeight:0,
+                displayMode:'seconds',
+                useCustomAudio:false,
+                imgCompression:18,
+                epsilon:0.001,
+                divisibleBy:32,
+                noiseSeed:12,
+                ltxTimelineData:'',
+                ltxLocalPrompts:'',
+                ltxSegmentLengths:'',
+                ltxGuideStrength:'',
+                ltxSegments:[],
+                ltxSelectedSegId:'',
+                inputs:[],
+                running:false
+            });
+        }
         function addComfyNode(point){
             const p = point || defaultPoint(160, 0);
             return addNode({
@@ -3188,6 +3278,7 @@
                         {type:'generator', label:tr('canvas.apiGenerate'), icon:'wand-sparkles'},
                         {type:'msgen', label:tr('canvas.modelscopeGenerate'), icon:'cloud-lightning'},
                         {type:'comfy', label:tr('canvas.comfyGenerate'), icon:'workflow'},
+                        {type:'ltxDirector', label:tr('canvas.ltxDirector'), icon:'film'},
                         {type:'video', label:tr('canvas.videoGenerateNode'), icon:'clapperboard'},
                         {type:'llm', label:'LLM', icon:'message-square-text'}
                     ];
@@ -3237,6 +3328,7 @@
                     {type:'generator', label:tr('canvas.apiGenerate'), icon:'wand-sparkles'},
                     {type:'msgen', label:tr('canvas.modelscopeGenerate'), icon:'cloud-lightning'},
                     {type:'comfy', label:tr('canvas.comfyGenerate'), icon:'workflow'},
+                    {type:'ltxDirector', label:tr('canvas.ltxDirector'), icon:'film'},
                     {type:'video', label:tr('canvas.videoGenerateNode'), icon:'clapperboard'}
                 ] : [])
             ];
@@ -3476,6 +3568,7 @@
             if(type === 'msgen') return addMsGenNode(point);
             if(type === 'video') return addVideoNode(point);
             if(type === 'comfy') return addComfyNode(point);
+            if(type === 'ltxDirector') return addLTXDirectorNode(point);
             if(type === 'output') return addOutputNode(point);
             return null;
         }
@@ -3489,6 +3582,7 @@
             if(type === 'msgen') addMsGenNode(menuPoint);
             if(type === 'video') addVideoNode(menuPoint);
             if(type === 'comfy') addComfyNode(menuPoint);
+            if(type === 'ltxDirector') addLTXDirectorNode(menuPoint);
             if(type === 'output') addOutputNode(menuPoint);
         }
         async function uploadImages(files, point){
@@ -4481,7 +4575,12 @@
             });
         }
         function isNodeControl(target){
-            return !!target.closest('textarea, input, select, option, button, [contenteditable="true"], .seg, .gen-btn, .comfy-run, .input-item, .blank-image, .mode-tabs, .ms-model-tabs, .llm-provider, .llm-output, .llm-chat-log, .llm-bubble, .llm-pane-resizer, .loop-preview');
+            return !!target.closest('textarea, input, select, option, button, [contenteditable="true"], .seg, .gen-btn, .comfy-run, .input-item, .blank-image, .mode-tabs, .ms-model-tabs, .llm-provider, .llm-output, .llm-chat-log, .llm-bubble, .llm-pane-resizer, .loop-preview, .ltx-director-timeline-host, .pr-wrapper, .pr-toolbar, .pr-viewport, .pr-canvas, .pr-player-controls, .pr-prompt-area');
+        }
+        function destroyLTXEditor(node){
+            if(!node?._ltxEditor) return;
+            try { node._ltxEditor.destroy(); } catch(e) {}
+            node._ltxEditor = null;
         }
         function isNodeDragSurface(target){
             return !isNodeControl(target) && !target.closest('.port, .resize-handle, .output-img-wrap');
@@ -4511,9 +4610,9 @@
                 if(node.type === 'output') openOutputNodeMenu(node.id, e.clientX, e.clientY);
                 else openGeneratorNodeMenu(node.id, e.clientX, e.clientY);
             };
-            const title = node.type === 'image' ? 'Image' : node.type === 'prompt' ? 'Prompt' : node.type === 'loop' ? tr('canvas.loopNode') : node.type === 'promptGroup' ? 'Prompts' : node.type === 'group' ? 'Group' : node.type === 'output' ? 'Output' : node.type === 'llm' ? 'LLM' : node.type === 'comfy' ? 'ComfyUI' : node.type === 'msgen' ? tr('canvas.modelscopeGenerate') : node.type === 'video' ? tr('canvas.videoGenerateNode') : tr('canvas.apiGenerate');
+            const title = node.type === 'image' ? 'Image' : node.type === 'prompt' ? 'Prompt' : node.type === 'loop' ? tr('canvas.loopNode') : node.type === 'promptGroup' ? 'Prompts' : node.type === 'group' ? 'Group' : node.type === 'output' ? 'Output' : node.type === 'llm' ? 'LLM' : node.type === 'comfy' ? 'ComfyUI' : node.type === 'ltxDirector' ? tr('canvas.ltxDirector') : node.type === 'msgen' ? tr('canvas.modelscopeGenerate') : node.type === 'video' ? tr('canvas.videoGenerateNode') : tr('canvas.apiGenerate');
             // 失败徽章只在一键运行模式中显示，单节点失败已通过 alert 提示
-            const showStatus = ['generator','msgen','comfy','llm'].includes(node.type) && node.runStatus
+            const showStatus = ['generator','msgen','comfy','ltxDirector','llm'].includes(node.type) && node.runStatus
                 && (node.runStatus !== 'failed' || node._cascadeFailed);
             const statusHtml = showStatus ? (() => {
                 const label = { queued:'排队中', running:'运行中', done:'完成', failed:'失败' }[node.runStatus] || '';
@@ -4666,6 +4765,7 @@
             if(node.type === 'msgen') body.appendChild(renderMsGenBody(node));
             if(node.type === 'video') body.appendChild(renderVideoBody(node));
             if(node.type === 'comfy') body.appendChild(renderComfyBody(node));
+            if(node.type === 'ltxDirector') body.appendChild(renderLTXDirectorBody(node));
             if(node.type === 'output') {
                 const pendingHtml = (node._pending || []).map(p =>
                     `<div class="output-img-wrap loading-wrap" data-pending-id="${escapeAttr(p.id)}"><span class="output-time-pill running">${formatRunDuration(nowMs() - Number(p.startedAt || nowMs()))}</span><div class="output-spinner"></div><button class="output-del" title="${tr('common.delete')}">×</button></div>`
@@ -4685,18 +4785,25 @@
                 if(e.button !== 0 || !isNodeDragSurface(e.target)) return;
                 startNodeDrag(e, node);
             };
-            const canInput = ['generator','comfy','output','llm','msgen','video'].includes(node.type) || (node.type === 'loop' && (node.imageInput || node.showPrompt));
-            const canOutput = ['image','prompt','loop','group','promptGroup','generator','comfy','llm','msgen','video'].includes(node.type);
+            const canInput = ['generator','comfy','ltxDirector','output','llm','msgen','video'].includes(node.type) || (node.type === 'loop' && (node.imageInput || node.showPrompt));
+            const canOutput = ['image','prompt','loop','group','promptGroup','generator','comfy','ltxDirector','llm','msgen','video'].includes(node.type);
             if(canInput) el.insertAdjacentHTML('beforeend', `<div class="port in" title="${tr('canvas.connectHere')}"></div>`);
             if(canOutput) el.insertAdjacentHTML('beforeend', `<div class="port out" title="${tr('canvas.dragConnect')}"></div>`);
             el.insertAdjacentHTML('beforeend', `<div class="resize-handle" title="${tr('canvas.resize')}"></div>`);
             el.querySelector('.node-head').onmousedown = e => { if(e.button === 0) startNodeDrag(e, node); };
             el.querySelector('.resize-handle').onmousedown = e => { if(e.button === 0 && !e.shiftKey) startNodeResize(e, node); };
             el.ondragstart = e => { e.preventDefault(); e.stopPropagation(); };
-            const out = el.querySelector('.port.out');
-            if(out) out.onmousedown = e => { if(e.button === 0 && !e.shiftKey) startLink(e, node.id, 'out'); };
-            const inp = el.querySelector('.port.in');
-            if(inp) inp.onmousedown = e => { if(e.button === 0 && !e.shiftKey) startLink(e, node.id, 'in'); };
+            const bindNodePort = (portEl, kind) => {
+                if(!portEl) return;
+                portEl.onmousedown = e => {
+                    if(e.button !== 0 || e.shiftKey) return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                    startLink(e, node.id, kind);
+                };
+            };
+            bindNodePort(el.querySelector('.port.out'), 'out');
+            bindNodePort(el.querySelector('.port.in'), 'in');
             return el;
         }
         function bindOutputWrap(wrap, node){
@@ -4797,6 +4904,7 @@
             if(type === 'msgen') return {w:380, h:0};
             if(type === 'video') return {w:400, h:0};
             if(type === 'comfy') return {w:420, h:460};
+            if(type === 'ltxDirector') return {w:1000, h:800};
             if(type === 'output') return {w:460, h:0};
             return {w:260, h:0};
         }
@@ -5973,6 +6081,8 @@
         }
         function comfyFieldKind(f){
             if(f.type === 'image') return 'image';
+            if(f.bind_prompt === true) return 'prompt';
+            if(f.bind_prompt === false) return 'setting';
             const key = `${f.input || ''} ${f.name || ''}`.toLowerCase();
             if(f.type === 'textarea' || /prompt|text|提示词|正向|负向/.test(key)) return 'prompt';
             return 'setting';
@@ -6262,8 +6372,8 @@
             scheduleSave();
         }
 
-        const CANVAS_GENERATOR_TYPES = ['generator','msgen','comfy','video'];
-        const CANVAS_IMAGE_OUTPUT_TYPES = ['generator','msgen','comfy'];
+        const CANVAS_GENERATOR_TYPES = ['generator','msgen','comfy','ltxDirector','video'];
+        const CANVAS_IMAGE_OUTPUT_TYPES = ['generator','msgen','comfy','ltxDirector'];
         function hasExplicitOutputConnection(nodeId){
             return connections.some(c => {
                 if(c.from !== nodeId) return false;
@@ -6402,10 +6512,13 @@
             scheduleSave();
         }
         function syncGeneratorInputs(){
-            nodes.filter(n => ['generator','comfy','msgen','video'].includes(n.type)).forEach(gen => orderedSources(gen, generatorSources(gen)));
+            nodes.filter(n => ['generator','comfy','ltxDirector','msgen','video'].includes(n.type)).forEach(gen => {
+                orderedSources(gen, generatorSources(gen));
+                if(gen.type === 'ltxDirector') ltxSyncConnectedImagesToTimeline(gen);
+            });
         }
         function refreshGeneratorInputViews(){
-            nodes.filter(n => ['generator','comfy','msgen','video'].includes(n.type)).forEach(gen => {
+            nodes.filter(n => ['generator','comfy','ltxDirector','msgen','video'].includes(n.type)).forEach(gen => {
                 const el = nodesEl.querySelector(`.node[data-id="${gen.id}"]`);
                 if(!el) return;
                 const sources = orderedSources(gen, generatorSources(gen));
@@ -6414,6 +6527,7 @@
                 if(gen.type === 'generator') renderImageInputList(el.querySelector('.input-list'), gen, imageInputs);
                 if(gen.type === 'msgen') renderImageInputList(el.querySelector('.ms-img-list'), gen, imageInputs);
                 if(gen.type === 'comfy') renderComfyImages(el.querySelector('.input-list'), gen, imageInputs);
+                if(gen.type === 'ltxDirector') ltxSyncConnectedImagesToTimeline(gen);
                 if(gen.type === 'video') renderVideoImageInputs(el.querySelector('.video-img-list'), gen, imageInputs);
             });
         }
@@ -6623,6 +6737,421 @@
                 ? result.outputs
                 : [...(result.images || []), ...(result.videos || [])];
         }
+
+        function ltxDirectorSelectedSegment(node){
+            const segs = node.ltxSegments || [];
+            if(!segs.length) return null;
+            return segs.find(s => s.id === node.ltxSelectedSegId) || segs[0];
+        }
+        function ltxDirectorSyncSeconds(node){
+            const fps = Math.max(1, Number(node.frameRate) || 24);
+            node.durationSeconds = Math.round((Number(node.durationFrames) || 120) / fps * 1000) / 1000;
+        }
+        function ltxParseTimeline(node){
+            try {
+                const t = JSON.parse(node.ltxTimelineData || '{}');
+                return { segments: Array.isArray(t.segments) ? t.segments : [], audioSegments: Array.isArray(t.audioSegments) ? t.audioSegments : [] };
+            } catch(e) {
+                return { segments: [], audioSegments: [] };
+            }
+        }
+        function ltxRefreshTimelineEditor(node){
+            if(!node?._ltxEditor || typeof window.LTXParseInitial !== 'function') return;
+            node._ltxEditor.timeline = window.LTXParseInitial(node.ltxTimelineData || '{}');
+            node._ltxEditor.loadImages();
+            node._ltxEditor.commitChanges(true);
+            node._ltxEditor.render();
+        }
+        function ltxSyncConnectedImagesToTimeline(node){
+            if(!node || node.type !== 'ltxDirector') return;
+            const sources = orderedSources(node, generatorSources(node));
+            const imageInputs = sources.filter(src => src.refs?.length);
+            const timeline = ltxParseTimeline(node);
+            const fps = Math.max(1, Number(node.frameRate) || 24);
+            const defaultLen = Math.max(6, fps);
+            const manual = (timeline.segments || []).filter(s => !s.canvasSourceId);
+            const existingAuto = new Map((timeline.segments || []).filter(s => s.canvasSourceId).map(s => [s.canvasSourceId, s]));
+            const autoSegs = [];
+            let cursor = 0;
+            for(const src of imageInputs){
+                const ref = src.refs?.[0];
+                const url = ref?.url;
+                if(!url) continue;
+                let seg = existingAuto.get(src.id);
+                if(seg){
+                    if(seg.imageB64 !== url){ seg.imageB64 = url; seg.imageFile = null; delete seg.imgObj; }
+                    if(!seg.length || seg.length < 1) seg.length = defaultLen;
+                } else {
+                    seg = {
+                        id: uid('ltxseg'),
+                        start: cursor,
+                        length: defaultLen,
+                        prompt: src.prompt || '',
+                        type: 'image',
+                        imageB64: url,
+                        canvasSourceId: src.id,
+                        guideStrength: 1
+                    };
+                }
+                seg.start = cursor;
+                cursor += seg.length;
+                autoSegs.push(seg);
+            }
+            let nextStart = cursor;
+            const reflowedManual = [...manual].sort((a, b) => (Number(a.start) || 0) - (Number(b.start) || 0));
+            for(const seg of reflowedManual){
+                seg.start = nextStart;
+                nextStart += Math.max(1, Number(seg.length) || defaultLen);
+            }
+            const allSegs = [...autoSegs, ...reflowedManual];
+            const maxEnd = allSegs.reduce((m, s) => Math.max(m, (Number(s.start) || 0) + (Number(s.length) || 0)), 0);
+            if(maxEnd > (Number(node.durationFrames) || 0)){
+                node.durationFrames = Math.ceil(maxEnd);
+                ltxDirectorSyncSeconds(node);
+            }
+            const prevTimeline = node.ltxTimelineData;
+            node.ltxTimelineData = JSON.stringify({ segments: allSegs, audioSegments: timeline.audioSegments || [] });
+            ltxRefreshTimelineEditor(node);
+            if(node.ltxTimelineData !== prevTimeline) scheduleSave();
+        }
+        function bindLTXParamsRow(container, node){
+            const row = container.querySelector('[data-ltx-params]');
+            if(!row) return;
+            const fps = () => Math.max(1, Number(node.frameRate) || 24);
+            const bindNum = (sel, apply) => {
+                const inp = row.querySelector(sel);
+                if(!inp) return;
+                inp.onmousedown = e => e.stopPropagation();
+                inp.onclick = e => e.stopPropagation();
+                inp.onchange = () => {
+                    apply(inp);
+                    ltxDirectorSyncSeconds(node);
+                    if(node._ltxEditor){
+                        node._ltxEditor.commitChanges(true);
+                        node._ltxEditor.render();
+                    }
+                    scheduleSave();
+                };
+            };
+            const sec = row.querySelector('[data-ltx-duration-seconds]');
+            const frames = row.querySelector('[data-ltx-duration-frames]');
+            const rate = row.querySelector('[data-ltx-frame-rate]');
+            const width = row.querySelector('[data-ltx-width]');
+            const height = row.querySelector('[data-ltx-height]');
+            if(sec) sec.value = Number(node.durationSeconds) || 5;
+            if(frames) frames.value = Number(node.durationFrames) || 120;
+            if(rate) rate.value = Number(node.frameRate) || 24;
+            if(width) width.value = Number(node.customWidth) || 0;
+            if(height) height.value = Number(node.customHeight) || 0;
+            bindNum('[data-ltx-duration-seconds]', inp => {
+                const v = Math.max(0.1, Math.min(1000, parseFloat(inp.value) || node.durationSeconds || 5));
+                node.durationSeconds = Math.round(v * 1000) / 1000;
+                node.durationFrames = Math.max(1, Math.round(node.durationSeconds * fps()));
+                inp.value = node.durationSeconds;
+                if(frames) frames.value = node.durationFrames;
+            });
+            bindNum('[data-ltx-duration-frames]', inp => {
+                node.durationFrames = Math.max(1, Math.min(10000, parseInt(inp.value, 10) || 120));
+                if(sec) sec.value = Math.round((node.durationFrames / fps()) * 1000) / 1000;
+                inp.value = node.durationFrames;
+            });
+            bindNum('[data-ltx-frame-rate]', inp => {
+                node.frameRate = Math.max(1, Math.min(240, parseInt(inp.value, 10) || 24));
+                if(sec) sec.value = Math.round((node.durationFrames / fps()) * 1000) / 1000;
+            });
+            bindNum('[data-ltx-width]', inp => {
+                node.customWidth = Math.max(0, Math.min(8192, parseInt(inp.value, 10) || 0));
+            });
+            bindNum('[data-ltx-height]', inp => {
+                node.customHeight = Math.max(0, Math.min(8192, parseInt(inp.value, 10) || 0));
+            });
+        }
+        function ltxBuildContiguousRelay(node, globalPromptFallback=''){
+            ltxFlushTimelineToNode(node);
+            const durationFrames = Math.max(1, Number(node.durationFrames) || 120);
+            const fallback = (globalPromptFallback || node.globalPrompt || '').trim() || '.';
+            let sortedSegments = [];
+            try {
+                const t = JSON.parse(node.ltxTimelineData || '{}');
+                sortedSegments = [...(t.segments || [])].sort((a, b) => (Number(a.start) || 0) - (Number(b.start) || 0));
+            } catch(e) {}
+            const contiguousLengths = [];
+            const contiguousPrompts = [];
+            let currentCursor = 0;
+            let pendingGap = 0;
+            for(const seg of sortedSegments){
+                const start = Number(seg.start) || 0;
+                const length = Math.max(1, Number(seg.length) || 1);
+                if(start >= durationFrames) break;
+                if(start > currentCursor){
+                    const gapLength = Math.min(start, durationFrames) - currentCursor;
+                    if(contiguousLengths.length > 0){
+                        contiguousLengths[contiguousLengths.length - 1] += gapLength;
+                    } else {
+                        pendingGap += gapLength;
+                    }
+                }
+                const clippedEnd = Math.min(start + length, durationFrames);
+                const clippedLength = clippedEnd - start;
+                contiguousLengths.push(clippedLength + pendingGap);
+                const prompt = (seg.prompt || '').trim();
+                contiguousPrompts.push(prompt || fallback);
+                if(!prompt) seg.prompt = fallback;
+                pendingGap = 0;
+                currentCursor = start + length;
+            }
+            const clampedCursor = Math.min(currentCursor, durationFrames);
+            if(contiguousLengths.length > 0 && clampedCursor < durationFrames){
+                contiguousLengths[contiguousLengths.length - 1] += durationFrames - clampedCursor;
+            }
+            if(!contiguousLengths.length){
+                contiguousLengths.push(durationFrames);
+                contiguousPrompts.push(fallback);
+            }
+            const guideStrength = sortedSegments
+                .filter(s => s.type !== 'text')
+                .map(s => (s.guideStrength !== undefined ? s.guideStrength : 1.0).toFixed(2))
+                .join(',');
+            return {
+                local_prompts: contiguousPrompts.join(' | '),
+                segment_lengths: contiguousLengths.join(','),
+                guide_strength: guideStrength,
+                sortedSegments
+            };
+        }
+        async function ltxDirectorBuildTimelinePayload(node, globalPromptFallback=''){
+            ltxDirectorSyncSeconds(node);
+            let timeline = {segments: [], audioSegments: []};
+            try { timeline = JSON.parse(node.ltxTimelineData || '{}'); } catch(e) {}
+            const relay = ltxBuildContiguousRelay(node, globalPromptFallback);
+            const segments = [...relay.sortedSegments];
+            for(const seg of segments){
+                if(seg.type === 'image' && !seg.imageFile){
+                    const url = seg.imageB64 || '';
+                    if(url){
+                        const fullUrl = url.startsWith('http') ? url : (location.origin + (url.startsWith('/') ? url : '/' + url));
+                        seg.imageFile = await uploadCanvasUrlToComfy(fullUrl);
+                    }
+                }
+                if(seg.imgObj) delete seg.imgObj;
+            }
+            const timelineJson = JSON.stringify({
+                segments,
+                audioSegments: timeline.audioSegments || []
+            });
+            node.ltxLocalPrompts = relay.local_prompts;
+            node.ltxSegmentLengths = relay.segment_lengths;
+            node.ltxGuideStrength = relay.guide_strength;
+            node.ltxTimelineData = timelineJson;
+            return {
+                global_prompt: (globalPromptFallback || node.globalPrompt || '').trim(),
+                duration_frames: Number(node.durationFrames) || 120,
+                duration_seconds: Number(node.durationSeconds) || 5,
+                timeline_data: timelineJson,
+                local_prompts: relay.local_prompts,
+                segment_lengths: relay.segment_lengths,
+                guide_strength: relay.guide_strength,
+                epsilon: Number(node.epsilon) || 0.001,
+                frame_rate: Number(node.frameRate) || 24,
+                use_custom_audio: Boolean(node.useCustomAudio),
+                display_mode: node.displayMode || 'seconds',
+                custom_width: Math.max(0, Number(node.customWidth) || 0),
+                custom_height: Math.max(0, Number(node.customHeight) || 0),
+                resize_method: 'maintain aspect ratio',
+                divisible_by: Math.max(1, Number(node.divisibleBy) || 32),
+                img_compression: Number(node.imgCompression) ?? 18,
+                timeline_ui: ''
+            };
+        }
+        function ltxFlushTimelineToNode(node){
+            if(!node || node.type !== 'ltxDirector') return;
+            if(node._ltxEditor && typeof node._ltxEditor.commitChanges === 'function'){
+                node._ltxEditor.commitChanges(true);
+            }
+        }
+        function ltxDirectorTimelineSegments(node){
+            ltxFlushTimelineToNode(node);
+            if(node?._ltxEditor?.timeline?.segments){
+                return node._ltxEditor.timeline.segments;
+            }
+            try {
+                const t = JSON.parse(node.ltxTimelineData || '{}');
+                return t.segments || [];
+            } catch(e) { return []; }
+        }
+        function clearStuckGeneratorRunning(node){
+            if(!node || !node.running) return;
+            if(cascadeRunningIds.has(node.id) || cascadeSerialIds.has(node.id)) return;
+            node.running = false;
+        }
+        function updateLTXNodeElementSize(node){
+            const el = document.querySelector(`.node[data-id="${node.id}"]`);
+            if(!el) return;
+            if(node.w) el.style.width = `${node.w}px`;
+            if(node.h) el.style.height = `${node.h}px`;
+        }
+        function renderLTXDirectorBody(node){
+            if(typeof ltxMigrateLegacySegments === 'function') ltxMigrateLegacySegments(node);
+            ltxDirectorSyncSeconds(node);
+            if(!node.ltxTimelineData){
+                const len = Math.max(1, Number(node.durationFrames) || 120);
+                node.ltxTimelineData = JSON.stringify({
+                    segments: [{
+                        id: uid('ltxseg'),
+                        start: 0,
+                        length: len,
+                        prompt: '',
+                        type: 'text'
+                    }],
+                    audioSegments: []
+                });
+            }
+
+            const wrap = document.createElement('div');
+            wrap.className = 'ltx-director-body';
+            const sources = orderedSources(node, generatorSources(node));
+            const promptInputs = sources.filter(src => src.prompt && !src.refs?.length);
+            const imageInputs = sources.filter(src => src.refs?.length);
+
+            wrap.innerHTML = `
+                <div class="prompt-list"></div>
+                <div class="ltx-params-row" data-ltx-params>
+                    <label class="field"><span class="setting-title">${tr('canvas.ltxDurationSec')}</span><input class="setting-input" data-ltx-duration-seconds type="number" min="0.1" max="1000" step="0.01"></label>
+                    <label class="field"><span class="setting-title">${tr('canvas.ltxDurationFrames')}</span><input class="setting-input" data-ltx-duration-frames type="number" min="1" max="10000" step="1"></label>
+                    <label class="field"><span class="setting-title">${tr('canvas.ltxFps')}</span><input class="setting-input" data-ltx-frame-rate type="number" min="1" max="240" step="1"></label>
+                    <label class="field"><span class="setting-title">${tr('canvas.width')}</span><input class="setting-input" data-ltx-width type="number" min="0" max="8192" step="32" title="0 = auto"></label>
+                    <label class="field"><span class="setting-title">${tr('canvas.height')}</span><input class="setting-input" data-ltx-height type="number" min="0" max="8192" step="32" title="0 = auto"></label>
+                </div>
+                <div class="ltx-director-timeline-host" data-ltx-timeline-host></div>
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">${tr('canvas.ltxLinkedImages')} · ${imageInputs.length}</div>
+                <div class="input-list mt-1"></div>
+                <div class="gen-run-row">
+                    <button class="comfy-run ltx-run ${node.running ? 'running' : ''}" ${node.running ? 'disabled' : ''}><i data-lucide="film" class="w-4 h-4"></i>${node.running ? tr('canvas.ltxRunning') : tr('canvas.ltxRun')}</button>
+                    ${cascadeBtnHtml(node)}
+                </div>
+                ${retryBarHtml(node)}
+            `;
+
+            renderPromptPreview(wrap.querySelector('.prompt-list'), promptInputs);
+            bindLTXParamsRow(wrap, node);
+            ltxSyncConnectedImagesToTimeline(node);
+            renderComfyImages(wrap.querySelector('.input-list'), node, imageInputs);
+
+            const host = wrap.querySelector('[data-ltx-timeline-host]');
+            if(host && window.CanvasLTXTimelineEditor){
+                if(node._ltxEditor && node._ltxEditor.wrapper){
+                    host.appendChild(node._ltxEditor.wrapper);
+                    node._ltxEditor.container = host;
+                    node._ltxEditor._onCanvasCommit = () => scheduleSave();
+                    node._ltxEditor._onCanvasResize = () => { updateLTXNodeElementSize(node); scheduleSave(); };
+                } else {
+                    destroyLTXEditor(node);
+                    try {
+                        const editor = new window.CanvasLTXTimelineEditor(node, host, null);
+                        editor._onCanvasCommit = () => scheduleSave();
+                        editor._onCanvasResize = () => { updateLTXNodeElementSize(node); scheduleSave(); };
+                        node._ltxEditor = editor;
+                    } catch(err) {
+                        console.error('LTX timeline editor init failed', err);
+                        host.innerHTML = `<div class="text-[11px] text-red-500 p-2">Timeline UI failed to load. Check console.</div>`;
+                    }
+                }
+            }
+
+            const runBtn = wrap.querySelector('.ltx-run');
+            if(runBtn){
+                runBtn.onmousedown = e => e.stopPropagation();
+                runBtn.onclick = e => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    runCanvasGenerate(node.id);
+                };
+            }
+            bindCascadeButtons(wrap, node.id);
+            return wrap;
+        }
+        async function runLTXDirectorNode(nodeId, opts={}){
+            const node = nodes.find(n => n.id === nodeId);
+            if(!node || node.type !== 'ltxDirector') return;
+            clearStuckGeneratorRunning(node);
+            if(node.running && !opts.cascade) return;
+            ltxFlushTimelineToNode(node);
+            const sources = orderedSources(node, generatorSources(node));
+            const upstreamPrompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
+            const globalPrompt = [node.globalPrompt, upstreamPrompt].filter(Boolean).join('\n\n').trim();
+            const segments = ltxDirectorTimelineSegments(node);
+            const hasSegPrompt = segments.some(s => (s.prompt || '').trim());
+            const hasImageSeg = segments.some(s => s.type === 'image' && (s.imageFile || s.imageB64));
+            if(!globalPrompt && !hasSegPrompt && !hasImageSeg){
+                const msg = tr('canvas.needPromptOrImage');
+                setStatus(msg);
+                alert(msg);
+                return;
+            }
+            if(segments.some(s => s.type === 'image' && !s.imageFile && !s.imageB64)){
+                const msg = tr('canvas.ltxImageSegNeedRef');
+                setStatus(msg);
+                alert(msg);
+                return;
+            }
+            ltxDirectorSyncSeconds(node);
+            let out = outputForNode(node, 520);
+            const pendingId = uid('p');
+            const refs = sources.flatMap(s => s.refs || []);
+            const run = runSnapshot(node, globalPrompt || segments.map(s => s.prompt).join(' | '), refs);
+            run.taskLabel = tr('canvas.ltxDirector');
+            if(out) out._pending = [...(out._pending||[]), makePending(pendingId, run)];
+            if(!opts.cascade){
+                node.running = true;
+                refreshRunNodes(node, out);
+                setStatus(tr('canvas.ltxRunning'));
+            } else refreshRunNodes(node, out);
+            try {
+                const directorInputs = await ltxDirectorBuildTimelinePayload(node, globalPrompt);
+                const params = {
+                    [LTX_DIRECTOR_WF_NODE]: directorInputs,
+                    [LTX_DIRECTOR_SEED_NODE]: {noise_seed: Number(node.noiseSeed ?? 12)}
+                };
+                const result = await fetch('/api/generate', {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({
+                        prompt: globalPrompt,
+                        workflow_json: LTX_DIRECTOR_WORKFLOW,
+                        params,
+                        type:'ltx-director',
+                        client_id: CLIENT_ID
+                    })
+                }).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, tr('canvas.ltxFailed'))); return r.json(); });
+                run.request = requestMetaFromResult(result);
+                if(result.error) throw new Error(result.error);
+                const outputs = comfyResultOutputs(result);
+                if(!outputs.length) throw new Error(tr('canvas.ltxNoOutput'));
+                const meta = {runMs:0, run};
+                if(out) out._pending = (out._pending||[]).filter(p => p.id !== pendingId);
+                appendOutputImages(out, outputs, refs[0], [meta]);
+                mergeGeneratedOutputs(node, outputs, Boolean(opts.cascade));
+                addGenerationLog({run, outputs, runMs:0});
+                node.runStatus = 'done';
+                node.runError = '';
+                refreshRunNodes(node, out);
+                scheduleSave();
+            } catch(err){
+                if(out) out._pending = (out._pending||[]).filter(p => p.id !== pendingId);
+                addGenerationLog({run, outputs:[], runMs:0, error:err.message || String(err)});
+                node.runStatus = 'failed';
+                node.runError = err.message || String(err);
+                refreshRunNodes(node, out);
+                if(opts.cascade) throw err;
+                alert(err.message || tr('canvas.ltxFailed'));
+            } finally {
+                if(!opts.cascade){
+                    node.running = false;
+                    refreshRunNodes(node, out);
+                }
+            }
+        }
+
         async function runComfyNode(nodeId, opts={}){
             const node = nodes.find(n => n.id === nodeId);
             if(!node || (node.running && !opts.cascade)) return;
@@ -6911,6 +7440,7 @@
             if(node.type === 'generator') return runGenerator(node.id, runOpts);
             if(node.type === 'msgen') return runMsGenNode(node.id, runOpts);
             if(node.type === 'comfy') return runComfyNode(node.id, runOpts);
+            if(node.type === 'ltxDirector') return runLTXDirectorNode(node.id, runOpts);
             if(node.type === 'llm') return runLLMNode(node.id, runOpts);
             if(node.type === 'video') return runVideoNode(node.id, runOpts);
             return Promise.resolve();
@@ -6938,7 +7468,7 @@
             return Promise.allSettled(workers);
         }
         function canvasRunTypes(){
-            return ['generator','msgen','comfy','llm','video'];
+            return ['generator','msgen','comfy','ltxDirector','llm','video'];
         }
         function canvasWorkflowEdges(){
             const runTypes = canvasRunTypes();
@@ -6989,7 +7519,12 @@
         }
         async function runCanvasGenerate(nodeId){
             const node = nodes.find(n => n.id === nodeId);
-            if(!node || node.running || cascadeRunningIds.has(nodeId)) return;
+            if(!node) return;
+            clearStuckGeneratorRunning(node);
+            if(node.running || cascadeRunningIds.has(nodeId)){
+                setStatus(langIsEn() ? 'This node is already running' : '该节点正在运行中');
+                return;
+            }
             const order = computeConnectedWorkflowOrder(nodeId);
             if(order.length > 1){
                 cascadeRunningIds.add(nodeId);
@@ -7211,6 +7746,7 @@
                     if(node.type === 'generator') await runGenerator(id, {cascade:true});
                     else if(node.type === 'msgen') await runMsGenNode(id, {cascade:true});
                     else if(node.type === 'comfy') await runComfyNode(id, {cascade:true});
+                    else if(node.type === 'ltxDirector') await runLTXDirectorNode(id, {cascade:true});
                     else if(node.type === 'llm') await runLLMNode(id, {cascade:true});
                     else if(node.type === 'video') await runVideoNode(id, {cascade:true});
                     node.runStatus = 'done';
@@ -7279,7 +7815,9 @@
         }
 
         function deleteNode(id, event){
-            event.stopPropagation();
+            event?.stopPropagation?.();
+            const victim = nodes.find(n => n.id === id);
+            destroyLTXEditor(victim);
             pushUndo();
             nodes = nodes.filter(n => n.id !== id);
             connections = connections.filter(c => c.from !== id && c.to !== id);
@@ -7327,7 +7865,7 @@
             return item && typeof item === 'object' ? item : {};
         }
         function runSnapshot(node, prompt, refs=[]){
-            const clone = JSON.parse(JSON.stringify(node || {}));
+            const clone = JSON.parse(JSON.stringify(stripNodeForPersist(node || {})));
             delete clone.running;
             delete clone.runStatus;
             delete clone.runError;
@@ -7351,6 +7889,7 @@
             const node = run?.node || {};
             if(run?.taskLabel) return run.taskLabel;
             if(run?.nodeType === 'comfy') return comfyRunLabel(node);
+            if(run?.nodeType === 'ltxDirector') return tr('canvas.ltxDirector');
             if(run?.nodeType === 'generator') return node.model || 'API Image';
             if(run?.nodeType === 'video') return node.model || 'Video';
             if(run?.nodeType === 'msgen') return node.msCustomModel || node.msgenModel || 'ModelScope';
@@ -7373,6 +7912,7 @@
             if(run?.nodeType === 'msgen') return 'ModelScope';
             if(run?.nodeType === 'video') return providerById(node.apiProvider || 'comfly')?.name || node.apiProvider || 'Video';
             if(run?.nodeType === 'comfy') return 'ComfyUI';
+            if(run?.nodeType === 'ltxDirector') return 'ComfyUI';
             return run?.nodeType || 'Generate';
         }
         function comfyLabelFromWorkflow(workflow){
@@ -8089,7 +8629,7 @@
 
         function pushUndo(){
             if(!canvas) return;
-            undoStack.push({nodes:JSON.parse(JSON.stringify(nodes)), connections:JSON.parse(JSON.stringify(connections))});
+            undoStack.push({nodes:cloneNodesForPersist(nodes), connections:JSON.parse(JSON.stringify(connections))});
             if(undoStack.length > UNDO_MAX) undoStack.shift();
         }
         function performUndo(){
@@ -8102,7 +8642,7 @@
             scheduleSave();
         }
         function cloneNode(n, dx, dy){
-            const copy = JSON.parse(JSON.stringify(n));
+            const copy = JSON.parse(JSON.stringify(stripNodeForPersist(n)));
             copy.id = uid(n.type);
             copy.x = n.x + dx;
             copy.y = n.y + dy;
@@ -8115,7 +8655,7 @@
             if(el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) return;
             const toCopy = [...selected].map(id => nodes.find(n => n.id === id)).filter(Boolean);
             if(!toCopy.length) return;
-            clipboard = JSON.parse(JSON.stringify(toCopy));
+            clipboard = cloneNodesForPersist(toCopy);
         }
         function pasteNodes(){
             if(!canvas || !clipboard?.length) return;
@@ -8252,7 +8792,11 @@
                 tempLink.y2 = p.y;
                 renderLinks();
             };
-            window.onmouseup = e2 => {
+            let linkFinished = false;
+            const finishLink = e2 => {
+                if(linkFinished) return;
+                linkFinished = true;
+                let linked = false;
                 const targetKind = originKind === 'out' ? 'in' : 'out';
                 const targetPort = nearestPort(e2.clientX, e2.clientY, targetKind);
                 const target = targetPort?.closest('.node');
@@ -8265,8 +8809,10 @@
                         syncGeneratorInputs();
                         scheduleSave();
                         render();
+                        linked = true;
                     }
-                } else if(originKind === 'out'){
+                }
+                if(!linked && originKind === 'out'){
                     if(source && CANVAS_GENERATOR_TYPES.includes(source.type)){
                         const p = screenToWorld(e2.clientX, e2.clientY);
                         pushUndo();
@@ -8279,7 +8825,7 @@
                     } else {
                         openLinkCreateMenu(originId, originKind, e2.clientX, e2.clientY);
                     }
-                } else if(originKind === 'in'){
+                } else if(!linked && originKind === 'in'){
                     openLinkCreateMenu(originId, originKind, e2.clientX, e2.clientY);
                 }
                 tempLink = null;
@@ -8287,6 +8833,8 @@
                 window.onmouseup = null;
                 renderLinks();
             };
+            window.onmouseup = finishLink;
+            window.addEventListener('mouseup', finishLink, {once:true, capture:true});
         }
         function nearestPort(clientX, clientY, kind){
             const selector = `.port.${kind}`;
@@ -8369,8 +8917,10 @@
             if(!event?.shiftKey) setKnifeMode(false);
             if(textSelectionGuard) textSelectionGuard.active = false;
             document.body.classList.remove('canvas-node-drag', 'canvas-node-resize', 'canvas-selecting', 'canvas-board-pan');
-            window.onmousemove = null;
-            window.onmouseup = null;
+            if(!tempLink){
+                window.onmousemove = null;
+                window.onmouseup = null;
+            }
             if(shouldRenderKnife) render();
             scheduleMinimapRender();
             scheduleSave();
@@ -8879,9 +9429,12 @@
                 selectionBox.style.display = 'none';
                 selectDrag = null;
                 document.body.classList.remove('canvas-selecting');
-                window.onmousemove = null;
-                window.onmouseup = null;
+                if(!tempLink){
+                    window.onmousemove = null;
+                    window.onmouseup = null;
+                }
             }
+            if(dragNode || resizeNode) endDrag();
         });
         function deleteSelectedNodes(){
             if(!canvas || selected.size === 0) return;
@@ -8897,6 +9450,7 @@
                 }
             };
             selected.forEach(collect);
+            toDelete.forEach(id => destroyLTXEditor(nodes.find(n => n.id === id)));
             nodes = nodes.filter(n => !toDelete.has(n.id));
             connections = connections.filter(c => !toDelete.has(c.from) && !toDelete.has(c.to));
             selected.clear();
