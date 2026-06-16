@@ -2204,11 +2204,11 @@ function renderPromptDetail(item, readonly){
             </div>
             <section class="prompt-block">
                 <div class="prompt-block-head"><span>正向提示词</span><span>${String(item.positive || '').length} 字符</span></div>
-                <div class="prompt-block-body">${escapeHtml(item.positive || '未填写')}</div>
+                <textarea class="prompt-block-body" readonly spellcheck="false">${escapeHtml(item.positive || '未填写')}</textarea>
             </section>
             <section class="prompt-block">
                 <div class="prompt-block-head"><span>负向提示词</span><span>${String(item.negative || '').length} 字符</span></div>
-                <div class="prompt-block-body negative">${escapeHtml(item.negative || '未填写')}</div>
+                <textarea class="prompt-block-body negative" readonly spellcheck="false">${escapeHtml(item.negative || '未填写')}</textarea>
             </section>
             ${params.length ? `<div class="params-list">${params.map(([key, value]) => `<div class="param-row"><strong>${escapeHtml(key)}</strong><span>${escapeHtml(value)}</span></div>`).join('')}</div>` : ''}
         </div>
