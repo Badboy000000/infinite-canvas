@@ -46,7 +46,6 @@ Commercial use is prohibited.
 
 --------
 
-<img width="930" height="1446" alt="4667c56659701b214eedb7c933487a7f" src="https://github.com/user-attachments/assets/7c9a5366-52ed-4f11-a3fd-52a501901c51" />
 
 <img width="2079" height="665" alt="image" src="https://github.com/user-attachments/assets/8469923b-f7a2-403c-9c37-e6e789211f28" />
 
