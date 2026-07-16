@@ -16,12 +16,26 @@ Required entry:
 Infinite Canvas 二开与架构治理项目知识库 Index.md
 ```
 
+Current organization:
+
+- Root keeps only the required Index entry.
+- `00 索引与规范/`: index notes, vault rules, and navigation.
+- `10 架构基线/`: target architecture, gap analysis, roadmap, and engineering rules.
+- `20 现状地图/`: current code facts and module maps.
+- `30 治理方案/`: long-lived governance plans.
+- `40 实施计划/`: implementation plans, PR lists, and issue breakdowns.
+- `50 决策记录/`: formal architecture decisions.
+- `60 讨论记录/`: discussion or review records that still serve as current baseline context.
+- `90 资料归档/`: completed or historical material kept for traceability only.
+
 Before any non-trivial architecture discussion, refactor plan, or code change:
 
 1. Read this file.
 2. Read the required knowledge-base entry.
-3. Follow only links relevant to the current task, preferring index notes before detailed notes.
-4. Inspect the relevant repository files, scripts, tests, configuration, and recent changes.
+3. Follow only links relevant to the current task, preferring `00 索引与规范/` index notes before detailed notes.
+4. Prefer current baseline, maps, governance plans, implementation plans, and decision records over archived material.
+5. Read `90 资料归档/` only when historical traceability or source discussion context is explicitly needed.
+6. Inspect the relevant repository files, scripts, tests, configuration, and recent changes.
 
 Source-of-truth rule:
 
@@ -32,8 +46,8 @@ Source-of-truth rule:
 After meaningful architecture discussion, refactor planning, or implementation work:
 
 - Update the relevant knowledge-base index or note.
-- Put discussion records under `讨论记录/` when needed.
-- Put reference material under `资料归档/` when needed.
+- Put active baseline discussion or review records under `60 讨论记录/` when needed.
+- Put reference material, historical notes, completed source discussions, and other non-current material under `90 资料归档/` when needed.
 - Do not create a separate long-term memory system inside this repository.
 
 ## Work Style
