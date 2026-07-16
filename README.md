@@ -1,6 +1,26 @@
 # Infinite-Canvas
 Supports comfyui/API calls/modelscope calls
 
+## 本仓库运行约定
+
+本仓库当前采用本机 Python/conda 环境运行，不再依赖项目内置的离线便携 Python 目录。推荐使用 Python 3.11 的 conda 虚拟环境：
+
+```powershell
+conda activate 你的环境名
+pip install -r requirements.txt
+python main.py
+```
+
+启动后访问：
+
+```text
+http://127.0.0.1:3000/
+```
+
+真实环境变量文件为 `API/.env`，其中可能包含 API Key、Token、云部署域名等敏感信息，已经加入 `.gitignore`，不会提交到远程仓库。需要新增配置时，请参考 `API/.env.example`，复制为 `API/.env` 后再填写真实值。
+
+如果部署到云服务器，通常不需要改代码：使用 `uvicorn main:app --host 0.0.0.0 --port 3000` 启动服务，再用安全组/Nginx/HTTPS 对外暴露即可。公网多人使用时建议额外增加登录、权限、限流和用户数据隔离。
+
 配套的chrome采集插件已经上线：https://chromewebstore.google.com/detail/infinite-canvas-%E5%9B%BE%E5%83%8F%E8%A7%86%E9%A2%91%E6%96%87%E5%AD%97%E6%8A%93%E5%8F%96%E5%B7%A5/ajfhnbklbmpfaaookhfakohabnpmlcic?authuser=0&hl=en
 
 详细教程：[https://youtu.be/1y9ShTvgC_w](https://youtu.be/r_y_9ALr7fg)

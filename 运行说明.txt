@@ -2,6 +2,26 @@
 智能画布教程：https://www.bilibili.com/video/BV1xAVT6hEBk
 
 
+===当前仓库运行约定===
+
+本仓库当前使用本机 Python/conda 虚拟环境运行，不再依赖项目中的离线便携 python 目录。
+
+推荐方式：
+1. 创建并激活 Python 3.11 conda 环境
+2. 在项目根目录运行：pip install -r requirements.txt
+3. 启动项目：python main.py
+4. 浏览器访问：http://127.0.0.1:3000/
+
+如果要自定义端口，可以使用：
+uvicorn main:app --host 0.0.0.0 --port 3000
+
+真实环境变量文件是 API/.env，里面可能包含 API Key、Token、云服务器域名等敏感信息，不要提交到远程仓库。
+本仓库已提供 API/.env.example 作为示例模板，需要配置时复制为 API/.env 后填写真实值。
+
+云服务器部署时通常不需要改代码，只需要配置 Python 环境、API/.env、开放端口，并用 Nginx/HTTPS 反向代理即可。
+如果要公网多人使用，建议额外增加登录鉴权、限流、用户数据隔离，避免共享 API Key 被滥用。
+
+
 1. API网站注册：
 https://apimart.ai/zh/register?aff=1uyAbb
 （国内：https://apib.ai/register?aff=1uyAbb）
