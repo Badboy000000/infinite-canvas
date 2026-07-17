@@ -155,7 +155,7 @@ asyncio.run(r())"`
   - 末条：`tests/task/` 全绿（3 个测试文件 · 48 项 = `test_migration_0001.py` 5 项 + `test_metadata_singleton.py` 3 项 + `test_store_contract.py` 40 项含 memory/sqlite 参数化）。
 - 关联事实：**首个真 Alembic revision** = `0001_task_layer`（`down_revision=None`）；5 张表主键 `UUID`，`task_events.id` 破例 `BIGINT AUTOINCREMENT`（SQLite 侧走 `INTEGER PRIMARY KEY` 快路径）；4 类必备索引 `(status, updated_at)` / `(idempotency_key)` UNIQUE / `(canvas_id, node_id)` / `(provider_id, upstream_task_id)` 全部就位；Store 端口签名冻结（六类接口：CRUD / CAS / lease / heartbeat / append seq 单调 / recovery scan）；`main.py` 零改动；`openapi_diff.py --baseline` exit=0；`base.metadata.tables` 从 0 → 5 表（数据 PR-1 起点为空）。归属：任务 PR-0（Wave 2）。
 
-## 20. RequestValidationError handler 短期兜底（PR-BE-12，承接编号 BE-20）
+## 21. RequestValidationError handler 短期兜底（PR-BE-12，承接编号 BE-20）
 
 - 命令：
   - `curl -s -D /tmp/be20_headers.txt -X PUT http://127.0.0.1:3000/api/providers -H 'Content-Type: application/json' -d '{"providers":[{"id":"__smoke_be20__","name":"smoke","protocol":"openai","api_key":"sk-TEST-DO-NOT-LOG-e2e"}]}'`
@@ -167,7 +167,7 @@ asyncio.run(r())"`
   - 末条：`pytest tests/api/test_validation_error_handler.py -v` **9 项全绿**（1 CB-02 主场景 + 1 客户端提供 X-Request-Id 回显 + 2 其它路由 422 剔除 + 1 正确 shape bypass + 4 参数化 dict/list/bare/none 场景）。
 - 关联事实：新增 `app/api/errors.py` `validation_error_handler`；`main.py` L145-155（middleware 注册块之后）追加 `app.add_exception_handler(RequestValidationError, validation_error_handler)`；`main.py:777` 旧 inline handler 已下线；`main.py:751-767` 的 `friendly_validation_error` helper 保留（新 handler 懒 import 复用）；`main.py:356-478` 冻结区间零触碰；`openapi_diff.py --baseline` exit=0（FastAPI 默认不在 OpenAPI spec 中详细描述 422 响应 body shape，本 PR 修改 body 结构不进 schema diff）。归属：PR-BE-12（承接 [[70 开发过程跟踪/缺陷追踪/CB-02 - PUT providers 422 error 回显 request body 含密钥]] 短期兜底）。
 
-> **§20 编号说明**：§20 承接协调纲要 §保活烟测 中的 BE-20（PR-BE-12）。BE-18（任务 PR-0）与 §20 触碰面不重叠可并发合入：若任务 PR-0 与本 PR 同批合入且抢先占用 §20，本项顺延到 §21。
+> **§21 编号说明**：§21 承接协调纲要 §保活烟测 中的 BE-20（PR-BE-12）。**Wave 2 收官时 Lead 独立核对（2026-07-17）**：任务 PR-0 与 PR-BE-12 两个并发 subagent 各自将自己列为 §20；Lead 收官时依据 §20 编号说明中的"若并发的任务 PR-0 subagent 抢先占 §20 则本项顺延到 §21"约定，把 PR-BE-12 从 §20 顺延到 §21（任务 PR-0 保持 §20，因其承接的 BE-18-task 与业务口径 BE-18 强绑定不宜移动）。§20 与 §21 命令段完全不冲突，只是文档序号。KB 镜像 [[90 资料归档/后端保活烟测清单模板]] 已同步 `diff -q` exit=0。
 
 ---
 
