@@ -1,0 +1,9 @@
+# Alembic versions 目录（数据 PR-1）
+#
+# 本目录初始为空——数据 PR-1 只落脚手架，不定义任何表。
+# 后续 PR（权限 PR-1、数据 PR-3、任务 PR-0 等）在此目录追加
+# `{revision}_{slug}.py` 迁移脚本。命名规则详见
+# [[50 决策记录/决策 - ORM 与迁移工具选型]] 使用规范 §4：
+# `0001_baseline`、`0002_baseline_tables`、`0003_canvas_revision` ...
+#
+# `.gitkeep` 确保空目录仍被 git 追踪，避免 checkout 后 Alembic 找不到目录。

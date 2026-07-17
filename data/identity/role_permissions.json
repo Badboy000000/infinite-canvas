@@ -1,0 +1,5 @@
+{
+  "_schema_version": 1,
+  "_note": "PR-0 只落空 map。权限动作矩阵（role → action → bool）由权限 PR-4 承接，届时按 [[用户团队权限治理方案]] §权限动作 填 canvas.read / canvas.write / canvas.delete / project.manage / provider.use / provider.manage_credentials / file.download / file.delete / workspace.manage_members / audit.read 等 action 键。",
+  "role_permissions": {}
+}

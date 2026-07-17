@@ -1,0 +1,5 @@
+-- baseline: no tables at this point
+-- 数据 PR-1 起点。本文件仅作事实性记录：Alembic 首次 `upgrade head` 时，
+-- 数据库内除 `alembic_version` 系统表外，**没有任何业务表**。业务表由后续
+-- PR（权限 PR-1、数据 PR-3、任务 PR-0 等）追加迁移到 `versions/` 目录。
+-- 参考：[[50 决策记录/决策 - ORM 与迁移工具选型]] 使用规范 §4。

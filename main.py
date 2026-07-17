@@ -1,3 +1,55 @@
+# --- PR-BE-01 facade 桥 -----------------------------------------------------
+# 建立 `app/` 骨架后，通过下面这一行把 FastAPI 工厂入口暴露给未来的调用方
+# （例如 `uvicorn app.main:app` 或独立脚本 `from app.factory import create_app`）。
+# 本 import 无模块级副作用：`app.factory.create_app()` 内部才会懒 `import main`
+# 并返回本文件下方创建的 `app` 实例，保证 0 行为改动。详见
+# [[40 实施计划/后端模块化治理实施计划与PR清单]] PR-BE-01。
+from app.factory import create_app  # noqa: F401  # facade re-export, 不在此处调用
+# --- 数据模型治理 PR-0 Store facade 桥 --------------------------------------
+# 路由层通过下面九个 Store facade 调用 JSON 读写函数，实现之后 DB 切换点。
+# 每个 store 内部懒 `import main` 委派到本文件下方 15 个 helper（保留不动）。
+# 详见 [[40 实施计划/数据模型治理实施计划与PR清单]] PR-0。
+from app.stores import (  # noqa: E402  # facade bridge, 必须在 create_app 之后
+    asset_library_store,
+    canvas_store,
+    conversation_store,
+    history_store,
+    project_store,
+    prompt_library_store,
+    provider_config_store,
+    storage_settings_store,
+    workflow_store,
+)
+# --- PR-BE-02 RequestContext middleware 桥 ---------------------------------
+# 只 import 类型，`main.py` 下方 `app = FastAPI()` 之后的 `app.add_middleware`
+# 调用点使用；必须作为**最后一次** `add_middleware` 调用（Starlette 语义：
+# `user_middleware.insert(0, ...)`，最后添加者 = 最外层），确保成为最外层
+# middleware 包裹所有请求。
+from app.api.context import RequestContextMiddleware  # noqa: E402,F401
+# --- PR-BE-03 Settings / PathResolver wrapper facade ------------------------
+# 只读 wrapper 桥：把根 `main.py` 22 个路径常量 + `current_*_dir()` 读时求值
+# 三件套 + `ensure_runtime_config_files` / `load_env_file` 启动 helper 暴露为
+# `app/shared/settings` 包对外的稳定接口。本 import 无模块级副作用：wrapper
+# 内部 `import main` 是懒 import，返回的 `Settings` 每次现读、`PathResolver`
+# 三个 `current_*_dir` 方法直接代理到本文件下方的 accessor（`main.py:342-351`），
+# 严格保留读时求值语义。本 PR 不改任何原常量 / helper / 冻结区间。详见
+# [[40 实施计划/后端模块化治理实施计划与PR清单]] PR-BE-03。
+from app.shared.settings import (  # noqa: E402,F401
+    PathResolver,
+    RuntimeConfigBootstrap,
+    Settings,
+    get_settings,
+)
+# --- 数据模型治理 PR-1 SQLAlchemy Core + Alembic 脚手架 facade -------------
+# 仅 re-export `app.db.engine` 模块，不触发 engine 构造（内部懒 init）。本 PR
+# 起 `python main.py migrate [head|<rev>]` CLI 子命令通过此 facade 调
+# `app.db.engine.run_migrations(...)`；本 PR 不接入任何业务 store / route /
+# middleware。数据库路径来源统一走 `get_settings().data_db_path`（读时求值），
+# 禁止 `os.getenv` 或字面常量。详见
+# [[40 实施计划/数据模型治理实施计划与PR清单]] PR-1、
+# [[50 决策记录/决策 - ORM 与迁移工具选型]]。
+from app.db import engine as _db_engine  # noqa: E402,F401  # facade re-export
+# ---------------------------------------------------------------------------
 import json
 import uuid
 import base64
@@ -74,6 +126,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# PR-BE-02：`RequestContextMiddleware` 必须成为 Starlette 中间件栈的**最外层**，
+# 确保所有请求（含 CORS 处理的 OPTIONS 预检、以及任何后续 middleware 抛出的
+# 早期异常路径）都被 `X-Request-Id` 包裹。Starlette 语义：`add_middleware`
+# 内部 `user_middleware.insert(0, ...)`，故**最后添加者**是最外层——本行必须
+# 保持在其他 `app.add_middleware(...)` 调用之后。
+app.add_middleware(RequestContextMiddleware)
 
 # --- WebSocket 状态管理器 ---
 class ConnectionManager:
@@ -246,6 +305,13 @@ LOCAL_IMAGE_IMPORT_MAX_BYTES = int(os.getenv("LOCAL_IMAGE_IMPORT_MAX_BYTES", str
 LOCAL_IMAGE_IMPORT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 RUNNINGHUB_THUMBNAIL_EXTS = (".jpg",)
 STORAGE_SETTINGS_FILE = os.path.join(DATA_DIR, "storage_settings.json")
+# 数据 PR-1：SQLite 数据库文件路径。默认 `data/app.db`；env `DATA_DB_PATH`
+# **仅在启动时**作为锚点覆盖（供烟测/CI 隔离用），运行时的"读时求值"由
+# `app.db.engine.get_database_url()` 走 `get_settings().data_db_path`。
+# 详见 [[40 实施计划/数据模型治理实施计划与PR清单]] PR-1、
+# [[50 决策记录/决策 - ORM 与迁移工具选型]] 使用规范 §3（引擎参数）。
+_DATA_DB_PATH_ENV = os.environ.get("DATA_DB_PATH")
+DATA_DB_PATH = _DATA_DB_PATH_ENV if _DATA_DB_PATH_ENV else os.path.join(DATA_DIR, "app.db")
 DEFAULT_STORAGE_DIRS = {
     "upload": OUTPUT_INPUT_DIR,
     "generated": OUTPUT_OUTPUT_DIR,
@@ -261,7 +327,34 @@ def _storage_abs_path(value, fallback):
         text = os.path.join(BASE_DIR, text)
     return os.path.abspath(text)
 
+# --- PR-0 (文件对象与 MinIO 治理): 存储目录读时求值 --------------------------
+# 历史版本在 `apply_storage_settings` 内直接改写 `OUTPUT_INPUT_DIR /
+# OUTPUT_OUTPUT_DIR / LOCAL_UPLOAD_DIR` 三个 module 级 global，导致
+# `uvicorn --workers >1` 或 gunicorn 多 worker 时只有收到 PATCH 的 worker
+# 生效、其它 worker 拿到旧路径。PR-0 将其改为**读时求值**：
+#   - `load_storage_settings()`         保持 dict shape 冻结（GET/PATCH 契约）
+#   - `storage_settings_snapshot()`     返回不可变 dataclass（内部消费）
+#   - `current_upload_dir/generated_dir/local_dir()` 每次现读文件 + env fallback
+# 模块级 OUTPUT_* 全局仅保留为**启动 makedirs 兜底与默认值锚点**（不再运行时改写、
+# 也不再被运行时读取）；运行时路径统一走上述 accessor。
+# 详见 [[40 实施计划/文件对象与 MinIO 治理实施计划与PR清单]] PR-0。
+from dataclasses import dataclass as _pr0_dataclass  # 顶部 import 区归 PR-BE-01，此处本地导入
+
+
+@_pr0_dataclass(frozen=True)
+class StorageSettings:
+    upload: str
+    generated: str
+    local: str
+
+
 def load_storage_settings():
+    """现读 `data/storage_settings.json` + env/BASE_DIR fallback。
+
+    返回 dict shape `{"dirs": {upload, generated, local}}` **冻结**（
+    `GET /api/storage-settings` 与 `app.stores.storage_settings_store` facade
+    依赖此形状）。此函数无副作用、幂等；多次调用之间读文件由 OS 页缓存保证廉价。
+    """
     raw = {}
     try:
         if os.path.exists(STORAGE_SETTINGS_FILE):
@@ -275,6 +368,32 @@ def load_storage_settings():
         dirs[key] = _storage_abs_path((raw or {}).get(key), fallback)
     return {"dirs": dirs}
 
+
+def storage_settings_snapshot():
+    """读时求值：返回不可变 `StorageSettings` dataclass。
+
+    多进程一致性依赖此函数每次现读文件；调用侧禁止缓存跨请求结果。
+    """
+    dirs = load_storage_settings().get("dirs") or {}
+    return StorageSettings(
+        upload=dirs.get("upload") or os.path.abspath(DEFAULT_STORAGE_DIRS["upload"]),
+        generated=dirs.get("generated") or os.path.abspath(DEFAULT_STORAGE_DIRS["generated"]),
+        local=dirs.get("local") or os.path.abspath(DEFAULT_STORAGE_DIRS["local"]),
+    )
+
+
+def current_upload_dir():
+    return storage_settings_snapshot().upload
+
+
+def current_generated_dir():
+    return storage_settings_snapshot().generated
+
+
+def current_local_dir():
+    return storage_settings_snapshot().local
+
+
 def save_storage_settings(payload):
     dirs = {}
     for key, fallback in DEFAULT_STORAGE_DIRS.items():
@@ -287,12 +406,27 @@ def save_storage_settings(payload):
     apply_storage_settings(dirs)
     return {"dirs": dirs}
 
+
 def apply_storage_settings(dirs=None):
-    global OUTPUT_INPUT_DIR, OUTPUT_OUTPUT_DIR, LOCAL_UPLOAD_DIR
-    dirs = dirs or load_storage_settings().get("dirs") or {}
-    OUTPUT_INPUT_DIR = dirs.get("upload") or OUTPUT_INPUT_DIR
-    OUTPUT_OUTPUT_DIR = dirs.get("generated") or OUTPUT_OUTPUT_DIR
-    LOCAL_UPLOAD_DIR = dirs.get("local") or LOCAL_UPLOAD_DIR
+    """确保存储目录存在；**不再修改 module 级 global**（PR-0）。
+
+    历史行为改写三个 global（`OUTPUT_INPUT_DIR / OUTPUT_OUTPUT_DIR /
+    LOCAL_UPLOAD_DIR`），在多 worker 场景下只有收到 PATCH 的 worker 生效，
+    其它 worker 沿用启动时值 → 隐性 bug。PR-0 之后本函数仅做 makedirs 兜底，
+    运行时路径由 `storage_settings_snapshot()` 现读保证一致。
+    保留签名与调用点以兼容 `save_storage_settings` 与启动 bootstrap。
+    """
+    if dirs is None:
+        dirs = load_storage_settings().get("dirs") or {}
+    for path in dirs.values():
+        if not path:
+            continue
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as exc:
+            print(f"创建存储目录失败: {path}: {exc}")
+    return dirs
+
 
 apply_storage_settings()
 
@@ -1365,11 +1499,11 @@ def public_provider(provider):
     return item
 
 def public_api_providers():
-    return [public_provider(p) for p in load_api_providers()]
+    return [public_provider(p) for p in provider_config_store.load_api_providers()]
 
 def get_primary_provider_id(providers=None):
     """返回当前首选 provider 的 id；优先 primary=True 的，否则取第一个非 modelscope 的，再次取第一个。"""
-    providers = providers if providers is not None else load_api_providers()
+    providers = providers if providers is not None else provider_config_store.load_api_providers()
     primary = next((p for p in providers if p.get("primary") and p.get("enabled", True)), None)
     if primary:
         return primary["id"]
@@ -1379,7 +1513,7 @@ def get_primary_provider_id(providers=None):
     return providers[0]["id"] if providers else "modelscope"
 
 def get_api_provider(provider_id="comfly"):
-    providers = load_api_providers()
+    providers = provider_config_store.load_api_providers()
     target = (provider_id or "").strip().lower()
     # 兼容旧的 "comfly" 硬编码：若 comfly 不存在或未指定，回退到首选 provider
     if not target or not any(p["id"] == target for p in providers):
@@ -1392,7 +1526,7 @@ def get_api_provider(provider_id="comfly"):
     return provider
 
 def get_api_provider_exact(provider_id: str):
-    providers = load_api_providers()
+    providers = provider_config_store.load_api_providers()
     target = (provider_id or "").strip().lower()
     provider = next((p for p in providers if p["id"] == target), None)
     if not provider:
@@ -3152,7 +3286,7 @@ def new_conversation(user_id, title="新对话"):
         "updated_at": timestamp,
         "messages": [],
     }
-    save_conversation(user_id, conversation)
+    conversation_store.save_conversation(user_id, conversation)
     return conversation
 
 def load_conversation(user_id, conversation_id):
@@ -3230,14 +3364,14 @@ def project_record(p):
 
 def ensure_default_project():
     """保证存在一个“默认项目”，并把没有归属项目的画布迁移进去（一次性、幂等）。"""
-    projects = load_projects()
+    projects = project_store.load_projects()
     changed = False
     if not any(p.get("id") == DEFAULT_PROJECT_ID for p in projects):
         ts = now_ms()
         projects.insert(0, {"id": DEFAULT_PROJECT_ID, "name": "默认项目", "order": 0, "created_at": ts, "updated_at": ts})
         changed = True
     if changed:
-        save_projects(projects)
+        project_store.save_projects(projects)
     return projects
 
 def new_project(name="新项目"):
@@ -3247,7 +3381,7 @@ def new_project(name="新项目"):
     order = max([int(p.get("order") or 0) for p in projects], default=0) + 1
     proj = {"id": uuid.uuid4().hex, "name": clean, "order": order, "created_at": ts, "updated_at": ts}
     projects.append(proj)
-    save_projects(projects)
+    project_store.save_projects(projects)
     return proj
 
 def list_projects():
@@ -3285,7 +3419,7 @@ def new_canvas(title="未命名画布", icon="layers", kind="classic", project=N
         canvas["board_x"] = float(board_x)
     if board_y is not None:
         canvas["board_y"] = float(board_y)
-    save_canvas(canvas)
+    canvas_store.save_canvas(canvas)
     return canvas
 
 def load_canvas(canvas_id):
@@ -4411,7 +4545,7 @@ async def run_codex_cli(prompt, model="", image_paths=None, timeout=None, output
     for path in image_paths:
         args.extend(["--image", path])
     if output_last_message:
-        fd, last_path = tempfile.mkstemp(prefix="codex_last_", suffix=".txt", dir=OUTPUT_OUTPUT_DIR)
+        fd, last_path = tempfile.mkstemp(prefix="codex_last_", suffix=".txt", dir=current_generated_dir())
         os.close(fd)
         args.extend(["--output-last-message", last_path])
     args.append("-")
@@ -4448,7 +4582,7 @@ async def run_codex_cli(prompt, model="", image_paths=None, timeout=None, output
 
 def codex_output_image_files(since_time=0):
     exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-    root = os.path.abspath(OUTPUT_OUTPUT_DIR)
+    root = os.path.abspath(current_generated_dir())
     files = []
     try:
         for name in os.listdir(root):
@@ -4468,7 +4602,7 @@ def codex_output_image_files(since_time=0):
 
 def codex_output_url_from_path(path):
     path = os.path.abspath(str(path or ""))
-    root = os.path.abspath(OUTPUT_OUTPUT_DIR)
+    root = os.path.abspath(current_generated_dir())
     try:
         if os.path.commonpath([root, path]) == root:
             return output_url_for(os.path.basename(path), "output")
@@ -4768,7 +4902,7 @@ async def generate_codex_provider_image_via_gpt_image_2_skill(prompt, size, mode
         attempts.append((["--provider", "openai", "--api-key", fallback_api_key], "openai"))
     last_message = ""
     for attempt_index, (attempt_provider_args, attempt_provider) in enumerate(attempts):
-        out_path = os.path.join(OUTPUT_OUTPUT_DIR, f"gpt_image_2_{uuid.uuid4().hex}.png")
+        out_path = os.path.join(current_generated_dir(), f"gpt_image_2_{uuid.uuid4().hex}.png")
         mode = "edit" if ref_paths else "generate"
         args = [
             exe,
@@ -5189,7 +5323,7 @@ async def generate_gemini_cli_provider_image(prompt, size, model, reference_imag
             f"任务：{prompt}\n\n"
             f"{gemini_cli_image_size_instruction(size, size_context)}\n"
             f"{ref_text}\n\n"
-            f"如果当前 Antigravity CLI/模型支持图片生成或图片编辑，请把最终图片保存到这个本地目录：{OUTPUT_OUTPUT_DIR}\n"
+            f"如果当前 Antigravity CLI/模型支持图片生成或图片编辑，请把最终图片保存到这个本地目录：{current_generated_dir()}\n"
             "文件格式优先 png 或 jpg。只输出最终文件路径和一句简短说明；不要修改项目代码，不要创建额外文档。\n"
             "如果你无法真正创建图片文件，请在 60 秒内直接回复“无法生成图片文件”，不要只写计划，也不要持续尝试。"
         )
@@ -5829,7 +5963,7 @@ def jimeng_local_output_url(path, kind="image"):
     path = os.path.abspath(str(path or ""))
     if not os.path.isfile(path):
         return ""
-    output_root = os.path.abspath(OUTPUT_OUTPUT_DIR)
+    output_root = os.path.abspath(current_generated_dir())
     try:
         if os.path.commonpath([output_root, path]) == output_root:
             return output_url_for(os.path.basename(path), "output")
@@ -5870,7 +6004,7 @@ async def jimeng_query_result(submit_id, kind="image"):
     args = [
         "query_result",
         f"--submit_id={submit_id}",
-        f"--download_dir={jimeng_cli_path_arg(OUTPUT_OUTPUT_DIR)}",
+        f"--download_dir={jimeng_cli_path_arg(current_generated_dir())}",
     ]
     return await run_jimeng_cli(args, timeout=min(300, jimeng_poll_seconds() + 60))
 
@@ -6192,7 +6326,8 @@ async def wait_for_image_task(client, task_id, provider=None):
     raise HTTPException(status_code=504, detail=f"生图任务超时（已等待 {int(timeout)} 秒），task_id={task_id}{extra}")
 
 def output_storage(category="output"):
-    return (OUTPUT_INPUT_DIR, "input") if category == "input" else (OUTPUT_OUTPUT_DIR, "output")
+    snap = storage_settings_snapshot()
+    return (snap.upload, "input") if category == "input" else (snap.generated, "output")
 
 def output_url_for(filename, category="output"):
     folder, subdir = output_storage(category)
@@ -6212,12 +6347,13 @@ def output_path_for(filename, category="output"):
 
 def storage_kind_dir(kind):
     kind = str(kind or "").strip().lower()
+    snap = storage_settings_snapshot()
     if kind == "upload":
-        return os.path.abspath(OUTPUT_INPUT_DIR)
+        return os.path.abspath(snap.upload)
     if kind == "generated":
-        return os.path.abspath(OUTPUT_OUTPUT_DIR)
+        return os.path.abspath(snap.generated)
     if kind == "local":
-        return os.path.abspath(LOCAL_UPLOAD_DIR)
+        return os.path.abspath(snap.local)
     raise HTTPException(status_code=404, detail="未知存储目录")
 
 def storage_file_path(kind, rel):
@@ -6254,11 +6390,35 @@ def output_file_from_url(url):
     rel = rel.lstrip("/")
     if not rel:
         return None
-    roots = [ASSETS_DIR] if clean.startswith("/assets/") else [OUTPUT_OUTPUT_DIR, OUTPUT_DIR]
-    for root in roots:
+    # PR-0 (文件对象与 MinIO 治理) Issue-7 观察项：`/output/` 双根 fallback
+    # 走 `[current_generated_dir(), OUTPUT_DIR]` 顺序尝试。命中即结构化日志
+    # 埋点 `output_double_root_hit`，字段仅登记相对路径与命中的根别名，不落
+    # 绝对路径与 URL query，避免路径穿越信息泄露。一周内聚合后判定 `output/`
+    # 旧目录是否仍存在实际读路径。
+    legacy_output_probe = not clean.startswith("/assets/")
+    if legacy_output_probe:
+        roots = [(current_generated_dir(), "generated"), (OUTPUT_DIR, "legacy_output")]
+    else:
+        roots = [(ASSETS_DIR, "assets")]
+    for root, root_alias in roots:
         path = os.path.abspath(os.path.join(root, rel))
         output_root = os.path.abspath(root)
-        if os.path.commonpath([output_root, path]) == output_root and os.path.exists(path):
+        try:
+            in_root = os.path.commonpath([output_root, path]) == output_root
+        except ValueError:
+            in_root = False
+        if in_root and os.path.exists(path):
+            if legacy_output_probe:
+                # 命中即埋点：`rel` 已由 unquote 后的 URL path 拆得，不含 query；
+                # 不记录 URL 原文与绝对路径，脱敏无穿越信息。
+                logging.getLogger("infinite_canvas.storage").info(
+                    "output_double_root_hit",
+                    extra={
+                        "event": "output_double_root_hit",
+                        "root_alias": root_alias,
+                        "rel_path": rel,
+                    },
+                )
             return path
     return None
 
@@ -6296,7 +6456,7 @@ def storage_file_item(kind, root, path):
 
 @app.get("/api/storage-settings")
 async def get_storage_settings():
-    settings = load_storage_settings()
+    settings = storage_settings_store.load_storage_settings()
     return {
         "dirs": settings["dirs"],
         "defaults": {key: os.path.abspath(value) for key, value in DEFAULT_STORAGE_DIRS.items()},
@@ -6493,9 +6653,10 @@ def local_media_file_by_basename(name: str):
     safe = os.path.basename(urllib.parse.unquote(str(name or "")))
     if not safe:
         return None
+    snap = storage_settings_snapshot()
     roots = [
-        OUTPUT_OUTPUT_DIR,
-        OUTPUT_INPUT_DIR,
+        snap.generated,
+        snap.upload,
         os.path.join(ASSETS_DIR, "output"),
         os.path.join(ASSETS_DIR, "input"),
         os.path.join(ASSETS_DIR, "library"),
@@ -6673,7 +6834,7 @@ def migrate_asset_item_registrations(item):
 def load_asset_library():
     if not os.path.exists(ASSET_LIBRARY_PATH):
         lib = default_asset_library()
-        save_asset_library(lib)
+        asset_library_store.save_asset_library(lib)
         return lib
     try:
         with open(ASSET_LIBRARY_PATH, "r", encoding="utf-8") as f:
@@ -6844,7 +7005,7 @@ ASSET_CLASSIFICATION_DIMENSION_NAMES = {
 }
 
 def _local_upload_classification_path(filename):
-    return os.path.splitext(os.path.join(LOCAL_UPLOAD_DIR, filename))[0] + ".classification.json"
+    return os.path.splitext(os.path.join(current_local_dir(), filename))[0] + ".classification.json"
 
 def _safe_asset_tag(value, limit=24):
     text = re.sub(r"\s+", " ", str(value or "").strip())
@@ -6965,7 +7126,7 @@ def migrate_asset_library_into_dirs():
     """一次性整理：给所有图片分组（含默认的角色/场景）补上真实文件夹，并把仍在 library/ 根目录的
     素材文件搬进各自分组的文件夹、同步更新 URL。幂等：已经在子文件夹里的不动；可安全反复执行。"""
     try:
-        lib = load_asset_library()
+        lib = asset_library_store.load_asset_library()
     except Exception as exc:
         print(f"资产库分组整理：加载失败 {exc}")
         return
@@ -7004,7 +7165,7 @@ def migrate_asset_library_into_dirs():
                     print(f"资产库分组整理：搬运 {fname} 失败 {exc}")
     if changed:
         try:
-            save_asset_library(lib)
+            asset_library_store.save_asset_library(lib)
         except Exception as exc:
             print(f"资产库分组整理：保存失败 {exc}")
 
@@ -7372,7 +7533,7 @@ def normalize_prompt_libraries(data):
 def load_prompt_libraries():
     if not os.path.exists(PROMPT_LIBRARY_PATH):
         data = default_prompt_libraries()
-        return save_prompt_libraries(data)
+        return prompt_library_store.save_prompt_libraries(data)
     try:
         with open(PROMPT_LIBRARY_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -7382,7 +7543,7 @@ def load_prompt_libraries():
         data = default_prompt_libraries()
     normalized = normalize_prompt_libraries(data)
     if normalized.get("active_library_id") != data.get("active_library_id") or normalized.get("libraries") != data.get("libraries"):
-        return save_prompt_libraries(normalized)
+        return prompt_library_store.save_prompt_libraries(normalized)
     return normalized
 
 def save_prompt_libraries(data):
@@ -7394,7 +7555,7 @@ def save_prompt_libraries(data):
     return data
 
 def public_prompt_libraries(data=None):
-    data = normalize_prompt_libraries(data or load_prompt_libraries())
+    data = normalize_prompt_libraries(data or prompt_library_store.load_prompt_libraries())
     return {
         "active_library_id": data.get("active_library_id") or (data.get("libraries") or [{}])[0].get("id") or "system",
         "libraries": data.get("libraries") or [],
@@ -9347,11 +9508,11 @@ def runninghub_local_asset_path(url):
     if text.startswith("/assets/input/") or text.startswith("/input/"):
         clean = urllib.parse.unquote(text.split("?", 1)[0]).replace("\\", "/")
         rel = clean[len("/assets/input/"):] if clean.startswith("/assets/input/") else clean[len("/input/"):]
-        root = OUTPUT_INPUT_DIR
+        root = current_upload_dir()
     elif text.startswith("/assets/output/"):
         clean = urllib.parse.unquote(text.split("?", 1)[0]).replace("\\", "/")
         rel = clean[len("/assets/output/"):]
-        root = OUTPUT_OUTPUT_DIR
+        root = current_generated_dir()
     elif text.startswith("/output/") or text.startswith("/assets/"):
         return output_file_from_url(text)
     else:
@@ -10143,7 +10304,7 @@ def runninghub_entry_config_from_model(provider, model):
     if kind == "workflow":
         key = runninghub_workflow_store_key(entry_id)
         with RUNNINGHUB_WORKFLOW_LOCK:
-            store = load_runninghub_workflow_store()
+            store = workflow_store.load_runninghub_workflow_store()
         cfg = runninghub_select_workflow_config(store.get(key), runninghub_provider_workflow_config(key), key)
         if not isinstance(cfg, dict):
             # 退回到 provider 列表中的内联条目
@@ -10799,7 +10960,7 @@ def chat_split_parallel_prompts(prompt, count):
     return [f"{item}的{suffix}" for item in candidates[:count]]
 
 def pick_chat_image_provider(provider_id="", fallback_id=""):
-    providers = [p for p in load_api_providers() if p.get("enabled", True) and (p.get("image_models") or [])]
+    providers = [p for p in provider_config_store.load_api_providers() if p.get("enabled", True) and (p.get("image_models") or [])]
     for target in (provider_id, fallback_id):
         clean = str(target or "").strip().lower()
         if clean:
@@ -11208,8 +11369,9 @@ def _local_upload_rel_path(value):
 
 def _local_upload_abs(rel):
     rel_path = _local_upload_rel_path(rel)
-    path = os.path.abspath(os.path.join(LOCAL_UPLOAD_DIR, rel_path))
-    root = os.path.abspath(LOCAL_UPLOAD_DIR)
+    local_dir = current_local_dir()
+    path = os.path.abspath(os.path.join(local_dir, rel_path))
+    root = os.path.abspath(local_dir)
     try:
         common = os.path.commonpath([root, path])
     except ValueError:
@@ -11244,7 +11406,7 @@ def _local_upload_safe_file_stem(name):
     return cleaned[:120]
 
 def _local_upload_caption_path(filename):
-    return os.path.splitext(os.path.join(LOCAL_UPLOAD_DIR, filename))[0] + ".txt"
+    return os.path.splitext(os.path.join(current_local_dir(), filename))[0] + ".txt"
 
 def _read_local_upload_caption(filename):
     caption_path = _local_upload_caption_path(filename)
@@ -11261,7 +11423,7 @@ def _read_local_upload_caption(filename):
     return text, os.path.basename(caption_path)
 
 def _local_upload_item(filename):
-    path = os.path.join(LOCAL_UPLOAD_DIR, filename)
+    path = os.path.join(current_local_dir(), filename)
     rel = _local_upload_rel_path(filename)
     try:
         stat = os.stat(path)
@@ -11310,9 +11472,10 @@ def _local_upload_tree_and_items():
     root_node = _local_upload_folder_node("", "全部上传")
     folder_map = {"": root_node}
     items = []
-    for current, dirs, files in os.walk(LOCAL_UPLOAD_DIR):
+    local_dir = current_local_dir()
+    for current, dirs, files in os.walk(local_dir):
         dirs[:] = sorted([d for d in dirs if not d.startswith(".") and not d.startswith("._")], key=str.lower)
-        rel_dir = os.path.relpath(current, LOCAL_UPLOAD_DIR).replace("\\", "/")
+        rel_dir = os.path.relpath(current, local_dir).replace("\\", "/")
         if rel_dir == ".":
             rel_dir = ""
         node = folder_map.get(rel_dir)
@@ -11351,10 +11514,11 @@ _DOUBLE_EXT_MEDIA = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif",
 def migrate_double_extension_uploads():
     """修复历史遗留的双重扩展名（如 foo.png.png）：去掉重复的一层，并同步重命名 caption/classification 旁车文件。
     旧版 URL 导入会把自带扩展名的 entry.name 又拼一次 ext，导致文件名重复后缀、URL 对不上而无法显示。"""
-    if not os.path.isdir(LOCAL_UPLOAD_DIR):
+    local_dir = current_local_dir()
+    if not os.path.isdir(local_dir):
         return
     renamed = 0
-    for current, _dirs, files in os.walk(LOCAL_UPLOAD_DIR):
+    for current, _dirs, files in os.walk(local_dir):
         for name in files:
             m = _DOUBLE_EXT_RE.search(name)
             if not m or m.group(1).lower() not in _DOUBLE_EXT_MEDIA:
@@ -11406,11 +11570,12 @@ def _sniff_image_ext(path):
 def migrate_mislabeled_image_extensions():
     """有些采集来的图片内容与扩展名不符（例如 WebP 内容却叫 .png），导致服务端按错误 content-type 返回、
     严格的客户端（PS UXP）解不出来。这里按真实魔数纠正扩展名，并同步重命名 caption/classification 旁车。"""
-    if not os.path.isdir(LOCAL_UPLOAD_DIR):
+    local_dir = current_local_dir()
+    if not os.path.isdir(local_dir):
         return
     img_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
     fixed = 0
-    for current, _dirs, files in os.walk(LOCAL_UPLOAD_DIR):
+    for current, _dirs, files in os.walk(local_dir):
         for name in files:
             ext = os.path.splitext(name)[1].lower()
             if ext not in img_exts:
@@ -11918,7 +12083,7 @@ async def runninghub_workflow_info(workflowId: str = ""):
 
 @app.get("/api/runninghub/workflows")
 def list_runninghub_workflows():
-    providers = load_api_providers()
+    providers = provider_config_store.load_api_providers()
     hidden_ids = runninghub_saved_hidden_workflow_ids()
     for provider in providers:
         if provider.get("id") != "runninghub":
@@ -11928,7 +12093,7 @@ def list_runninghub_workflows():
             if workflow_id and entry.get("hidden") is True:
                 hidden_ids.add(workflow_id)
     with RUNNINGHUB_WORKFLOW_LOCK:
-        store = load_runninghub_workflow_store()
+        store = workflow_store.load_runninghub_workflow_store()
     merged = {workflow_id: cfg for workflow_id, cfg in store.items() if isinstance(cfg, dict) and workflow_id not in hidden_ids}
     for provider in providers:
         if provider.get("id") != "runninghub":
@@ -11963,7 +12128,7 @@ def get_runninghub_workflow(workflow_id: str):
     if not key:
         raise HTTPException(status_code=400, detail="workflowId 必填")
     with RUNNINGHUB_WORKFLOW_LOCK:
-        store = load_runninghub_workflow_store()
+        store = workflow_store.load_runninghub_workflow_store()
     cfg = store.get(key)
     provider_cfg = runninghub_provider_workflow_config(key)
     cfg = runninghub_select_workflow_config(cfg, provider_cfg, key)
@@ -12023,9 +12188,9 @@ def save_runninghub_workflow(workflow_id: str, payload: RunningHubWorkflowConfig
         "updatedAt": now_ms(),
     }
     with RUNNINGHUB_WORKFLOW_LOCK:
-        store = load_runninghub_workflow_store()
+        store = workflow_store.load_runninghub_workflow_store()
         store[key] = cfg
-        save_runninghub_workflow_store(store)
+        workflow_store.save_runninghub_workflow_store(store)
     sync_runninghub_workflow_to_provider(cfg)
     return {"success": True, "workflow": cfg}
 
@@ -12035,12 +12200,12 @@ def delete_runninghub_workflow(workflow_id: str):
     if not key:
         raise HTTPException(status_code=400, detail="workflowId 必填")
     with RUNNINGHUB_WORKFLOW_LOCK:
-        store = load_runninghub_workflow_store()
+        store = workflow_store.load_runninghub_workflow_store()
         provider_cfg = runninghub_provider_workflow_config(key)
         if key not in store and not provider_cfg:
             raise HTTPException(status_code=404, detail="RunningHub 工作流未找到")
         store.pop(key, None)
-        save_runninghub_workflow_store(store)
+        workflow_store.save_runninghub_workflow_store(store)
     remove_runninghub_workflow_from_provider(key)
     return {"success": True}
 
@@ -12483,7 +12648,7 @@ async def save_providers(payload: List[ApiProviderPayload]):
         winner = primary_indices[-1]
         for i, p in enumerate(providers):
             p["primary"] = (i == winner)
-    save_api_providers(providers)
+    provider_config_store.save_api_providers(providers)
     if env_updates:
         update_env_values(env_updates)
         reload_env_globals()   # 立即将最新 env 值同步回模块全局变量，无需重启
@@ -13201,7 +13366,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
         "params": {"provider_id": provider["id"], "model": model, "size": request_size, "requested_size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
         "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
     }
-    save_to_history(result)
+    history_store.save_to_history(result)
     if GLOBAL_LOOP:
         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
     return result
@@ -13249,7 +13414,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
                         "params": {"provider_id": provider["id"]},
                         "raw": raw,
                     }
-                    save_to_history(result)
+                    history_store.save_to_history(result)
                     if GLOBAL_LOOP:
                         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
                     return result
@@ -13316,7 +13481,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "params": {"provider_id": provider["id"]},
             "raw": raw,
         }
-        save_to_history(result)
+        history_store.save_to_history(result)
         if GLOBAL_LOOP:
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
         return result
@@ -13512,7 +13677,7 @@ def build_image_param_fields(engine: str, provider: dict, model: str):
 
 @app.get("/api/image-params")
 async def image_params(provider_id: str = "", model: str = ""):
-    providers = load_api_providers()
+    providers = provider_config_store.load_api_providers()
     provider = next((p for p in providers if p.get("id") == (provider_id or "").strip().lower()), None) or {}
     if is_runninghub_provider(provider):
         engine = "runninghub"
@@ -14614,7 +14779,7 @@ async def create_conversation(payload: ConversationCreateRequest, request: Reque
 @app.get("/api/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
-    return {"conversation": load_conversation(user_id, conversation_id)}
+    return {"conversation": conversation_store.load_conversation(user_id, conversation_id)}
 
 @app.delete("/api/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
@@ -14649,7 +14814,7 @@ async def update_project(project_id: str, payload: ProjectUpdateRequest):
     if payload.order is not None:
         target["order"] = int(payload.order)
     target["updated_at"] = now_ms()
-    save_projects(projects)
+    project_store.save_projects(projects)
     return {"project": project_record(target)}
 
 @app.delete("/api/projects/{project_id}")
@@ -14661,7 +14826,7 @@ async def delete_project(project_id: str):
     if not any(p.get("id") == project_id for p in projects):
         raise HTTPException(status_code=404, detail="项目不存在")
     projects = [p for p in projects if p.get("id") != project_id]
-    save_projects(projects)
+    project_store.save_projects(projects)
     # 把该项目下的画布迁回默认项目
     moved = 0
     with CANVAS_LOCK:
@@ -14691,7 +14856,7 @@ async def create_canvas(payload: CanvasCreateRequest):
 
 @app.get("/api/canvases/{canvas_id}/meta")
 async def get_canvas_meta(canvas_id: str):
-    canvas = load_canvas(canvas_id)
+    canvas = canvas_store.load_canvas(canvas_id)
     return {
         "id": canvas.get("id"),
         "updated_at": canvas.get("updated_at", 0),
@@ -14704,7 +14869,7 @@ async def get_canvas_meta(canvas_id: str):
 async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
     """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
     刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
-    canvas = load_canvas(canvas_id)
+    canvas = canvas_store.load_canvas(canvas_id)
     if payload.title is not None:
         canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
     if payload.icon is not None:
@@ -14728,12 +14893,12 @@ async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
 
 @app.get("/api/canvases/{canvas_id}")
 async def get_canvas(canvas_id: str):
-    return {"canvas": load_canvas(canvas_id)}
+    return {"canvas": canvas_store.load_canvas(canvas_id)}
 
 @app.post("/api/canvases/{canvas_id}/touch")
 async def touch_canvas(canvas_id: str):
-    canvas = load_canvas(canvas_id)
-    save_canvas(canvas)
+    canvas = canvas_store.load_canvas(canvas_id)
+    canvas_store.save_canvas(canvas)
     return {"canvas": canvas_record(canvas), "updated_at": canvas.get("updated_at", 0)}
 
 @app.get("/api/canvas-assets")
@@ -14918,14 +15083,14 @@ async def export_canvas_workflow_to_library(payload: CanvasWorkflowExportRequest
     filename = sanitize_export_filename(payload.filename or "canvas-workflow.zip", "canvas-workflow.zip")
     if not filename.lower().endswith(".zip"):
         filename += ".zip"
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     _, cat = asset_library_workflow_category(lib, payload.library_id, payload.category_id)
     item = make_workflow_library_item_from_bytes(archive, filename, payload.name or os.path.splitext(filename)[0])
     item["node_count"] = meta.get("node_count") or len(payload.nodes or [])
     item["connection_count"] = meta.get("connection_count") or len(payload.connections or [])
     item["resource_count"] = len(meta.get("resources") or [])
     cat.setdefault("items", []).append(item)
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "item": item}
 
 @app.post("/api/asset-library/workflows/upload")
@@ -14934,7 +15099,7 @@ async def upload_asset_library_workflows(
     library_id: str = Form(""),
     category_id: str = Form(""),
 ):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     _, cat = asset_library_workflow_category(lib, library_id, category_id)
     added = []
     for file in files[:100]:
@@ -14948,7 +15113,7 @@ async def upload_asset_library_workflows(
         added.append(item)
     if not added:
         raise HTTPException(status_code=400, detail="没有可上传的工作流文件")
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "items": added}
 
 @app.post("/api/canvas-workflows/import")
@@ -14968,7 +15133,7 @@ async def import_canvas_workflow(file: UploadFile = File(...)):
                     raise HTTPException(status_code=400, detail="压缩包中没有 workflow.json")
                 workflow = json.loads(zf.read(workflow_name).decode("utf-8-sig"))
                 stamp = time.strftime("%Y%m%d-%H%M%S")
-                import_dir = os.path.join(OUTPUT_INPUT_DIR, f"workflow_import_{stamp}_{uuid.uuid4().hex[:6]}")
+                import_dir = os.path.join(current_upload_dir(), f"workflow_import_{stamp}_{uuid.uuid4().hex[:6]}")
                 os.makedirs(import_dir, exist_ok=True)
                 for res in workflow.get("resources") or []:
                     archive = str(res.get("archive") or "").replace("\\", "/").lstrip("/")
@@ -15078,7 +15243,7 @@ async def export_smart_canvas_group(payload: SmartCanvasGroupExportRequest):
 
 @app.get("/api/asset-library")
 async def get_asset_library():
-    return {"library": load_asset_library()}
+    return {"library": asset_library_store.load_asset_library()}
 
 @app.get("/api/prompt-libraries")
 async def get_prompt_libraries():
@@ -15086,7 +15251,7 @@ async def get_prompt_libraries():
 
 @app.post("/api/prompt-libraries")
 async def create_prompt_library(payload: PromptLibraryRequest):
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     library = {
         "id": f"lib_{uuid.uuid4().hex[:12]}",
         "name": sanitize_asset_name(payload.name, "提示词库"),
@@ -15096,25 +15261,25 @@ async def create_prompt_library(payload: PromptLibraryRequest):
     }
     data.setdefault("libraries", []).append(library)
     data["active_library_id"] = library["id"]
-    data = save_prompt_libraries(data)
+    data = prompt_library_store.save_prompt_libraries(data)
     new_lib = next((lib for lib in data.get("libraries", []) if lib.get("id") == library["id"]), library)
     return {"library": public_prompt_libraries(data), "prompt_library": new_lib}
 
 @app.patch("/api/prompt-libraries/{library_id}")
 async def rename_prompt_library(library_id: str, payload: PromptLibraryRequest):
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     library = find_prompt_library(data, library_id)
     if not library or library.get("id") != library_id:
         raise HTTPException(status_code=404, detail="提示词库不存在")
     library["name"] = sanitize_asset_name(payload.name, library.get("name") or "提示词库")
-    data = save_prompt_libraries(data)
+    data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data), "prompt_library": library}
 
 @app.delete("/api/prompt-libraries/{library_id}")
 async def delete_prompt_library(library_id: str):
     if library_id == "system":
         raise HTTPException(status_code=400, detail="系统提示词库不能删除，可以删除其中的提示词")
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     libraries = data.get("libraries", []) or []
     kept = [lib for lib in libraries if lib.get("id") != library_id]
     if len(kept) == len(libraries):
@@ -15122,12 +15287,12 @@ async def delete_prompt_library(library_id: str):
     data["libraries"] = kept
     if data.get("active_library_id") == library_id:
         data["active_library_id"] = "system"
-    data = save_prompt_libraries(data)
+    data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data)}
 
 @app.post("/api/prompt-libraries/items")
 async def add_prompt_library_item(payload: PromptLibraryItemRequest):
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     library = find_prompt_library(data, payload.library_id)
     if not library:
         raise HTTPException(status_code=404, detail="提示词库不存在")
@@ -15145,12 +15310,12 @@ async def add_prompt_library_item(payload: PromptLibraryItemRequest):
     })
     library.setdefault("items", []).insert(0, item)
     data["active_library_id"] = library.get("id") or data.get("active_library_id")
-    data = save_prompt_libraries(data)
+    data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data), "item": item}
 
 @app.patch("/api/prompt-libraries/items/{item_id}")
 async def update_prompt_library_item(item_id: str, payload: PromptLibraryItemRequest):
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     for library in data.get("libraries", []) or []:
         if payload.library_id and library.get("id") != payload.library_id:
             continue
@@ -15166,13 +15331,13 @@ async def update_prompt_library_item(item_id: str, payload: PromptLibraryItemReq
                     "updated_at": now_ms(),
                 })
                 library["items"][index] = next_item
-                data = save_prompt_libraries(data)
+                data = prompt_library_store.save_prompt_libraries(data)
                 return {"library": public_prompt_libraries(data), "item": next_item}
     raise HTTPException(status_code=404, detail="提示词不存在")
 
 @app.delete("/api/prompt-libraries/items/{item_id}")
 async def delete_prompt_library_item(item_id: str):
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     removed = None
     for library in data.get("libraries", []) or []:
         keep = []
@@ -15184,7 +15349,7 @@ async def delete_prompt_library_item(item_id: str):
         library["items"] = keep
     if not removed:
         raise HTTPException(status_code=404, detail="提示词不存在")
-    data = save_prompt_libraries(data)
+    data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data), "removed": 1}
 
 @app.post("/api/prompt-libraries/items/delete")
@@ -15192,7 +15357,7 @@ async def batch_delete_prompt_library_items(payload: PromptLibraryBatchDeleteReq
     ids = {str(item) for item in (payload.ids or []) if str(item)}
     if not ids:
         raise HTTPException(status_code=400, detail="没有选择提示词")
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     removed = 0
     for library in data.get("libraries", []) or []:
         keep = []
@@ -15202,14 +15367,14 @@ async def batch_delete_prompt_library_items(payload: PromptLibraryBatchDeleteReq
             else:
                 keep.append(item)
         library["items"] = keep
-    data = save_prompt_libraries(data)
+    data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data), "removed": removed}
 
 PROMPT_BUILTIN_CATEGORY_IDS = {"view", "storyboard", "character", "product", "lighting", "custom"}
 
 @app.post("/api/prompt-libraries/categories")
 async def add_prompt_library_category(payload: PromptLibraryCategoryRequest):
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     library = find_prompt_library(data, payload.library_id) or find_prompt_library(data, "system")
     if not library:
         raise HTTPException(status_code=404, detail="提示词库不存在")
@@ -15220,7 +15385,7 @@ async def add_prompt_library_category(payload: PromptLibraryCategoryRequest):
         cat_id = f"pcat_{uuid.uuid4().hex[:10]}"
     category = {"id": cat_id, "name": name}
     library.setdefault("categories", []).append(category)
-    data = save_prompt_libraries(data)
+    data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data), "category": category}
 
 @app.patch("/api/prompt-libraries/categories/{category_id}")
@@ -15230,7 +15395,7 @@ async def rename_prompt_library_category(category_id: str, payload: PromptLibrar
     name = sanitize_asset_name(payload.name, "")
     if not name:
         raise HTTPException(status_code=400, detail="分组名称不能为空")
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     updated = False
     for library in data.get("libraries", []) or []:
         for cat in library.get("categories") or []:
@@ -15239,13 +15404,13 @@ async def rename_prompt_library_category(category_id: str, payload: PromptLibrar
                 updated = True
     if not updated:
         raise HTTPException(status_code=404, detail="分组不存在")
-    data = save_prompt_libraries(data)
+    data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data)}
 
 @app.delete("/api/prompt-libraries/categories/{category_id}")
 async def delete_prompt_library_category(category_id: str):
     # 系统库（内置）分组也允许删除，与素材库管理/画布保持一致。
-    data = load_prompt_libraries()
+    data = prompt_library_store.load_prompt_libraries()
     found = False
     for library in data.get("libraries", []) or []:
         cats = library.get("categories") or []
@@ -15260,33 +15425,33 @@ async def delete_prompt_library_category(category_id: str):
                     item["category"] = fallback
     if not found:
         raise HTTPException(status_code=404, detail="分组不存在")
-    data = save_prompt_libraries(data)
+    data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data)}
 
 @app.post("/api/asset-library/libraries")
 async def create_asset_library(payload: AssetLibraryRequest):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     library = {"id": f"lib_{uuid.uuid4().hex[:12]}", "name": sanitize_asset_name(payload.name, "资产库"), "type": "asset", "categories": []}
     library["categories"].append({"id": f"cat_{uuid.uuid4().hex[:12]}", "name": "默认分组", "type": "image", "items": []})
     library["categories"].append({"id": f"wf_{uuid.uuid4().hex[:12]}", "name": "工作流", "type": "workflow", "items": []})
     lib.setdefault("libraries", []).append(library)
     lib["active_library_id"] = library["id"]
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "asset_library": library}
 
 @app.patch("/api/asset-library/libraries/{library_id}")
 async def rename_asset_library(library_id: str, payload: AssetLibraryRenameRequest):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     library = find_asset_library(lib, library_id)
     if not library or library.get("id") != library_id:
         raise HTTPException(status_code=404, detail="资产库不存在")
     library["name"] = sanitize_asset_name(payload.name, library.get("name") or "资产库")
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "asset_library": library}
 
 @app.delete("/api/asset-library/libraries/{library_id}")
 async def delete_asset_library(library_id: str):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     libraries = lib.get("libraries") or []
     if len(libraries) <= 1:
         raise HTTPException(status_code=400, detail="至少保留一个资产库")
@@ -15295,12 +15460,12 @@ async def delete_asset_library(library_id: str):
     lib["libraries"] = [item for item in libraries if item.get("id") != library_id]
     if lib.get("active_library_id") == library_id:
         lib["active_library_id"] = lib["libraries"][0].get("id")
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib}
 
 @app.post("/api/asset-library/categories")
 async def create_asset_library_category(payload: AssetLibraryCategoryRequest):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     library = find_asset_library(lib, payload.library_id)
     if not library:
         raise HTTPException(status_code=404, detail="资产库不存在")
@@ -15315,22 +15480,22 @@ async def create_asset_library_category(payload: AssetLibraryCategoryRequest):
             print(f"创建分组文件夹失败: {exc}")
     library.setdefault("categories", []).append(category)
     lib["active_library_id"] = library.get("id") or lib.get("active_library_id")
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "category": category}
 
 @app.patch("/api/asset-library/categories/{category_id}")
 async def rename_asset_library_category(category_id: str, payload: AssetLibraryRenameRequest):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     _, cat = find_asset_category_with_library(lib, category_id, payload.library_id)
     if not cat:
         raise HTTPException(status_code=404, detail="分类不存在")
     cat["name"] = sanitize_asset_name(payload.name, cat.get("name") or "新文件夹")
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "category": cat}
 
 @app.delete("/api/asset-library/categories/{category_id}")
 async def delete_asset_library_category(category_id: str, library_id: str = ""):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     library, cat = find_asset_category_with_library(lib, category_id, library_id)
     if not cat:
         raise HTTPException(status_code=404, detail="分类不存在")
@@ -15348,12 +15513,12 @@ async def delete_asset_library_category(category_id: str, library_id: str = ""):
         except Exception as exc:
             print(f"删除分组文件夹失败: {exc}")
     library["categories"] = [c for c in library.get("categories", []) if c.get("id") != category_id]
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib}
 
 @app.post("/api/asset-library/items")
 async def add_asset_library_item(payload: AssetLibraryAddRequest):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     cat = find_asset_category_in_library(lib, payload.category_id, payload.library_id)
     if not cat:
         raise HTTPException(status_code=404, detail="分类不存在")
@@ -15368,13 +15533,13 @@ async def add_asset_library_item(payload: AssetLibraryAddRequest):
         if classification:
             item["classification"] = classification
     cat.setdefault("items", []).append(item)
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "item": item}
 
 @app.post("/api/asset-library/items/batch")
 async def batch_add_asset_library_items(payload: AssetLibraryBatchAddRequest):
     added = []
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     cat = find_asset_category_in_library(lib, payload.category_id, payload.library_id)
     if not cat:
         raise HTTPException(status_code=404, detail="分类不存在")
@@ -15393,7 +15558,7 @@ async def batch_add_asset_library_items(payload: AssetLibraryBatchAddRequest):
                 item["classification"] = classification
         cat.setdefault("items", []).append(item)
         added.append(item)
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "items": added}
 
 @app.get("/api/shared-folders")
@@ -15475,7 +15640,7 @@ async def import_shared_folder_files(payload: SharedFolderImport):
     if not entry:
         raise HTTPException(status_code=404, detail="共享文件夹不存在")
     folder_abs = shared_folder_abs(entry)
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     cat = find_asset_category_in_library(lib, payload.category_id, payload.library_id)
     if not cat:
         raise HTTPException(status_code=404, detail="分类不存在")
@@ -15496,7 +15661,7 @@ async def import_shared_folder_files(payload: SharedFolderImport):
                 item["classification"] = classification
         cat.setdefault("items", []).append(item)
         added.append(item)
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "items": added}
 
 async def caption_image_with_provider(abs_path, prompt, provider_id, model, ms_model=""):
@@ -15561,13 +15726,13 @@ async def caption_image_with_provider(abs_path, prompt, provider_id, model, ms_m
 
 @app.patch("/api/asset-library/items/{item_id}")
 async def rename_asset_library_item(item_id: str, payload: AssetLibraryRenameRequest):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     for library in lib.get("libraries", []):
         for cat in library.get("categories", []):
             for item in cat.get("items", []):
                 if item.get("id") == item_id:
                     item["name"] = sanitize_asset_name(payload.name, item.get("name") or "asset")
-                    save_asset_library(lib)
+                    asset_library_store.save_asset_library(lib)
                     return {"library": lib, "item": item}
     raise HTTPException(status_code=404, detail="资产不存在")
 
@@ -15583,7 +15748,7 @@ def find_asset_item_in_library(lib, item_id, library_id=""):
 
 @app.post("/api/asset-library/items/classify")
 async def classify_asset_library_items(payload: AssetLibraryClassifyRequest):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     results = []
     changed = False
     for item_id in (payload.ids or [])[:80]:
@@ -15611,12 +15776,12 @@ async def classify_asset_library_items(payload: AssetLibraryClassifyRequest):
             result["error"] = str(getattr(exc, "detail", "") or exc)
         results.append(result)
     if changed:
-        save_asset_library(lib)
+        asset_library_store.save_asset_library(lib)
     return {"library": lib, "count": sum(1 for item in results if item.get("ok")), "items": results}
 
 @app.post("/api/asset-library/items/{item_id}/register-avatar")
 async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterRequest):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     target_item = find_asset_item_in_library(lib, item_id, payload.library_id)
     if not target_item:
         raise HTTPException(status_code=404, detail="资产不存在")
@@ -15665,12 +15830,12 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
         "registered_at": now_ms(),
     }
     target_item["registrations"] = regs
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "item": target_item}
 
 @app.post("/api/asset-library/items/{item_id}/avatar-status")
 async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterRequest):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     target_item = find_asset_item_in_library(lib, item_id, payload.library_id)
     if not target_item:
         raise HTTPException(status_code=404, detail="资产不存在")
@@ -15698,12 +15863,12 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
         reg["asset_id"] = result["asset_uri"].replace("asset://", "")
     regs[platform] = reg
     target_item["registrations"] = regs
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "item": target_item}
 
 @app.delete("/api/asset-library/items/{item_id}")
 async def delete_asset_library_item(item_id: str):
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     removed = None
     for library in lib.get("libraries", []):
         for cat in library.get("categories", []):
@@ -15717,7 +15882,7 @@ async def delete_asset_library_item(item_id: str):
     if not removed:
         raise HTTPException(status_code=404, detail="资产不存在")
     remove_asset_library_file(removed)  # 同时删除本地文件，避免磁盘上堆积
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib}
 
 @app.post("/api/asset-library/items/delete")
@@ -15725,7 +15890,7 @@ async def batch_delete_asset_library_items(payload: AssetLibraryBatchDeleteReque
     ids = {str(item) for item in (payload.ids or []) if str(item)}
     if not ids:
         raise HTTPException(status_code=400, detail="没有选择资产")
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     removed = 0
     removed_items = []
     for library in lib.get("libraries", []):
@@ -15742,7 +15907,7 @@ async def batch_delete_asset_library_items(payload: AssetLibraryBatchDeleteReque
             cat["items"] = keep
     for item in removed_items:  # 批量删除同时清理本地文件
         remove_asset_library_file(item)
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "removed": removed}
 
 @app.post("/api/asset-library/items/move")
@@ -15750,7 +15915,7 @@ async def batch_move_asset_library_items(payload: AssetLibraryBatchMoveRequest):
     ids = {str(item) for item in (payload.ids or []) if str(item)}
     if not ids:
         raise HTTPException(status_code=400, detail="没有选择资产")
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     target_cat = find_asset_category_in_library(lib, payload.target_category_id, payload.target_library_id)
     if not target_cat:
         raise HTTPException(status_code=404, detail="目标分组不存在")
@@ -15774,7 +15939,7 @@ async def batch_move_asset_library_items(payload: AssetLibraryBatchMoveRequest):
         if item.get("id") not in existing_ids:
             target_cat.setdefault("items", []).append(item)
             existing_ids.add(item.get("id"))
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "moved": len(moved)}
 
 @app.post("/api/asset-library/items/crop")
@@ -15782,7 +15947,7 @@ async def batch_crop_asset_library_items(payload: AssetLibraryBatchCropRequest):
     ids = {str(item) for item in (payload.ids or []) if str(item)}
     if not ids:
         raise HTTPException(status_code=400, detail="没有选择资产")
-    lib = load_asset_library()
+    lib = asset_library_store.load_asset_library()
     target_cat = None
     if payload.target_category_id:
         target_cat = find_asset_category_in_library(lib, payload.target_category_id, payload.target_library_id)
@@ -15829,12 +15994,12 @@ async def batch_crop_asset_library_items(payload: AssetLibraryBatchCropRequest):
                                 pass
                 except Exception:
                     continue
-    save_asset_library(lib)
+    asset_library_store.save_asset_library(lib)
     return {"library": lib, "added": len(added), "items": added}
 
 @app.put("/api/canvases/{canvas_id}")
 async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
-    canvas = load_canvas(canvas_id)
+    canvas = canvas_store.load_canvas(canvas_id)
     current_updated_at = int(canvas.get("updated_at") or 0)
     if payload.base_updated_at and current_updated_at and int(payload.base_updated_at) < current_updated_at:
         raise HTTPException(status_code=409, detail={
@@ -15853,7 +16018,7 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
         canvas["viewport"] = canvas.get("viewport") or {"x": 0, "y": 0, "scale": 1}
     canvas["logs"] = payload.logs[-500:]
     canvas["settings"] = payload.settings or {}
-    save_canvas(canvas)
+    canvas_store.save_canvas(canvas)
     await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
     return {"canvas": canvas}
 
@@ -15862,7 +16027,7 @@ async def delete_canvas(canvas_id: str):
     canvas = load_canvas_any(canvas_id)
     if not canvas.get("deleted_at"):
         canvas["deleted_at"] = now_ms()
-        save_canvas(canvas)
+        canvas_store.save_canvas(canvas)
     return {"ok": True}
 
 @app.post("/api/canvases/{canvas_id}/restore")
@@ -15870,7 +16035,7 @@ async def restore_canvas(canvas_id: str):
     canvas = load_canvas_any(canvas_id)
     if canvas.get("deleted_at"):
         canvas.pop("deleted_at", None)
-        save_canvas(canvas)
+        canvas_store.save_canvas(canvas)
     return {"canvas": canvas}
 
 @app.delete("/api/canvases/{canvas_id}/purge")
@@ -15886,7 +16051,7 @@ async def purge_canvas(canvas_id: str):
 async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     conversation = (
-        load_conversation(user_id, payload.conversation_id)
+        conversation_store.load_conversation(user_id, payload.conversation_id)
         if payload.conversation_id
         else new_conversation(user_id, display_title(payload.message))
     )
@@ -15905,7 +16070,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
     }
     conversation["messages"].append(user_message)
     conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    conversation_store.save_conversation(user_id, conversation)
 
     if payload.mode == "image":
         image_provider_id = payload.provider if payload.provider not in {"modelscope"} else "comfly"
@@ -15951,7 +16116,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             }
             conversation["messages"].append(assistant_message)
             conversation["updated_at"] = now_ms()
-            save_conversation(user_id, conversation)
+            conversation_store.save_conversation(user_id, conversation)
             return {"conversation": conversation, "message": assistant_message}
         if is_gemini_cli_provider(_codex_provider):
             model = selected_model(payload.model, (_codex_provider.get("chat_models") or GEMINI_CLI_DEFAULT_CHAT_MODELS)[0])
@@ -15968,7 +16133,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             }
             conversation["messages"].append(assistant_message)
             conversation["updated_at"] = now_ms()
-            save_conversation(user_id, conversation)
+            conversation_store.save_conversation(user_id, conversation)
             return {"conversation": conversation, "message": assistant_message}
         chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
         _conv_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
@@ -16009,14 +16174,14 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
 
     conversation["messages"].append(assistant_message)
     conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    conversation_store.save_conversation(user_id, conversation)
     return {"conversation": conversation, "message": assistant_message}
 
 @app.post("/api/chat/agent")
 async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     conversation = (
-        load_conversation(user_id, payload.conversation_id)
+        conversation_store.load_conversation(user_id, payload.conversation_id)
         if payload.conversation_id
         else new_conversation(user_id, display_title(payload.message))
     )
@@ -16035,7 +16200,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
     }
     conversation["messages"].append(user_message)
     conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    conversation_store.save_conversation(user_id, conversation)
 
     decision = await decide_chat_agent_action(payload, conversation, image_refs)
     action = decision.get("action") or "chat"
@@ -16095,7 +16260,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
 
     conversation["messages"].append(assistant_message)
     conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    conversation_store.save_conversation(user_id, conversation)
     return {"conversation": conversation, "message": assistant_message, "agent": {"action": action, "decision": decision}}
 
 @app.post("/api/chat/stream")
@@ -16105,7 +16270,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
 
     user_id = safe_user_id(x_user_id, request)
     conversation = (
-        load_conversation(user_id, payload.conversation_id)
+        conversation_store.load_conversation(user_id, payload.conversation_id)
         if payload.conversation_id
         else new_conversation(user_id, display_title(payload.message))
     )
@@ -16123,7 +16288,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
     }
     conversation["messages"].append(user_message)
     conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    conversation_store.save_conversation(user_id, conversation)
 
     _codex_provider = get_api_provider(payload.provider)
     if is_codex_provider(_codex_provider):
@@ -16148,7 +16313,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
             }
             conversation["messages"].append(assistant_message)
             conversation["updated_at"] = now_ms()
-            save_conversation(user_id, conversation)
+            conversation_store.save_conversation(user_id, conversation)
             yield sse_event({"type": "delta", "delta": text})
             yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
 
@@ -16176,7 +16341,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
             }
             conversation["messages"].append(assistant_message)
             conversation["updated_at"] = now_ms()
-            save_conversation(user_id, conversation)
+            conversation_store.save_conversation(user_id, conversation)
             yield sse_event({"type": "delta", "delta": text})
             yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
 
@@ -16241,7 +16406,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         }
         conversation["messages"].append(assistant_message)
         conversation["updated_at"] = now_ms()
-        save_conversation(user_id, conversation)
+        conversation_store.save_conversation(user_id, conversation)
         yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -16367,7 +16532,7 @@ async def poll_angle_cloud(req: CloudPollRequest):
                         local_path = img_url
 
                     record = {"timestamp": time.time(), "prompt": f"Resumed {task_id}", "images": [local_path], "type": "angle"}
-                    save_to_history(record)
+                    history_store.save_to_history(record)
                     if req.client_id:
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
                     return {"url": local_path}
@@ -16457,7 +16622,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
                         local_path = img_url
 
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "angle"}
-                    save_to_history(record)
+                    history_store.save_to_history(record)
                     if req.client_id:
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
                     if GLOBAL_LOOP:
@@ -16556,7 +16721,7 @@ async def generate_cloud(req: CloudGenRequest):
                         local_path = img_url
 
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "cloud"}
-                    save_to_history(record)
+                    history_store.save_to_history(record)
                     try:
                         await manager.broadcast_new_image(record)
                     except Exception:
@@ -16657,7 +16822,7 @@ async def ms_generate(req: MsGenerateRequest):
                             "type": "klein",
                             "model": req.model,
                         }
-                        save_to_history(record)
+                        history_store.save_to_history(record)
                         if GLOBAL_LOOP:
                             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
                         return {"url": local_path, "task_id": task_id}
@@ -16885,7 +17050,7 @@ def generate(req: GenerateRequest):
             "backend": target_backend,
             "params": req.params
         }
-        save_to_history(result)
+        history_store.save_to_history(result)
         if GLOBAL_LOOP:
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
         return result
@@ -16972,7 +17137,7 @@ def save_runninghub_workflow_store(store):
 def prune_runninghub_workflow_store_for_provider(provider):
     if not isinstance(provider, dict) or provider.get("id") != "runninghub":
         return
-    store = load_runninghub_workflow_store()
+    store = workflow_store.load_runninghub_workflow_store()
     if not store:
         return
     keep_ids = {
@@ -16987,7 +17152,7 @@ def prune_runninghub_workflow_store_for_provider(provider):
             store.pop(workflow_id, None)
             removed = True
     if removed:
-        save_runninghub_workflow_store(store)
+        workflow_store.save_runninghub_workflow_store(store)
 
 def runninghub_workflow_config_has_payload(cfg):
     if not isinstance(cfg, dict):
@@ -17067,7 +17232,7 @@ def runninghub_saved_hidden_workflow_ids():
 def runninghub_provider_with_workflow_store(provider):
     if not isinstance(provider, dict) or provider.get("id") != "runninghub":
         return provider
-    store = load_runninghub_workflow_store()
+    store = workflow_store.load_runninghub_workflow_store()
     if not store:
         return provider
     merged = dict(provider)
@@ -17106,7 +17271,7 @@ def runninghub_provider_workflow_config(workflow_id: str):
         return None
     if key in runninghub_saved_hidden_workflow_ids():
         return None
-    providers = load_api_providers()
+    providers = provider_config_store.load_api_providers()
     provider = next((item for item in providers if item.get("id") == "runninghub"), None)
     if not provider:
         return None
@@ -17159,7 +17324,7 @@ def sync_runninghub_workflow_to_provider(cfg):
     key = runninghub_workflow_store_key(cfg.get("workflowId"))
     if not key:
         return
-    providers = load_api_providers()
+    providers = provider_config_store.load_api_providers()
     provider = next((item for item in providers if item.get("id") == "runninghub"), None)
     if not provider:
         provider = {
@@ -17215,13 +17380,13 @@ def sync_runninghub_workflow_to_provider(cfg):
         entry["enabled"] = True
     if "thumbnail" not in entry:
         entry["thumbnail"] = ""
-    save_api_providers([normalize_provider(item) for item in providers])
+    provider_config_store.save_api_providers([normalize_provider(item) for item in providers])
 
 def remove_runninghub_workflow_from_provider(workflow_id: str):
     key = runninghub_workflow_store_key(workflow_id)
     if not key:
         return
-    providers = load_api_providers()
+    providers = provider_config_store.load_api_providers()
     changed = False
     for provider in providers:
         if provider.get("id") != "runninghub":
@@ -17248,7 +17413,7 @@ def remove_runninghub_workflow_from_provider(workflow_id: str):
             provider["rh_workflows"] = kept
             changed = True
     if changed:
-        save_api_providers([normalize_provider(item) for item in providers])
+        provider_config_store.save_api_providers([normalize_provider(item) for item in providers])
 
 def runninghub_workflow_store_key(workflow_id: str) -> str:
     return str(workflow_id or "").strip()
@@ -17543,6 +17708,19 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
     return generate(req)
 
 if __name__ == "__main__":
+    # --- 数据模型治理 PR-1：`python main.py migrate [head|<rev>]` CLI ------
+    # 保留原 `python main.py` 启动服务的默认路径（sys.argv 无子命令时进入
+    # uvicorn.run 分支）。CLI 通过 `app.db.engine.run_migrations()` 调 Alembic
+    # 内部 API，不产生独立子进程；数据库路径由 `Settings.data_db_path`（读时
+    # 求值）提供。详见 [[40 实施计划/数据模型治理实施计划与PR清单]] PR-1。
+    if len(sys.argv) >= 2 and sys.argv[1] == "migrate":
+        revision = sys.argv[2] if len(sys.argv) >= 3 else "head"
+        # 惰性 import：避免影响其它 `python main.py` 启动路径的加载时间。
+        from app.db.engine import run_migrations as _run_migrations
+
+        _run_migrations(revision)
+        sys.exit(0)
+
     import uvicorn
     # 关闭服务端协议级 WebSocket ping：部分客户端（如 PS UXP 面板）不会自动回 pong，
     # 默认 20s ping/20s 超时会把这些连接每隔一会儿就踢掉造成"频繁断连"。

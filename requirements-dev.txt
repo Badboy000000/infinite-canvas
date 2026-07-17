@@ -1,0 +1,13 @@
+# 开发/测试依赖（不进 runtime wheel 包，不影响离线安装）。
+#
+# 说明：
+# - 项目根 `requirements.txt` 是运行时依赖清单，配合 `packages/` 目录支持
+#   `pip install --no-index --find-links=packages -r requirements.txt`
+#   离线部署。本文件的依赖 **不会** 被离线安装脚本读到，因此不影响
+#   离线部署路径。开发者若要跑契约测试，需在联网环境下：
+#     pip install -r requirements-dev.txt
+#
+# 文件对象与 MinIO 治理 PR-1 只挂 `pytest`（跑 StorageAdapter 契约测试）。
+# MinioAdapter 测试当前 `pytest.mark.skip(reason="pending PR-8")`，
+# PR-8 落地时再在此追加 `moto` 或 `minio-py`。
+pytest>=8,<10

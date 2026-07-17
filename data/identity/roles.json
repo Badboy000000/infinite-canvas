@@ -1,0 +1,40 @@
+{
+  "_schema_version": 1,
+  "roles": {
+    "editor": {
+      "created_at": "2026-07-17T00:00:00+00:00",
+      "description": "可读写画布、素材、提交生成任务、下载文件；不可删除资源，不可管理成员与 Provider。",
+      "display_name": "编辑者",
+      "key": "editor",
+      "scope": "project"
+    },
+    "project_admin": {
+      "created_at": "2026-07-17T00:00:00+00:00",
+      "description": "Project 内权限；可管理项目内画布/素材/任务，邀请协作者，无法管理 Provider 凭据或 Workspace 成员。",
+      "display_name": "项目管理员",
+      "key": "project_admin",
+      "scope": "project"
+    },
+    "system_admin": {
+      "created_at": "2026-07-17T00:00:00+00:00",
+      "description": "部署级最高权限；可跨 Workspace 管理系统配置、Provider、存储设置与用户账号。首任由 bootstrap 脚本创建为空位。",
+      "display_name": "系统管理员",
+      "key": "system_admin",
+      "scope": "system"
+    },
+    "viewer": {
+      "created_at": "2026-07-17T00:00:00+00:00",
+      "description": "只读；可查看画布、素材、任务历史、下载已授权文件；不可编辑、不可提交任务、不可修改任何配置。",
+      "display_name": "查看者",
+      "key": "viewer",
+      "scope": "project"
+    },
+    "workspace_admin": {
+      "created_at": "2026-07-17T00:00:00+00:00",
+      "description": "Workspace 内最高权限；可管理成员、项目、Provider 凭据、画布/素材/文件删除、共享文件夹与审计查看。",
+      "display_name": "工作区管理员",
+      "key": "workspace_admin",
+      "scope": "workspace"
+    }
+  }
+}
