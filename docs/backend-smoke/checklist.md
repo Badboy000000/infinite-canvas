@@ -143,6 +143,20 @@ asyncio.run(r())"`
 
 > **烟测编号与协调纲要对齐说明**：本 checklist 的 §15 / §16 / §17 / §18 分别对应协调纲要 [[2026-07-17 第二批 PR 开工协调纲要#保活烟测（继续）]] 中的 BE-15 / BE-16 / BE-19 / BE-17。**BE-18（任务 PR-0）编号保留给 Wave 2**——本 checklist 待其 PR 合入后再落项。文档内的 `##` 序号必须连续（不许跳号），所以协调纲要的 BE-19 在本 checklist 中占用序号 §17，数据 PR-1 的 BE-17 在此占用序号 §18（编号是"业务口径" vs "文档口径"两套映射）。
 
+## 20. RequestValidationError handler 短期兜底（PR-BE-12，承接编号 BE-20）
+
+- 命令：
+  - `curl -s -D /tmp/be20_headers.txt -X PUT http://127.0.0.1:3000/api/providers -H 'Content-Type: application/json' -d '{"providers":[{"id":"__smoke_be20__","name":"smoke","protocol":"openai","api_key":"sk-TEST-DO-NOT-LOG-e2e"}]}'`
+  - `tail -n 200 <server-log-path> | grep -c 'sk-TEST-DO-NOT-LOG-e2e'`
+  - `python -m pytest tests/api/test_validation_error_handler.py -v`
+- 期望：
+  - 首条：HTTP 422；响应 body **不含** `sk-TEST-DO-NOT-LOG-e2e` 字面量（`grep -c` = 0）；响应 body 顶层含 `"request_id": "<32-hex>"` 字段；`/tmp/be20_headers.txt` 含 `x-request-id: <32-hex>` 且值与 body 内 `request_id` 一致；`errors[].input` 已剔除。
+  - 次条：服务端日志 tail `grep -c 'sk-TEST-DO-NOT-LOG-e2e'` = **0**（本 PR **不改**日志脱敏配置——验证 PR-BE-02 `RequestIdLogFilter` + PR-BE-03 现状不打印 request body 已经足够满足；若日志中出现密钥字面量，则 CB-02 长期根治 Provider PR-05 + 部署 PR-10 未闭合部分暴露，作为发现列到"CB 候选"，**不许在本 PR 内擅自加日志脱敏**）。
+  - 末条：`pytest tests/api/test_validation_error_handler.py -v` **9 项全绿**（1 CB-02 主场景 + 1 客户端提供 X-Request-Id 回显 + 2 其它路由 422 剔除 + 1 正确 shape bypass + 4 参数化 dict/list/bare/none 场景）。
+- 关联事实：新增 `app/api/errors.py` `validation_error_handler`；`main.py` L145-155（middleware 注册块之后）追加 `app.add_exception_handler(RequestValidationError, validation_error_handler)`；`main.py:777` 旧 inline handler 已下线；`main.py:751-767` 的 `friendly_validation_error` helper 保留（新 handler 懒 import 复用）；`main.py:356-478` 冻结区间零触碰；`openapi_diff.py --baseline` exit=0（FastAPI 默认不在 OpenAPI spec 中详细描述 422 响应 body shape，本 PR 修改 body 结构不进 schema diff）。归属：PR-BE-12（承接 [[70 开发过程跟踪/缺陷追踪/CB-02 - PUT providers 422 error 回显 request body 含密钥]] 短期兜底）。
+
+> **§20 编号说明**：§20 承接协调纲要 §保活烟测 中的 BE-20（PR-BE-12）。BE-18（任务 PR-0）与 §20 触碰面不重叠可并发合入：若任务 PR-0 与本 PR 同批合入且抢先占用 §20，本项顺延到 §21。
+
 ---
 
 ## 附：OpenAPI baseline 差异校验

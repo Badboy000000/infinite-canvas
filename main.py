@@ -134,6 +134,17 @@ app.add_middleware(
 # 保持在其他 `app.add_middleware(...)` 调用之后。
 app.add_middleware(RequestContextMiddleware)
 
+# PR-BE-12 短期兜底（承接 CB-02）：全局 `RequestValidationError` handler 剔除
+# `errors[].input` 中的 request body 明文回显（含密钥字段），并把
+# `RequestContext.request_id` 回填到响应 body / `X-Request-Id` header。
+# handler 实现在 `app/api/errors.py`；这里只做 exception 注册，物理位置
+# 紧贴 middleware 注册块，避免与顶部 4 段 facade 桥混淆。
+# 详见 [[40 实施计划/后端模块化治理实施计划与PR清单]] PR-BE-12、
+# [[70 开发过程跟踪/缺陷追踪/CB-02 - PUT providers 422 error 回显 request
+# body 含密钥]]。
+from app.api.errors import validation_error_handler  # noqa: E402
+app.add_exception_handler(RequestValidationError, validation_error_handler)
+
 # --- WebSocket 状态管理器 ---
 class ConnectionManager:
     def __init__(self):
@@ -766,12 +777,10 @@ def friendly_validation_error(errors):
             parts.append(f"{label}格式不正确：{msg}")
     return "\n".join(parts) or "请求参数不正确。"
 
-@app.exception_handler(RequestValidationError)
-async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(
-        status_code=422,
-        content={"detail": friendly_validation_error(exc.errors()), "errors": exc.errors()},
-    )
+# PR-BE-12 短期兜底：`RequestValidationError` handler 已迁移到
+# `app/api/errors.validation_error_handler`，注册点在文件顶部 middleware
+# 注册块（`app.add_exception_handler(RequestValidationError, ...)`）。
+# 本文件保留 `friendly_validation_error` helper（供新 handler 懒 import 复用）。
 
 def model_list(env_name, primary, defaults):
     configured = os.getenv(env_name, "")
