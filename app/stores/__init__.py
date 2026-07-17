@@ -18,6 +18,7 @@ from . import (
     storage_settings_store,
     workflow_store,
 )
+from .legacy_snapshot import LegacySnapshot, SCHEMA_VERSIONS, SchemaVersion
 
 __all__ = [
     "asset_library_store",
@@ -29,4 +30,7 @@ __all__ = [
     "provider_config_store",
     "storage_settings_store",
     "workflow_store",
+    "LegacySnapshot",
+    "SCHEMA_VERSIONS",
+    "SchemaVersion",
 ]

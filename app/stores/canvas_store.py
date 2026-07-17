@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .legacy_snapshot import SchemaVersion, build_snapshot, read_json_source
+
 
 def save_canvas(*args: Any, **kwargs: Any) -> Any:
     # 懒 import 避免与 `main.py` 顶部 `from app.factory import create_app`
@@ -23,3 +25,19 @@ def save_canvas(*args: Any, **kwargs: Any) -> Any:
 def load_canvas(*args: Any, **kwargs: Any) -> Any:
     from main import load_canvas as _impl
     return _impl(*args, **kwargs)
+
+
+def snapshot(canvas_id: str) -> dict[str, Any]:
+    from main import canvas_path
+
+    path = canvas_path(canvas_id)
+    payload, raw_json = read_json_source(path, {})
+    return build_snapshot(
+        payload,
+        raw_json=raw_json,
+        schema_version=SchemaVersion.CANVAS,
+        legacy_id=str(payload.get("id") or canvas_id),
+        legacy_path=path,
+        legacy_url=payload.get("url"),
+        legacy_owner_label=payload.get("owner"),
+    )

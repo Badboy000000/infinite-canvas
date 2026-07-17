@@ -10,7 +10,21 @@ from __future__ import annotations
 
 from typing import Any
 
+from .legacy_snapshot import SchemaVersion, build_snapshot, read_json_source
+
 
 def load_storage_settings(*args: Any, **kwargs: Any) -> Any:
     from main import load_storage_settings as _impl
     return _impl(*args, **kwargs)
+
+
+def snapshot() -> dict[str, Any]:
+    from main import STORAGE_SETTINGS_FILE
+
+    payload, raw_json = read_json_source(STORAGE_SETTINGS_FILE, {})
+    return build_snapshot(
+        payload,
+        raw_json=raw_json,
+        schema_version=SchemaVersion.STORAGE_SETTINGS,
+        legacy_path=STORAGE_SETTINGS_FILE,
+    )

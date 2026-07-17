@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .legacy_snapshot import SchemaVersion, build_snapshot, read_json_source
+
 
 def load_prompt_libraries(*args: Any, **kwargs: Any) -> Any:
     from main import load_prompt_libraries as _impl
@@ -17,3 +19,15 @@ def load_prompt_libraries(*args: Any, **kwargs: Any) -> Any:
 def save_prompt_libraries(*args: Any, **kwargs: Any) -> Any:
     from main import save_prompt_libraries as _impl
     return _impl(*args, **kwargs)
+
+
+def snapshot() -> dict[str, Any]:
+    from main import PROMPT_LIBRARY_PATH
+
+    payload, raw_json = read_json_source(PROMPT_LIBRARY_PATH, {})
+    return build_snapshot(
+        payload,
+        raw_json=raw_json,
+        schema_version=SchemaVersion.PROMPT_LIBRARY,
+        legacy_path=PROMPT_LIBRARY_PATH,
+    )

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .legacy_snapshot import SchemaVersion, build_snapshot, read_json_source
+
 
 def load_conversation(*args: Any, **kwargs: Any) -> Any:
     from main import load_conversation as _impl
@@ -16,3 +18,18 @@ def load_conversation(*args: Any, **kwargs: Any) -> Any:
 def save_conversation(*args: Any, **kwargs: Any) -> Any:
     from main import save_conversation as _impl
     return _impl(*args, **kwargs)
+
+
+def snapshot(user_id: str, conversation_id: str) -> dict[str, Any]:
+    from main import conversation_path
+
+    path = conversation_path(user_id, conversation_id)
+    payload, raw_json = read_json_source(path, {})
+    return build_snapshot(
+        payload,
+        raw_json=raw_json,
+        schema_version=SchemaVersion.CONVERSATION,
+        legacy_id=str(payload.get("id") or conversation_id),
+        legacy_path=path,
+        legacy_owner_label=user_id,
+    )

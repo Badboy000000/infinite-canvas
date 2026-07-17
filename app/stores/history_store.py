@@ -11,7 +11,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from .legacy_snapshot import (
+    SchemaVersion,
+    build_snapshot,
+    read_json_source,
+)
+
 
 def save_to_history(*args: Any, **kwargs: Any) -> Any:
     from main import save_to_history as _impl
     return _impl(*args, **kwargs)
+
+
+def snapshot() -> dict[str, Any]:
+    from main import HISTORY_FILE
+
+    payload, raw_json = read_json_source(HISTORY_FILE, [])
+    return build_snapshot(
+        payload,
+        raw_json=raw_json,
+        schema_version=SchemaVersion.HISTORY,
+        legacy_path=HISTORY_FILE,
+    )
