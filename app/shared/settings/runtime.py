@@ -1,21 +1,21 @@
-"""Settings / RuntimeConfigBootstrap 只读 wrapper — PR-BE-03。
+"""Settings / DeploymentMode / RuntimeConfigBootstrap 只读 wrapper。
 
-本模块只对根 `main.py` 已有的 22 个路径常量与两个启动 helper（`ensure_runtime_config_files`、
-`load_env_file`）做**只读包裹**：
+本模块对根 `main.py` 已有的 23 个路径常量、部署模式与两个启动 helper
+（`ensure_runtime_config_files`、`load_env_file`）做**只读包裹**：
 
-- `Settings`：`@dataclass(frozen=True)`，字段与 `main.py` 现有 22 个路径常量 1:1 对应
-  （见下方"字段 → 原常量映射表"）；不新增字段，不引入 setter。
-- `get_settings() -> Settings`：无参数、无副作用；每次调用从 `main` 模块现读一次快照
-  （承接文件 PR-0 的读时求值语义——虽然 22 个路径常量本身在 `main.py` 首次 import 时
-  即冻结，`Settings` 仍保持"读时构造"以便未来 `data/storage_settings.json` 或环境注入
-  能够透过 wrapper 生效）。
+- `Settings`：`@dataclass(frozen=True)`；保留 23 个路径字段并追加部署 PR-01
+  的非敏感运行开关，不引入 setter。
+- `DeploymentMode`：从 `IC_DEPLOYMENT_MODE` 读取三种受支持模式。
+- `get_settings() -> Settings`：deployment / security 字段在进程内首次读取后冻结，
+  后续配置变化要求重启；23 个既有路径字段仍在每次调用时从 `main` 模块现读，
+  保留 monkeypatch 与既有读时求值契约。
 - `RuntimeConfigBootstrap`：一次性副作用封装。**本 PR 不接管**根 `main.py` 里已经执行的
   `ensure_runtime_config_files()` / `load_env_file()` 调用点（L627-628），只提供只读入口
   供未来 wave 消费。
 
 签名冻结（本 PR 不许改）：
 - `get_settings() -> Settings`（无参数）。
-- `Settings` 22 字段的字段名与顺序。
+- `Settings` 原 23 个路径字段的字段名与顺序。
 - `RuntimeConfigBootstrap.ensure_runtime_config_files()`、`.load_env_file()` 签名。
 
 不做：
@@ -27,14 +27,43 @@
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from enum import Enum
+from functools import lru_cache
+from types import MappingProxyType
+from typing import Mapping
+
+
+class DeploymentMode(str, Enum):
+    """Supported deployment trust boundaries."""
+
+    LOCAL_PERSONAL = "local_personal"
+    INTRANET_TEAM = "intranet_team"
+    PUBLIC_TEAM = "public_team"
+
+    @classmethod
+    def from_environment(cls) -> DeploymentMode:
+        """Read and validate ``IC_DEPLOYMENT_MODE``."""
+        raw_value = os.environ.get("IC_DEPLOYMENT_MODE")
+        if raw_value is None:
+            return cls.LOCAL_PERSONAL
+
+        normalized = raw_value.strip().lower()
+        try:
+            return cls(normalized)
+        except ValueError as exc:
+            allowed = ", ".join(mode.value for mode in cls)
+            raise ValueError(
+                f"Invalid IC_DEPLOYMENT_MODE {raw_value!r}; expected one of: {allowed}"
+            ) from exc
 
 
 @dataclass(frozen=True)
 class Settings:
     """只读运行时配置快照。
 
-    字段 → `main.py` 原常量映射（22 项，1:1）：
+    路径字段 → `main.py` 原常量映射（23 项，1:1）：
         base_dir                       → BASE_DIR
         workflow_dir                   → WORKFLOW_DIR
         static_dir                     → STATIC_DIR
@@ -90,14 +119,69 @@ class Settings:
     # 断言精确匹配 23 项字段清单。
     data_db_path: str
 
+    # Deployment PR-01 adds a mode declaration and the non-secret switches that
+    # later security PRs will consume. Defaults mirror today's runtime exactly;
+    # this PR does not wire them into main.py, CORS, routes, or static mounts.
+    deployment_mode: DeploymentMode = DeploymentMode.LOCAL_PERSONAL
+    bind_host: str = "0.0.0.0"
+    bind_port: int = 3000
+    public_base_url: str = ""
+    cors_allowed_origins: tuple[str, ...] = ("*",)
+    session_cookie_name: str = "infinite_canvas_session"
+    csrf_enabled: bool = False
+    enable_require_auth: bool = False
+    enable_admin_only_endpoints: bool = False
+    file_url_mode: str = "legacy"
+    log_dir: str = ""
+
+
+@lru_cache(maxsize=1)
+def _deployment_snapshot() -> Mapping[str, object]:
+    """Return the immutable process-lifetime deployment/security snapshot.
+
+    This is deliberately private: production callers consume the single public
+    ``Settings`` contract via ``get_settings()``.  Caching only this group keeps
+    deployment and security switches restart-bound without freezing the 23
+    legacy path fields that must remain call-time resolved.
+    """
+    import main  # lazy import avoids main -> settings -> main cycles
+
+    return MappingProxyType(
+        {
+            "deployment_mode": DeploymentMode.from_environment(),
+            "bind_host": "0.0.0.0",
+            "bind_port": 3000,
+            "public_base_url": "",
+            "cors_allowed_origins": ("*",),
+            "session_cookie_name": "infinite_canvas_session",
+            "csrf_enabled": False,
+            "enable_require_auth": False,
+            "enable_admin_only_endpoints": False,
+            "file_url_mode": "legacy",
+            "log_dir": os.path.join(main.BASE_DIR, "logs"),
+        }
+    )
+
+
+def _reset_settings_cache_for_tests() -> None:
+    """Clear process-lifetime settings state for isolated tests only.
+
+    The helper is intentionally absent from this module's ``__all__`` and from
+    ``app.shared.settings``.  Runtime configuration changes still require a
+    process restart; tests use this private seam to model a fresh process.
+    """
+    _deployment_snapshot.cache_clear()
+
 
 def get_settings() -> Settings:
-    """现读 `main.py` 中 22 个路径常量并构造 `Settings` 只读快照。
+    """组装动态路径与进程级 deployment/security 的只读 `Settings`。
 
     - 无参数、无副作用（不写盘、不改环境变量、不修改 `main` 模块属性）。
-    - 每次调用都会重新从 `main` 模块 attribute 现读一次；如未来测试或运维通过
+    - 23 个路径字段每次调用都会从 `main` 模块 attribute 现读；如测试通过
       `monkeypatch.setattr(main, "STORAGE_SETTINGS_FILE", ...)` 之类的手段动态
       注入，`get_settings()` 会立即反映最新值。
+    - deployment / security 字段只在进程内首次调用时读取；后续环境变量变化
+      不生效，配置变更要求重启进程。
     - 内部 `import main` 是懒 import，避免形成 `main → app.shared.settings → main`
       的循环导入（`main.py` 顶部会 `from app.shared.settings import get_settings`）。
     """
@@ -127,6 +211,7 @@ def get_settings() -> Settings:
         global_config_file=main.GLOBAL_CONFIG_FILE,
         storage_settings_file=main.STORAGE_SETTINGS_FILE,
         data_db_path=main.DATA_DB_PATH,
+        **_deployment_snapshot(),
     )
 
 
@@ -161,4 +246,4 @@ class RuntimeConfigBootstrap:
         main.load_env_file()
 
 
-__all__ = ["Settings", "get_settings", "RuntimeConfigBootstrap"]
+__all__ = ["DeploymentMode", "Settings", "get_settings", "RuntimeConfigBootstrap"]

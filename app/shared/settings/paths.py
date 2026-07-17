@@ -15,7 +15,7 @@
 - `PathResolver.current_generated_dir() -> str`
 - `PathResolver.current_local_dir() -> str`
 
-以及只读属性代理，把 `Settings` 22 项字段全部暴露为 `PathResolver.<field>`
+以及只读属性代理，把 `Settings` 字段全部暴露为 `PathResolver.<field>`
 形式的属性——方便调用侧不必区分"启动时锚点"与"运行时求值"两套 API：
 - `PathResolver.base_dir`（等）返回 `get_settings().<field>`（启动时锚点，
   每次现读 `main` 属性）。
@@ -74,7 +74,7 @@ class PathResolver:
 
         return main.current_local_dir()
 
-    # ---- Settings 22 项字段的只读代理（启动时锚点，非运行时求值） --------
+    # ---- Settings 字段的只读代理（启动时锚点，非运行时求值） ------------
 
     def snapshot(self) -> Settings:
         """返回一份 `Settings` frozen dataclass 快照。等价于 `get_settings()`。"""

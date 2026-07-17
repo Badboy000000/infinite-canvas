@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 
-# 字段名 → main.py 常量名映射（23 项 = 22 首批 + 1 数据 PR-1 新增）
+# 路径字段名 → main.py 常量名映射（23 项 = 22 首批 + 1 数据 PR-1 新增）
 FIELD_TO_MAIN_CONST = {
     "base_dir": "BASE_DIR",
     "workflow_dir": "WORKFLOW_DIR",
@@ -49,6 +49,30 @@ FIELD_TO_MAIN_CONST = {
     "data_db_path": "DATA_DB_PATH",
 }
 
+DEPLOYMENT_FIELDS = {
+    "deployment_mode",
+    "bind_host",
+    "bind_port",
+    "public_base_url",
+    "cors_allowed_origins",
+    "session_cookie_name",
+    "csrf_enabled",
+    "enable_require_auth",
+    "enable_admin_only_endpoints",
+    "file_url_mode",
+    "log_dir",
+}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_deployment_settings_cache():
+    """Model a fresh process around every test without exposing a public API."""
+    from app.shared.settings.runtime import _reset_settings_cache_for_tests
+
+    _reset_settings_cache_for_tests()
+    yield
+    _reset_settings_cache_for_tests()
+
 
 def test_settings_is_frozen_dataclass():
     """`Settings` 是 frozen dataclass；对字段赋值必须报错。"""
@@ -63,10 +87,11 @@ def test_settings_is_frozen_dataclass():
         settings.base_dir = "/tmp/should-fail"  # type: ignore[misc]
 
 
-def test_settings_fields_match_main_constants():
-    """22 字段清单严格对应 `main.py` 22 个路径常量。
+def test_settings_fields_preserve_main_constant_contract():
+    """原有 23 个路径字段继续严格对应 `main.py` 常量。
 
-    - 字段数量 == 22。
+    - 路径字段数量与名字不变。
+    - 新增字段仅为部署 PR-01 的非敏感字段。
     - 每个字段 → 对应 `main` 属性存在且等值。
     """
     import main
@@ -74,11 +99,12 @@ def test_settings_fields_match_main_constants():
     from app.shared.settings import Settings, get_settings
 
     fields = {f.name for f in dataclasses.fields(Settings)}
-    assert len(fields) == 23, f"Settings 字段数应为 23（22 首批 + 1 数据 PR-1）, 当前 {len(fields)}: {fields}"
-    assert fields == set(FIELD_TO_MAIN_CONST.keys()), (
+    expected_fields = set(FIELD_TO_MAIN_CONST) | DEPLOYMENT_FIELDS
+    assert len(FIELD_TO_MAIN_CONST) == 23
+    assert fields == expected_fields, (
         f"Settings 字段名与映射表不一致：\n"
         f"  Settings.fields = {sorted(fields)}\n"
-        f"  expected        = {sorted(FIELD_TO_MAIN_CONST.keys())}"
+        f"  expected        = {sorted(expected_fields)}"
     )
 
     settings = get_settings()
@@ -244,3 +270,121 @@ def test_get_settings_reflects_monkeypatched_main_attr(monkeypatch):
     assert get_settings().canvas_dir == "/tmp/patched_canvas_dir"
     # monkeypatch 会在 fixture teardown 里恢复原值；本函数返回后 main.CANVAS_DIR
     # 会回到 `original`。此处不能内联断言 teardown 效果——teardown 尚未执行。
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("local_personal", "local_personal"),
+        ("INTRANET_TEAM", "intranet_team"),
+        (" Public_Team ", "public_team"),
+    ],
+)
+def test_deployment_mode_supports_all_modes_case_insensitively(
+    monkeypatch, raw_value, expected
+):
+    from app.shared.settings import DeploymentMode, get_settings
+
+    monkeypatch.setenv("IC_DEPLOYMENT_MODE", raw_value)
+    settings = get_settings()
+
+    assert settings.deployment_mode is DeploymentMode(expected)
+
+
+def test_deployment_mode_defaults_to_current_local_behavior(monkeypatch):
+    from app.shared.settings import DeploymentMode, get_settings
+
+    monkeypatch.delenv("IC_DEPLOYMENT_MODE", raising=False)
+    settings = get_settings()
+
+    assert settings.deployment_mode is DeploymentMode.LOCAL_PERSONAL
+    assert settings.bind_host == "0.0.0.0"
+    assert settings.bind_port == 3000
+    assert settings.cors_allowed_origins == ("*",)
+    assert settings.csrf_enabled is False
+    assert settings.enable_require_auth is False
+    assert settings.enable_admin_only_endpoints is False
+    assert settings.file_url_mode == "legacy"
+
+
+@pytest.mark.parametrize("raw_value", ["", "local", "public", "unknown"])
+def test_invalid_deployment_mode_fails_fast(monkeypatch, raw_value):
+    from app.shared.settings import get_settings
+
+    monkeypatch.setenv("IC_DEPLOYMENT_MODE", raw_value)
+    with pytest.raises(ValueError, match="Invalid IC_DEPLOYMENT_MODE"):
+        get_settings()
+
+
+def test_deployment_settings_are_immutable_until_process_restart(monkeypatch):
+    from app.shared.settings import DeploymentMode, get_settings
+
+    monkeypatch.setenv("IC_DEPLOYMENT_MODE", "local_personal")
+    first = get_settings()
+    assert first.deployment_mode is DeploymentMode.LOCAL_PERSONAL
+
+    monkeypatch.setenv("IC_DEPLOYMENT_MODE", "intranet_team")
+    second = get_settings()
+
+    assert second is not first, "get_settings() 仍应按次组装动态路径快照"
+    assert second.deployment_mode is DeploymentMode.LOCAL_PERSONAL
+    assert second.csrf_enabled is first.csrf_enabled
+    assert second.enable_require_auth is first.enable_require_auth
+    assert second.enable_admin_only_endpoints is first.enable_admin_only_endpoints
+
+
+def test_private_reset_helper_models_process_restart(monkeypatch):
+    from app.shared.settings import DeploymentMode, get_settings
+    from app.shared.settings.runtime import _reset_settings_cache_for_tests
+
+    monkeypatch.setenv("IC_DEPLOYMENT_MODE", "local_personal")
+    assert get_settings().deployment_mode is DeploymentMode.LOCAL_PERSONAL
+
+    monkeypatch.setenv("IC_DEPLOYMENT_MODE", "public_team")
+    _reset_settings_cache_for_tests()
+    assert get_settings().deployment_mode is DeploymentMode.PUBLIC_TEAM
+
+
+def test_dynamic_paths_and_stable_deployment_share_one_settings(monkeypatch):
+    """路径 monkeypatch 生效，但同进程 deployment 快照保持不变。"""
+    import main
+
+    from app.shared.settings import DeploymentMode, Settings, get_settings
+
+    monkeypatch.setenv("IC_DEPLOYMENT_MODE", "intranet_team")
+    first = get_settings()
+
+    monkeypatch.setenv("IC_DEPLOYMENT_MODE", "public_team")
+    monkeypatch.setattr(main, "CANVAS_DIR", "/tmp/recomputed_canvas_dir")
+    second = get_settings()
+
+    assert isinstance(first, Settings)
+    assert isinstance(second, Settings)
+    assert second.canvas_dir == "/tmp/recomputed_canvas_dir"
+    assert second.deployment_mode is DeploymentMode.INTRANET_TEAM
+
+
+def test_private_reset_helper_is_not_public_api():
+    import app.shared.settings as settings_package
+
+    assert "_reset_settings_cache_for_tests" not in settings_package.__all__
+    assert not hasattr(settings_package, "_reset_settings_cache_for_tests")
+
+
+def test_settings_snapshot_contains_no_secret_values(monkeypatch):
+    """Settings 只读快照不得吸收同进程中的凭据环境变量。"""
+    from app.shared.settings import get_settings
+
+    sentinel = "sk-DEPLOYMENT-PR01-MUST-NOT-LEAK"
+    monkeypatch.setenv("OPENAI_API_KEY", sentinel)
+    monkeypatch.setenv("IC_SESSION_SECRET", sentinel)
+    monkeypatch.setenv("AUTHORIZATION", sentinel)
+
+    snapshot = dataclasses.asdict(get_settings())
+    assert sentinel not in repr(snapshot)
+    assert not {
+        "api_key",
+        "authorization",
+        "token",
+        "session_secret",
+    }.intersection(snapshot)
