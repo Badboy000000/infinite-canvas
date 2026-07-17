@@ -26,6 +26,7 @@
     <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.07.15.1784163421"></script>
     <script src="/static/js/theme.js?v=2026.07.15.1784163421"></script>
     <script src="/static/js/i18n.js?v=2026.07.15.1784163421"></script>
+    <script src="/static/js/shared/messaging/bootstrap.js?v=2026.07.15.1784280434"></script>
     <style>
         @import url('/static/vendor/css/fonts.css?v=2026.07.15.1784163421');
 
@@ -1679,8 +1680,8 @@
             <iframe id="frame-online" data-src="/static/online.html?v=2026.07.15.1784265180" scrolling="yes"></iframe>
             <iframe id="frame-gpt-chat" data-src="/static/gpt-chat.html?v=2026.07.15.1784265180" scrolling="yes"></iframe>
             <iframe id="frame-asset-manager" data-src="/static/asset-manager.html?v=2026.07.15.1784265180" scrolling="yes"></iframe>
-            <iframe id="frame-api-settings" data-src="/static/api-settings.html?v=2026.07.15.1784274633" scrolling="yes"></iframe>
-            <iframe id="frame-comfyui-settings" data-src="/static/comfyui-settings.html?v=2026.07.15.1784274633" scrolling="yes"></iframe>
+            <iframe id="frame-api-settings" data-src="/static/api-settings.html?v=2026.07.15.1784280498" scrolling="yes"></iframe>
+            <iframe id="frame-comfyui-settings" data-src="/static/comfyui-settings.html?v=2026.07.15.1784280498" scrolling="yes"></iframe>
             <iframe id="frame-canvas" data-src="/static/canvas-list.html?v=2026.07.15.1784274633" scrolling="yes"></iframe>
 
         </main>
@@ -1784,6 +1785,34 @@
         }
         const CID = localStorage.getItem("client_id") || generateUUID();
         localStorage.setItem("client_id", CID);
+        const studioMessageConnection = window.StudioMessaging.connect({
+            localClientId: CID,
+            types: [
+                'providers-changed', 'workflows-changed', 'comfy-instances-changed',
+                'stats', 'cloud_status', 'canvas_updated', 'asset_library_updated', 'studio-theme'
+            ],
+            onMessage(message){
+                if(message.type === 'providers-changed' || message.type === 'workflows-changed' || message.type === 'comfy-instances-changed') {
+                    forwardStudioApiChange(message);
+                } else if(message.type === 'stats') {
+                    const ov = document.getElementById('online-val');
+                    if (ov) ov.innerText = message.online_count;
+                } else if(message.type === 'cloud_status' || message.type === 'canvas_updated') {
+                    const iframe = document.querySelector('iframe.active');
+                    if (iframe?.contentWindow) iframe.contentWindow.postMessage(message, '*');
+                } else if(message.type === 'asset_library_updated') {
+                    document.querySelectorAll('iframe').forEach(iframe => {
+                        if (iframe?.contentWindow) iframe.contentWindow.postMessage(message, '*');
+                    });
+                } else if(message.type === 'studio-theme') {
+                    document.querySelectorAll('iframe').forEach(syncThemeToFrame);
+                }
+            },
+            storageEvent: {
+                toMessage: event => (event.key === 'studio_theme' || event.key === 'canvas_theme')
+                    ? { type:'studio-theme', theme:event.newValue || 'light' } : null
+            }
+        });
         const ACTIVE_PAGE_KEY = 'studio_active_page';
         const LOCAL_NAV_COLLAPSED_KEY = 'studio_local_nav_collapsed';
         const SIDEBAR_SETTINGS_COLLAPSED_KEY = 'studio_sidebar_settings_collapsed';
@@ -1917,16 +1946,6 @@
             });
         }
 
-        window.addEventListener('message', event => {
-            if (event.origin && event.origin !== location.origin) return;
-            forwardStudioApiChange(event.data);
-        });
-
-        try {
-            const studioApiChannel = new BroadcastChannel('studio-api');
-            studioApiChannel.onmessage = event => forwardStudioApiChange(event.data);
-        } catch(e) {}
-
         function restoreActivePage() {
             restoreSidebarPinned();
             const id = PAGE_IDS.includes(localStorage.getItem(ACTIVE_PAGE_KEY)) ? localStorage.getItem(ACTIVE_PAGE_KEY) : DEFAULT_PAGE_ID;
@@ -1963,27 +1982,7 @@
         if (host) {
             const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
             const ws = new WebSocket(`${protocol}://${host}/ws/stats?client_id=${CID}`);
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.type === 'stats') {
-                    const ov = document.getElementById('online-val');
-                    if (ov) ov.innerText = data.online_count;
-                } else if (data.type === 'cloud_status') {
-                    const iframe = document.querySelector('iframe.active');
-                    if (iframe && iframe.contentWindow) {
-                        iframe.contentWindow.postMessage(data, '*');
-                    }
-                } else if (data.type === 'canvas_updated') {
-                    const iframe = document.querySelector('iframe.active');
-                    if (iframe && iframe.contentWindow) {
-                        iframe.contentWindow.postMessage(data, '*');
-                    }
-                } else if (data.type === 'asset_library_updated') {
-                    document.querySelectorAll('iframe').forEach(iframe => {
-                        if (iframe && iframe.contentWindow) iframe.contentWindow.postMessage(data, '*');
-                    });
-                }
-            };
+            studioMessageConnection.attachWebSocket(ws);
             setInterval(syncStatus, 2000);
         }
 

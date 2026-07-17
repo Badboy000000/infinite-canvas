@@ -1,4 +1,9 @@
 function tr(key){ return window.StudioI18n ? window.StudioI18n.t(key) : key; }
+const studioMessageConnection = window.StudioMessaging.connect({ types: [] });
+function broadcastStudioApiChange(type){
+    const message = { type };
+    studioMessageConnection.emit(message);
+}
 function tf(key, vars={}){
     return Object.entries(vars).reduce((text, [k,v]) => text.replaceAll(`{${k}}`, v), tr(key));
 }
@@ -251,8 +256,7 @@ async function saveComfyInstances(){
         const data = await res.json();
         comfyInstances = data.instances || cleaned;
         renderComfyInstances();
-        try { new BroadcastChannel('studio-api').postMessage({ type: 'comfy-instances-changed' }); } catch(e) {}
-        try { window.parent?.postMessage({ type: 'comfy-instances-changed' }, '*'); } catch(e) {}
+        broadcastStudioApiChange('comfy-instances-changed');
         setStatus('ComfyUI 后端地址已保存');
     } catch(e){
         alert(e.message || '保存失败');
@@ -1343,7 +1347,7 @@ async function onUpload(event){
         await loadList();
         selectWorkflow(result.name);
         setStatus(tr('comfy.uploaded') + result.name);
-        new BroadcastChannel('studio-api').postMessage({ type: 'workflows-changed' });
+        broadcastStudioApiChange('workflows-changed');
     } catch(e){ alert(e.message || tr('comfy.uploadFailed')); }
 }
 
@@ -1365,7 +1369,7 @@ async function onSave(){
         if(!res.ok) throw new Error((await res.json()).detail || tr('comfy.saveFailed'));
         setStatus(tr('comfy.saved'));
         await loadList();
-        new BroadcastChannel('studio-api').postMessage({ type: 'workflows-changed' });
+        broadcastStudioApiChange('workflows-changed');
     } catch(e){ alert(e.message || tr('comfy.saveFailed')); setStatus(tr('comfy.saveFailed')); }
 }
 
@@ -1382,7 +1386,7 @@ async function onDelete(){
         renderPreview();
         renderWorkspaceView();
         await loadList();
-        new BroadcastChannel('studio-api').postMessage({ type: 'workflows-changed' });
+        broadcastStudioApiChange('workflows-changed');
     } catch(e){ alert(e.message || tr('comfy.deleteFailed')); }
 }
 

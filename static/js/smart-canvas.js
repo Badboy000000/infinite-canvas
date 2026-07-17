@@ -4958,6 +4958,28 @@ function handleAssetLibraryUpdatedMessage(data={}){
 // 多人协作同步：一个稳定的客户端 id，既用于 WS 连接，也随 saveCanvas 上报，
 // 服务器广播 canvas_updated 时带回 client_id，自己发的就忽略，避免自我刷新。
 const smartClientId = `canvas_smart_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+const smartCanvasMessageConnection = window.StudioMessaging.connect({
+    localClientId: smartClientId,
+    types: [
+        'providers-changed', 'workflows-changed', 'comfy-instances-changed',
+        'asset_library_updated', 'canvas_updated', 'studio-theme'
+    ],
+    onMessage(message){
+        if(['providers-changed', 'workflows-changed', 'comfy-instances-changed'].includes(message.type)) {
+            refreshSmartConfigFromSettings();
+        } else if(message.type === 'asset_library_updated') {
+            handleAssetLibraryUpdatedMessage(message);
+        } else if(message.type === 'canvas_updated') {
+            handleCanvasUpdatedMessage(message);
+        } else if(message.type === 'studio-theme') {
+            applyTheme(message.theme || 'light');
+        }
+    },
+    storageEvent: {
+        toMessage: event => (event.key === 'studio_theme' || event.key === 'canvas_theme')
+            ? { type:'studio-theme', theme:event.newValue || 'light' } : null
+    }
+});
 let canvasSyncInFlight = false;
 let canvasSyncTimer = null;
 let canvasMetaPollTimer = null;
@@ -5248,13 +5270,7 @@ function connectAssetLibrarySyncSocket(){
             retryTimer = setTimeout(connect, 3000);
             return;
         }
-        socket.onmessage = event => {
-            try {
-                const data = JSON.parse(event.data);
-                if(data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(data);
-                if(data?.type === 'canvas_updated') handleCanvasUpdatedMessage(data);
-            } catch(e) {}
-        };
+        smartCanvasMessageConnection.attachWebSocket(socket);
         socket.onclose = () => {
             retryTimer = setTimeout(connect, 3000);
         };
@@ -16985,25 +17001,12 @@ window.addEventListener('resize', () => {
     if(panoramaState.enabled) resizePanoramaViewer();
 });
 window.addEventListener('studio-theme-change', event => applyTheme(event.detail?.theme || 'light'));
-try {
-    const apiChannel = new BroadcastChannel('studio-api');
-    apiChannel.onmessage = async event => {
-        if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed'){
-            await refreshSmartConfigFromSettings();
-        }
-        if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
-        if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
-    };
-} catch(e) {}
 window.addEventListener('focus', () => {
     if(Date.now() - lastConfigRefreshAt > 1200) refreshSmartConfigFromSettings();
 });
 window.addEventListener('message', event => {
     if(event.origin && event.origin !== location.origin) return;
     if(event.data?.type === 'studio-theme') applyTheme(event.data.theme || 'light');
-    if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed') refreshSmartConfigFromSettings();
-    if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
-    if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
     if(event.data?.type === 'studio-lang' && window.StudioI18n) {
         window.StudioI18n.set(event.data.lang || 'zh');
     }

@@ -1,5 +1,6 @@
 let providers = [];
 let selectedId = '';
+const studioMessageConnection = window.StudioMessaging.connect({ types: [] });
 const providerList = document.getElementById('providerList');
 const editorTitle = document.getElementById('editorTitle');
 const statusEl = document.getElementById('status');
@@ -330,9 +331,7 @@ function trf(key, vars={}){
 function setStatus(text){ statusEl.textContent = text || ''; }
 function broadcastStudioApiChange(type='providers-changed'){
     const message = { type, updated_at:Date.now() };
-    try { new BroadcastChannel('studio-api').postMessage(message); } catch(e) {}
-    try { window.parent?.postMessage(message, '*'); } catch(e) {}
-    try { window.top?.postMessage(message, '*'); } catch(e) {}
+    studioMessageConnection.emit(message);
 }
 function rhEditorSideScrollEl(){
     return rhWorkflowEditorNodeList?.closest?.('.rh-workflow-editor-side') || rhWorkflowEditorNodeList;

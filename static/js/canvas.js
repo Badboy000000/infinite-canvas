@@ -215,10 +215,6 @@ async function refreshCanvasConfigFromSettings(){
 window.addEventListener('message', event => {
     if(event.origin && event.origin !== location.origin) return;
     if(event.data?.type === 'studio-lang') applyLanguage(event.data.lang);
-    if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
-    if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed'){
-        refreshCanvasConfigFromSettings();
-    }
     if(event.data?.type === 'canvas-focus'){
         // 从其他标签页切换回画布时，重新拉取工作流列表并刷新节点
         refreshCanvasConfigFromSettings();
@@ -471,6 +467,14 @@ let imageEditBaseH = 0;
 let textSelectionGuard = null;
 const PROMPT_TEXT_MAX_LENGTH = 20000;
 const CLIENT_ID = 'canvas_' + Math.random().toString(36).slice(2);
+const canvasMessageConnection = window.StudioMessaging.connect({
+    localClientId: CLIENT_ID,
+    types: ['providers-changed', 'workflows-changed', 'comfy-instances-changed', 'canvas_updated'],
+    onMessage(message){
+        if(message.type === 'canvas_updated') handleCanvasUpdatedMessage(message);
+        else refreshCanvasConfigFromSettings();
+    }
+});
 const ZOOM_PREVIEW_NODE_DEFAULT_SCALE = 1;
 const ZOOM_PREVIEW_NODE_MAX_SCALE = 1.15;
 const LTX_DIRECTOR_WORKFLOW = 'LTXDirectorv2-API.json';
@@ -1488,15 +1492,7 @@ async function loadConfig(){
     }
 }
 
-// 监听 API 设置页面的变更广播，实时刷新画布的模型/平台下拉
-try {
-    const apiChannel = new BroadcastChannel('studio-api');
-    apiChannel.onmessage = async (e) => {
-        if(e.data?.type === 'providers-changed' || e.data?.type === 'workflows-changed' || e.data?.type === 'comfy-instances-changed'){
-            await refreshCanvasConfigFromSettings();
-        }
-    };
-} catch(e) { /* 不支持 BroadcastChannel 的旧浏览器忽略 */ }
+// API 设置广播与 canvas_updated 均由同步 bootstrap 接入；模块失败时保持旧通道。
 function msChatModelOptions(selected){
     // 单一数据源：从 API 设置里 modelscope 平台的 chat_models 取
     const msProvider = apiProviders.find(p => p.id === 'modelscope');
