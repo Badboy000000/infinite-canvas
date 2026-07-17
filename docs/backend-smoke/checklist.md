@@ -169,6 +169,28 @@ asyncio.run(r())"`
 
 > **§21 编号说明**：§21 承接协调纲要 §保活烟测 中的 BE-20（PR-BE-12）。**Wave 2 收官时 Lead 独立核对（2026-07-17）**：任务 PR-0 与 PR-BE-12 两个并发 subagent 各自将自己列为 §20；Lead 收官时依据 §20 编号说明中的"若并发的任务 PR-0 subagent 抢先占 §20 则本项顺延到 §21"约定，把 PR-BE-12 从 §20 顺延到 §21（任务 PR-0 保持 §20，因其承接的 BE-18-task 与业务口径 BE-18 强绑定不宜移动）。§20 与 §21 命令段完全不冲突，只是文档序号。KB 镜像 [[90 资料归档/后端保活烟测清单模板]] 已同步 `diff -q` exit=0。
 
+## 22. Legacy Store snapshot 契约（数据 PR-2）
+
+- 命令：`python -m pytest tests/stores -q`
+- 期望：**58 passed**；9 个 Store 均提供 `snapshot()`；8 个普通 Store 的 payload 与 raw_json 来自同一次读取；Provider snapshot 对嵌套未知结构、URL query、`raw` / `workflowJson` 中的密钥做深度脱敏；原 load/save 行为不变。归属：数据 PR-2。
+
+## 23. TaskService + worker 事务边界（任务 PR-1）
+
+- 命令：`python -m pytest tests/task -q`
+- 期望：**73 passed**；`TaskService` / `ProviderTaskService` / `NodeRunService`、`TaskExecutor` / `TaskDispatcher` 与默认关闭的进程内 worker 均可导入；SQLite lease 使用 DB CAS；同一 task 的 event seq 并发单调；Memory / SQLite UoW 均支持回滚；retry 必须重新进入状态机。归属：任务 PR-1。
+
+## 24. Provider adapter 契约与注册表（Provider PR-01）
+
+- 命令：`python -m pytest tests/provider -q`
+- 期望：**21 passed**；adapter 基类、统一异常、注册表和状态映射可用；`canceled <-> cancelled`、`submitted <-> waiting_upstream` 映射明确；`main.py`、路由和 FastAPI 启动装配零触碰。归属：Provider PR-01。
+
+## 25. DeploymentMode 进程稳定配置（部署 PR-01）
+
+- 命令：`python -m pytest tests/shared -q`
+- 期望：**25 passed**；部署模式与安全快照在进程生命周期内稳定，目录路径字段仍保持读时求值；不包含启动装配和生产基础设施变更。归属：部署 PR-01。
+
+> **第三批 Wave 0 Lead 核验**：专题测试合计 **189 passed**；全量测试 **333 passed / 35 skipped**。当前 Python 3.13.5 + FastAPI 0.136.1 + Pydantic 2.12.5 环境下，严格 OpenAPI 旧 baseline 存在 6 处依赖生成差异（5 处 binary schema 表达变化 + `ValidationError` 新增 `ctx` / `input`），但本批 `main.py`、`app/api/**`、路由、DTO 与 baseline 文件均零改动，132 条 path 和 security schemes 无差异；不得通过更新 baseline 掩盖该环境漂移。
+
 ---
 
 ## 附：OpenAPI baseline 差异校验

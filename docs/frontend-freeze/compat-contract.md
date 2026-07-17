@@ -214,7 +214,7 @@
 
 ### 4.5 冻结要点
 
-- 共 **29 项** key（localStorage 28 + sessionStorage 1），覆盖协调纲要要求的 20+。
+- 共 **30 项** key（localStorage 29 + sessionStorage 1），覆盖协调纲要要求的 20+。
 - 治理方案硬约束：**PR-3 不合并、不改名任何一个 key**，`namespaced.js` 只能对新增 key 用 `studio:<domain>:<subject>:v<n>` 生成器；旧 key 只常量化。
 - `smart_canvas_asset_inbox` 素材 inbox 跨页通道属**已知历史遗留**，M6 / M7 页面迁移时才处理（保持双写）。
 
