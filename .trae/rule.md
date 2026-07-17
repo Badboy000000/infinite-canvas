@@ -109,3 +109,31 @@ Knowledge-base completion records and Git delivery must describe the same work. 
 - At delivery, verify that the PR's commit is reachable from the recorded remote branch and that no in-scope change remains uncommitted. Report any unrelated pre-existing working-tree changes separately.
 - Historical recovery commits that cover more than one recorded PR require explicit Lead approval and must map every included PR to the recovery commit in the status ledger. They are a repair mechanism, not the normal workflow.
 - Unless the user or task explicitly says not to push, governance implementation work is expected to complete the local commit, remote push, and knowledge-base commit-hash write-back in the same delivery cycle.
+
+## Test Artifact Hygiene
+
+Every time you run tests, backend/frontend smoke checks, contract tests, or ad-hoc `curl` verification against the local server, you MUST leave the repository in a clean "production code only" state before finishing the turn. The repository is not a scratch space; test artifacts are not deliverables.
+
+Canonical cleanup script: `tools/cleanup_test_artifacts.py`.
+
+Mandatory workflow after any test / smoke / verification run:
+
+1. Preview: `python tools/cleanup_test_artifacts.py` — dry-run listing everything the script would remove.
+2. Apply: `python tools/cleanup_test_artifacts.py --apply` — actually remove the listed items.
+3. Verify: `git status` should now show only the intended production diff. No `__pycache__/`, `.pytest_cache/`, stray top-level letter directories (`X/` / `Y/` / `Z/`), empty smoke-only `output/` subdirs, or `__smoke*` entries inside `data/api_providers.json` / `data/canvases/*.json`.
+
+The script covers:
+
+- Python caches: recursive `__pycache__/`, `*.pyc`, `*.pyo`, top-level `.pytest_cache/`.
+- Stray empty letter directories at the repo root (`X/`, `Y/`, `Z/`) created by ad-hoc curl / adhoc scripts.
+- Empty smoke-only output subdirs (`output/input/`, `output/output/`) — deleted only when empty, real generated artifacts are preserved.
+- Smoke pollution in `data/`: provider entries with `id` starting with `__smoke` inside `data/api_providers.json`, and canvas files whose `title` starts with `__smoke` (or is exactly `smoke`) inside `data/canvases/`.
+
+The script never touches: `API/.env*`, `app/`, `docs/`, `tests/`, `tools/`, `static/`, `packages/`, `assets/`, `workflows/`, or the rest of `data/` (asset library, conversations, history — real user data).
+
+Rules:
+
+- If you added a new class of test artifact (a new temp directory, a new smoke fixture pattern in `data/`, etc.), extend `tools/cleanup_test_artifacts.py` in the same commit — do not leave "please clean up manually" notes for the next agent.
+- If a real (non-smoke) file happens to match a smoke pattern, rename the file rather than weakening the pattern.
+- `.gitignore` already excludes the cache classes; cleanup is still required so `git status` is meaningful for anyone else inspecting the working tree.
+- Subagents that run tests must run the cleanup script themselves before reporting completion; the lead will re-verify with `git status`.

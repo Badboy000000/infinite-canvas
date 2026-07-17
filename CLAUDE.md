@@ -137,4 +137,3 @@ Rules:
 - If a real (non-smoke) file happens to match a smoke pattern, rename the file rather than weakening the pattern.
 - `.gitignore` already excludes the cache classes; cleanup is still required so `git status` is meaningful for anyone else inspecting the working tree.
 - Subagents that run tests must run the cleanup script themselves before reporting completion; the lead will re-verify with `git status`.
-
