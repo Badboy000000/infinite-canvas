@@ -1,5 +1,5 @@
-"""路由分组占位。
+"""FastAPI 路由分组。
 
-按 [[后端模块化治理实施计划与PR清单]] PR-BE-05/06/07/08/09/10 分批把
-根 `main.py` 中的路由迁到此处。PR-BE-01 阶段本包无任何 router。
+PR-BE-05 首批迁入 system、storage、history、workflows 与 comfyui 六条低风险
+只读路由；后续批次继续按后端模块化正式计划增量迁移。
 """

@@ -49,6 +49,12 @@ from app.shared.settings import (  # noqa: E402,F401
 # [[40 实施计划/数据模型治理实施计划与PR清单]] PR-1、
 # [[50 决策记录/决策 - ORM 与迁移工具选型]]。
 from app.db import engine as _db_engine  # noqa: E402,F401  # facade re-export
+# --- PR-BE-05 low-risk read-only router assembly ----------------------------
+from app.api.routers.comfyui import create_router as create_comfyui_router  # noqa: E402
+from app.api.routers.history import create_router as create_history_router  # noqa: E402
+from app.api.routers.storage import create_router as create_storage_router  # noqa: E402
+from app.api.routers.system import create_router as create_system_router  # noqa: E402
+from app.api.routers.workflows import create_router as create_workflows_router  # noqa: E402
 # ---------------------------------------------------------------------------
 import json
 import uuid
@@ -1897,7 +1903,6 @@ def parse_prompt_template_markdown(text: str):
         })
     return templates
 
-@app.get("/api/app-info")
 def app_info():
     version = current_app_version()
     return {
@@ -1923,6 +1928,8 @@ def app_info():
         },
         "update_notes": read_local_update_notes(version),
     }
+
+app.include_router(create_system_router(app_info))
 
 def connectivity_probe(name: str, url: str, timeout: float = 5.0) -> Dict[str, Any]:
     started = time.time()
@@ -12576,7 +12583,6 @@ async def jimeng_query_media(payload: JimengQueryMediaRequest):
     except HTTPException as exc:
         return {"status": "failed", "submit_id": submit_id, "kind": kind, "error": str(getattr(exc, "detail", "") or exc)}
 
-@app.get("/api/config")
 async def ai_config():
     preferred_chat_model = next((m for m in CHAT_MODELS if m == "gpt-5.5"), CHAT_MODELS[0] if CHAT_MODELS else CHAT_MODEL)
     providers = public_api_providers()
@@ -12594,9 +12600,10 @@ async def ai_config():
         "has_ms_key": bool(modelscope_api_key()),
     }
 
-@app.get("/api/models")
 async def ai_models():
     return {"chat_models": CHAT_MODELS, "image_models": IMAGE_MODELS, "video_models": VIDEO_MODELS}
+
+app.include_router(create_storage_router(ai_config, ai_models))
 
 @app.get("/api/providers")
 async def api_providers():
@@ -16422,7 +16429,6 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
 
 # --- 历史记录 ---
 
-@app.get("/api/history")
 async def get_history_api(type: str = None):
     if os.path.exists(HISTORY_FILE):
         try:
@@ -16444,6 +16450,8 @@ async def get_history_api(type: str = None):
             print(f"读取历史文件失败: {e}")
             return []
     return []
+
+app.include_router(create_history_router(get_history_api))
 
 @app.get("/api/queue_status")
 async def get_queue_status(client_id: str):
@@ -17536,9 +17544,10 @@ def runninghub_collect_workflow_fields(workflow_json):
 class ComfyInstancesPayload(BaseModel):
     instances: List[str] = []
 
-@app.get("/api/comfyui/instances")
 def get_comfyui_instances():
     return {"instances": COMFYUI_INSTANCES}
+
+app.include_router(create_comfyui_router(get_comfyui_instances))
 
 @app.put("/api/comfyui/instances")
 def save_comfyui_instances(payload: ComfyInstancesPayload):
@@ -17576,7 +17585,6 @@ def save_comfyui_instances(payload: ComfyInstancesPayload):
     BACKEND_LOCAL_LOAD = new_load
     return {"instances": COMFYUI_INSTANCES}
 
-@app.get("/api/workflows")
 def list_workflows():
     if not os.path.isdir(WORKFLOW_DIR):
         return {"workflows": []}
@@ -17606,6 +17614,8 @@ def list_workflows():
             })
     items.sort(key=lambda item: (0 if item["name"].startswith(f"{CUSTOM_WORKFLOW_FOLDER}/") else 1, item["title"]))
     return {"workflows": items}
+
+app.include_router(create_workflows_router(list_workflows))
 
 @app.get("/api/workflows/{name:path}")
 def get_workflow(name: str):
