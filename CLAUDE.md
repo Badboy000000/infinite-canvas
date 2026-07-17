@@ -77,6 +77,13 @@ Before delegation:
 
 Every delegated task must include the objective, constraints, edit permission, owned files or modules, expected output, acceptance criteria, required checks, and explicit exclusions.
 
+For concurrent governance work, the lead must also:
+
+- Give each subagent an explicit cross-topic write-back matrix. The final report must mark every listed repository and knowledge-base target as updated or not applicable, with evidence or a reason.
+- Reserve shared identifiers before dispatch, including smoke-check sections, OpenAPI registration slots, current-map `M-` numbers, and any other shared sequence. Subagents must not choose identifiers from a shared pool themselves.
+- Require evidence for declared zero-touch areas. "No change" is a delivery fact and must be verified with a scoped diff or equivalent check.
+- Keep the root knowledge-base Index under lead ownership during concurrent work. Subagents report required Index changes; the lead applies them once during wave or batch close-out.
+
 Every subagent report must include inspected files and notes, findings or decisions, changed files, commands or tests run, completion evidence, unresolved risks, and recommended next action.
 
 The lead resolves contradictions between agent outputs, owns final synthesis, verifies actual repository state, and must not rely only on a subagent self-report.
