@@ -143,6 +143,18 @@ asyncio.run(r())"`
 
 > **烟测编号与协调纲要对齐说明**：本 checklist 的 §15 / §16 / §17 / §18 分别对应协调纲要 [[2026-07-17 第二批 PR 开工协调纲要#保活烟测（继续）]] 中的 BE-15 / BE-16 / BE-19 / BE-17。**BE-18（任务 PR-0）编号保留给 Wave 2**——本 checklist 待其 PR 合入后再落项。文档内的 `##` 序号必须连续（不许跳号），所以协调纲要的 BE-19 在本 checklist 中占用序号 §17，数据 PR-1 的 BE-17 在此占用序号 §18（编号是"业务口径" vs "文档口径"两套映射）。
 
+## 20. Task 层表结构 + Store 端口 + 契约测试（任务 PR-0，承接协调纲要 BE-18-task）
+
+- 命令：
+  - `python -c "from app.task.contracts import Task, TaskDraft, NodeRun, NodeRunDraft, ProviderTask, ProviderTaskDraft, TaskEvent, TaskEventDraft, Artifact, ArtifactDraft, CasFailure, RecoveryFilter, LeaseInfo; from app.task.tables import TASK_LAYER_TABLE_NAMES; from app.db.base import metadata; assert set(TASK_LAYER_TABLE_NAMES) <= set(metadata.tables), (list(metadata.tables), TASK_LAYER_TABLE_NAMES); from app.task.store import memory_stores, TaskStore, NodeRunStore, ProviderTaskStore, TaskEventStore, ArtifactStore; print('ok')"`
+  - `DATA_DB_PATH=$(pwd)/be18_task_smoke.db python main.py migrate head && python -c "import sqlite3; c=sqlite3.connect('be18_task_smoke.db'); rows=sorted(r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'\")); print('tables=', rows); v=[r[0] for r in c.execute('SELECT version_num FROM alembic_version')]; print('version=', v)" && rm -f be18_task_smoke.db`
+  - `python -m pytest tests/task/ -v`
+- 期望：
+  - 首条：五个 Snapshot dataclass + 五个 Draft dataclass + `CasFailure` / `RecoveryFilter` / `LeaseInfo` import 成功；`app/task/tables.py` 5 张表**全部**已挂到 `app.db.base.metadata`；`memory_stores()` / 5 个 Store `Protocol` import 成功；打印 `ok`。
+  - 次条：`migrate head` exit=0；输出 `tables=['alembic_version', 'artifacts', 'node_runs', 'provider_tasks', 'task_events', 'tasks']`（6 项，含 `alembic_version`）；`version=['0001_task_layer']`。
+  - 末条：`tests/task/` 全绿（3 个测试文件 · 48 项 = `test_migration_0001.py` 5 项 + `test_metadata_singleton.py` 3 项 + `test_store_contract.py` 40 项含 memory/sqlite 参数化）。
+- 关联事实：**首个真 Alembic revision** = `0001_task_layer`（`down_revision=None`）；5 张表主键 `UUID`，`task_events.id` 破例 `BIGINT AUTOINCREMENT`（SQLite 侧走 `INTEGER PRIMARY KEY` 快路径）；4 类必备索引 `(status, updated_at)` / `(idempotency_key)` UNIQUE / `(canvas_id, node_id)` / `(provider_id, upstream_task_id)` 全部就位；Store 端口签名冻结（六类接口：CRUD / CAS / lease / heartbeat / append seq 单调 / recovery scan）；`main.py` 零改动；`openapi_diff.py --baseline` exit=0；`base.metadata.tables` 从 0 → 5 表（数据 PR-1 起点为空）。归属：任务 PR-0（Wave 2）。
+
 ## 20. RequestValidationError handler 短期兜底（PR-BE-12，承接编号 BE-20）
 
 - 命令：

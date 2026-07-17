@@ -95,13 +95,23 @@ def test_metadata_naming_convention():
 
 
 def test_metadata_has_no_tables_at_baseline():
-    """本 PR 硬约束：`base.metadata` 在数据 PR-1 落地时不定义任何 Table。"""
-    from app.db.base import metadata
+    """任务 PR-0 起：`base.metadata` 挂 5 张 Task 层表；不许再回到空。
 
-    assert metadata.tables == {}, (
-        f"数据 PR-1 硬约束：base.metadata 不许包含任何 Table；实际存在："
-        f"{list(metadata.tables.keys())}"
-    )
+    历史演进：
+    - 数据 PR-1 硬约束：`base.metadata` 起点为空（未定义任何 Table）。
+    - 任务 PR-0 起：`app.task.tables` 挂 5 张业务表到同一个 metadata 单例上。
+      本测试保留原名，语义演进为"业务表全部挂在唯一 metadata 上"抗回归。
+    """
+    # 触发 task 层表注册（任务 PR-0 交付；等价于 env.py 内的 import 副作用）。
+    import app.task.tables  # noqa: F401
+    from app.db.base import metadata
+    from app.task.tables import TASK_LAYER_TABLE_NAMES
+
+    for name in TASK_LAYER_TABLE_NAMES:
+        assert name in metadata.tables, (
+            f"任务 PR-0 硬约束：{name!r} 必须挂在 `app.db.base.metadata` 单例上；"
+            f"实际 metadata.tables={list(metadata.tables.keys())}"
+        )
 
 
 def test_alembic_env_target_metadata(tmp_path, monkeypatch):

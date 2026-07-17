@@ -89,6 +89,13 @@ CACHE_FILE_SUFFIXES = (".pyc", ".pyo")
 API_PROVIDERS_FILE = REPO_ROOT / "data" / "api_providers.json"
 CANVASES_DIR = REPO_ROOT / "data" / "canvases"
 
+# 任务 PR-0 追加：`data/app.db` SQLite 文件由测试或 CLI 烟测生成。
+# 判据（`--skip-data` 不影响本项，另有 `--skip-appdb` 单独开关）：
+# - 文件为空（0 字节）或仅含 `alembic_version` 系统表（无业务数据）：清理；
+# - 含任一业务表 (`tasks` / `node_runs` / `provider_tasks` / `task_events`
+#   / `artifacts` 等)：**保留**（视为真实数据，防误删）。
+APP_DB_FILE = REPO_ROOT / "data" / "app.db"
+
 # 保护路径：脚本永远不会 rm -rf 这些目录（哪怕误传参数）。
 NEVER_TOUCH_ROOTS = {
     REPO_ROOT / "API",
@@ -332,6 +339,51 @@ def clean_smoke_canvases(reporter: Reporter) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 5. data/app.db 空/仅系统表 —— 任务 PR-0 追加
+# ---------------------------------------------------------------------------
+
+
+def _app_db_is_empty_or_system_only(path: Path) -> bool:
+    """判断 `data/app.db` 是否为"空 sqlite 或仅含 `alembic_version` 系统表"。
+
+    - 文件不存在或 0 字节：视为空。
+    - 打开失败（非 sqlite / 权限）：**返回 False**（保留，不误删）。
+    - 表清单为空 或 只有 `alembic_version`：视为空。
+    - 含任一业务表：**返回 False**（保留）。
+    """
+    import sqlite3
+
+    try:
+        if not path.is_file():
+            return True
+        if path.stat().st_size == 0:
+            return True
+        conn = sqlite3.connect(str(path))
+        try:
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+            names = {row[0] for row in cur.fetchall()}
+        finally:
+            conn.close()
+    except (sqlite3.DatabaseError, OSError):
+        return False
+    business = names - {"alembic_version"}
+    return not business
+
+
+def clean_empty_app_db(reporter: Reporter) -> None:
+    """清理"空 / 仅含 alembic_version"的 `data/app.db`。
+
+    真实用户数据一旦落进业务表（`tasks` / `node_runs` / ...），本函数保留。
+    """
+    if not APP_DB_FILE.exists():
+        return
+    if _app_db_is_empty_or_system_only(APP_DB_FILE):
+        _rm_file(APP_DB_FILE, reporter, "empty-app-db")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -372,6 +424,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="跳过 data/ 内烟测数据清理（api_providers.json 与 canvases/）",
     )
+    p.add_argument(
+        "--skip-appdb",
+        action="store_true",
+        help="跳过 data/app.db 空文件清理（任务 PR-0 追加）",
+    )
     return p
 
 
@@ -388,6 +445,8 @@ def main(argv: List[str] | None = None) -> int:
     if not args.skip_data:
         clean_smoke_providers(reporter)
         clean_smoke_canvases(reporter)
+    if not args.skip_appdb:
+        clean_empty_app_db(reporter)
 
     # 汇总（无论 quiet 都打印）
     mode = "APPLY" if args.apply else "DRY-RUN"
