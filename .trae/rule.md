@@ -96,3 +96,16 @@ For substantial implementation work, follow this order when applicable:
 Do not claim completion until the acceptance criteria are checked against the actual project state.
 
 Final responses for substantial work should state files changed, checks run, verification results, knowledge-base updates, unresolved risks, and which subagents were used. If no subagent was needed, say the task was completed directly because delegation would not improve quality or speed.
+
+## Git Delivery Closure
+
+Knowledge-base completion records and Git delivery must describe the same work. A governance PR / issue is not complete merely because its code was written, reviewed, or documented.
+
+- Keep commits aligned with the PR / issue boundaries defined in the knowledge base. Do not mix unrelated governance work into one commit. A PR may use a small ordered series of commits when one commit would hide meaningful implementation steps.
+- Use the currently designated branch unless the task explicitly requires another branch. Do not create a branch per PR by default.
+- Before a PR can be marked `merged` / completed in the knowledge base, its in-scope changes must be committed, pushed to the configured remote, and recorded in the corresponding PR status ledger with the branch and commit hash(es).
+- A successful test, smoke check, Lead review, or knowledge-base write-back does not replace commit and push evidence. If push has not succeeded, keep the PR in `submitted` or `in_progress` and report the blocker.
+- Before committing, inspect the staged diff and exclude unrelated user changes, credentials, secrets, real user data, and test artifacts. Never absorb pre-existing unrelated work merely to make `git status` clean.
+- At delivery, verify that the PR's commit is reachable from the recorded remote branch and that no in-scope change remains uncommitted. Report any unrelated pre-existing working-tree changes separately.
+- Historical recovery commits that cover more than one recorded PR require explicit Lead approval and must map every included PR to the recovery commit in the status ledger. They are a repair mechanism, not the normal workflow.
+- Unless the user or task explicitly says not to push, governance implementation work is expected to complete the local commit, remote push, and knowledge-base commit-hash write-back in the same delivery cycle.
