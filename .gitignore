@@ -13,6 +13,17 @@ env/
 __pycache__/
 *.py[cod]
 
+# 测试缓存与产物（治理期由 tools/cleanup_test_artifacts.py 一并清理）
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# 顶层散落的临时字母目录（curl / adhoc 脚本残留）
+/X/
+/Y/
+/Z/
+
 # 编辑器与系统临时文件
 .idea/
 .vscode/
