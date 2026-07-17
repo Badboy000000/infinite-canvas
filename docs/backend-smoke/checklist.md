@@ -191,6 +191,15 @@ asyncio.run(r())"`
 
 > **第三批 Wave 0 Lead 核验**：专题测试合计 **189 passed**；全量测试 **333 passed / 35 skipped**。当前 Python 3.13.5 + FastAPI 0.136.1 + Pydantic 2.12.5 环境下，严格 OpenAPI 旧 baseline 存在 6 处依赖生成差异（5 处 binary schema 表达变化 + `ValidationError` 新增 `ctx` / `input`），但本批 `main.py`、`app/api/**`、路由、DTO 与 baseline 文件均零改动，132 条 path 和 security schemes 无差异；不得通过更新 baseline 掩盖该环境漂移。
 
+## 26. 低风险只读 Router 抽离（PR-BE-05）
+
+- 命令：
+  - `python -m pytest tests/api/test_be05_readonly_router_extraction.py -q`
+  - 在同一 Python/FastAPI/Pydantic 环境分别于改造前后执行 `python tools/openapi_snapshot.py --out <temp>`，比较两份临时快照 SHA-256。
+- 期望：**8 passed**；`GET /api/app-info`、`/api/config`、`/api/models`、`/api/history`、`/api/comfyui/instances`、`/api/workflows` 各注册一次且原顺序不变；ComfyUI PUT、workflow 详情/写路由仍留在 `main.py`；五个 router 只通过 callback factory 装配，禁止 `import main` 和直接文件 IO；前后 OpenAPI 临时快照哈希完全相同。Lead 实测哈希均为 `90E7ADE089DD7C6BAABE0F2AC241EC588762A4803C97BE35D358E6DC262A1166`；全量 **341 passed / 35 skipped**。归属：PR-BE-05。
+
+> **脚本入口防回归**：不得在迁出 router 的 handler 内懒 `import main`。项目用 `python main.py` 启动时入口模块名是 `__main__`，再次 `import main` 会形成第二套模块全局，导致写路由更新 `__main__`、读路由读取副本 `main`。本 PR 使用 `create_router(callback...)` 注入当前模块 helper，专门避免该状态分裂。
+
 ---
 
 ## 附：OpenAPI baseline 差异校验
