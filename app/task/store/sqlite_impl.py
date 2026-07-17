@@ -17,12 +17,15 @@
 
 from __future__ import annotations
 
+import time
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_session
@@ -53,6 +56,16 @@ from app.task.tables import (
 # ---------------------------------------------------------------------------
 # 辅助
 # ---------------------------------------------------------------------------
+
+
+class _SessionBoundStore:
+    """可选绑定外部 Session，供组合 UnitOfWork 共享一个事务。"""
+
+    def __init__(self, session: Optional[Session] = None) -> None:
+        self._session = session
+
+    def _session_scope(self):
+        return nullcontext(self._session) if self._session is not None else get_session()
 
 
 def _utcnow() -> datetime:
@@ -227,11 +240,11 @@ def _uuid_list_to_json(ids) -> List[str]:
 # ---------------------------------------------------------------------------
 
 
-class SqliteTaskStore:
+class SqliteTaskStore(_SessionBoundStore):
     """`TaskStore` 端口的 SQLite 实现（走 SQLAlchemy Core）。"""
 
     def create(self, draft: TaskDraft) -> Task:
-        with get_session() as s:
+        with self._session_scope() as s:
             if draft.idempotency_key:
                 existing = s.execute(
                     select(tasks).where(
@@ -285,14 +298,14 @@ class SqliteTaskStore:
             return _row_to_task(values)
 
     def get(self, task_id: UUID) -> Optional[Task]:
-        with get_session() as s:
+        with self._session_scope() as s:
             row = s.execute(
                 select(tasks).where(tasks.c.id == task_id)
             ).mappings().first()
             return _row_to_task(row) if row else None
 
     def get_by_idempotency_key(self, key: str) -> Optional[Task]:
-        with get_session() as s:
+        with self._session_scope() as s:
             row = s.execute(
                 select(tasks).where(tasks.c.idempotency_key == key)
             ).mappings().first()
@@ -301,7 +314,7 @@ class SqliteTaskStore:
     def list_by_canvas_node(
         self, canvas_id: str, node_id: Optional[str] = None, *, limit: int = 100
     ) -> List[Task]:
-        with get_session() as s:
+        with self._session_scope() as s:
             stmt = select(tasks).where(tasks.c.canvas_id == canvas_id)
             if node_id is not None:
                 stmt = stmt.where(tasks.c.node_id == node_id)
@@ -320,7 +333,7 @@ class SqliteTaskStore:
         for key in updates.keys():
             if key in forbidden:
                 raise ValueError(f"禁止通过 update 修改字段 {key!r}")
-        with get_session() as s:
+        with self._session_scope() as s:
             _cas_check_and_update(s, tasks, task_id, updates, expected=expected)
             row = s.execute(
                 select(tasks).where(tasks.c.id == task_id)
@@ -330,32 +343,22 @@ class SqliteTaskStore:
     def acquire_lease(
         self, task_id: UUID, owner: str, ttl_sec: int
     ) -> Task:
-        with get_session() as s:
-            row = s.execute(
-                select(tasks).where(tasks.c.id == task_id)
-            ).mappings().first()
-            if row is None:
-                raise CasFailure(f"Task {task_id} 不存在", key="id")
+        with self._session_scope() as s:
             now = _utcnow()
-            lease_until_aware = _to_aware(row["lease_until"])
-            leaseable = (
-                row["lease_owner"] is None
-                or lease_until_aware is None
-                or lease_until_aware <= now
-            )
-            if not leaseable:
-                raise CasFailure(
-                    f"Task {task_id} 已被 {row['lease_owner']} 持有租约",
-                    key="lease_owner",
-                    actual=row["lease_owner"],
-                )
             new_lease_until = now + timedelta(seconds=ttl_sec)
-            # WHERE 用 id 单键 + 客户端刚校验过的状态（此处走 Python 判定后
-            # 立即 UPDATE；SQLite 单文件锁足够；PostgreSQL 迁移期改为
-            # `FOR UPDATE SKIP LOCKED`）。
+            # 租约判定必须在数据库 WHERE 中完成。独立 Store/Service
+            # 实例的 Python 锁彼此不可见，只有这个条件 UPDATE 能做 CAS。
+            leaseable = or_(
+                tasks.c.status.in_(("queued", "retrying", "unknown_recoverable")),
+                and_(
+                    tasks.c.lease_owner.is_not(None),
+                    tasks.c.lease_until.is_not(None),
+                    tasks.c.lease_until <= now,
+                ),
+            )
             result = s.execute(
                 tasks.update()
-                .where(tasks.c.id == task_id)
+                .where(and_(tasks.c.id == task_id, leaseable))
                 .values(
                     status="leased",
                     lease_owner=owner,
@@ -365,8 +368,13 @@ class SqliteTaskStore:
                 )
             )
             if result.rowcount != 1:
+                row = s.execute(
+                    select(tasks.c.lease_owner).where(tasks.c.id == task_id)
+                ).first()
                 raise CasFailure(
-                    f"Task {task_id} 租约抢占失败", key="lease_owner"
+                    f"Task {task_id} 租约抢占失败",
+                    key="lease_owner" if row is not None else "id",
+                    actual=row[0] if row is not None else None,
                 )
             row = s.execute(
                 select(tasks).where(tasks.c.id == task_id)
@@ -374,7 +382,7 @@ class SqliteTaskStore:
             return _row_to_task(row)
 
     def heartbeat(self, task_id: UUID, owner: str, *, ttl_sec: int) -> Task:
-        with get_session() as s:
+        with self._session_scope() as s:
             now = _utcnow()
             result = s.execute(
                 tasks.update()
@@ -405,7 +413,7 @@ class SqliteTaskStore:
         *,
         new_status: Optional[str] = None,
     ) -> Task:
-        with get_session() as s:
+        with self._session_scope() as s:
             now = _utcnow()
             payload: Dict[str, Any] = {
                 "lease_owner": None,
@@ -436,7 +444,7 @@ class SqliteTaskStore:
 
     def scan(self, filter: RecoveryFilter) -> List[Task]:
         statuses = list(filter.statuses or RECOVERABLE_TASK_STATUSES)
-        with get_session() as s:
+        with self._session_scope() as s:
             stmt = select(tasks).where(tasks.c.status.in_(statuses))
             if filter.lease_expired_before is not None:
                 stmt = stmt.where(
@@ -506,9 +514,9 @@ def _cas_check_and_update(
 # ---------------------------------------------------------------------------
 
 
-class SqliteNodeRunStore:
+class SqliteNodeRunStore(_SessionBoundStore):
     def create(self, draft: NodeRunDraft) -> NodeRun:
-        with get_session() as s:
+        with self._session_scope() as s:
             now = _utcnow()
             run_id = draft.id or uuid.uuid4()
             values = {
@@ -547,7 +555,7 @@ class SqliteNodeRunStore:
             return _row_to_node_run(row)
 
     def get(self, node_run_id: UUID) -> Optional[NodeRun]:
-        with get_session() as s:
+        with self._session_scope() as s:
             row = s.execute(
                 select(node_runs).where(node_runs.c.id == node_run_id)
             ).mappings().first()
@@ -556,7 +564,7 @@ class SqliteNodeRunStore:
     def list_by_canvas(
         self, canvas_id: str, *, limit: int = 100
     ) -> List[NodeRun]:
-        with get_session() as s:
+        with self._session_scope() as s:
             rows = s.execute(
                 select(node_runs)
                 .where(node_runs.c.canvas_id == canvas_id)
@@ -572,9 +580,14 @@ class SqliteNodeRunStore:
         *,
         expected: Mapping[str, object],
     ) -> NodeRun:
-        with get_session() as s:
+        payload = dict(updates)
+        if "task_ids" in payload:
+            payload["task_ids"] = _uuid_list_to_json(payload["task_ids"])
+        if "output_refs" in payload:
+            payload["output_refs"] = list(payload["output_refs"])
+        with self._session_scope() as s:
             _cas_check_and_update(
-                s, node_runs, node_run_id, updates, expected=expected
+                s, node_runs, node_run_id, payload, expected=expected
             )
             row = s.execute(
                 select(node_runs).where(node_runs.c.id == node_run_id)
@@ -587,9 +600,9 @@ class SqliteNodeRunStore:
 # ---------------------------------------------------------------------------
 
 
-class SqliteProviderTaskStore:
+class SqliteProviderTaskStore(_SessionBoundStore):
     def create(self, draft: ProviderTaskDraft) -> ProviderTask:
-        with get_session() as s:
+        with self._session_scope() as s:
             now = _utcnow()
             pt_id = draft.id or uuid.uuid4()
             values = {
@@ -625,7 +638,7 @@ class SqliteProviderTaskStore:
             return _row_to_provider_task(row)
 
     def get(self, provider_task_id: UUID) -> Optional[ProviderTask]:
-        with get_session() as s:
+        with self._session_scope() as s:
             row = s.execute(
                 select(provider_tasks).where(
                     provider_tasks.c.id == provider_task_id
@@ -636,7 +649,7 @@ class SqliteProviderTaskStore:
     def find_by_upstream(
         self, provider_id: str, upstream_task_id: str
     ) -> Optional[ProviderTask]:
-        with get_session() as s:
+        with self._session_scope() as s:
             row = s.execute(
                 select(provider_tasks).where(
                     and_(
@@ -648,7 +661,7 @@ class SqliteProviderTaskStore:
             return _row_to_provider_task(row) if row else None
 
     def list_by_task(self, task_id: UUID) -> List[ProviderTask]:
-        with get_session() as s:
+        with self._session_scope() as s:
             rows = s.execute(
                 select(provider_tasks)
                 .where(provider_tasks.c.task_id == task_id)
@@ -663,7 +676,7 @@ class SqliteProviderTaskStore:
         *,
         expected: Mapping[str, object],
     ) -> ProviderTask:
-        with get_session() as s:
+        with self._session_scope() as s:
             _cas_check_and_update(
                 s, provider_tasks, provider_task_id, updates, expected=expected
             )
@@ -680,35 +693,51 @@ class SqliteProviderTaskStore:
 # ---------------------------------------------------------------------------
 
 
-class SqliteTaskEventStore:
+class SqliteTaskEventStore(_SessionBoundStore):
     def append(self, draft: TaskEventDraft) -> TaskEvent:
-        with get_session() as s:
-            current_max = s.execute(
-                select(func.coalesce(func.max(task_events.c.seq), 0)).where(
-                    task_events.c.task_id == draft.task_id
+        if self._session is not None:
+            return self._append_in_session(self._session, draft)
+
+        # `(task_id, seq)` 唯一约束是最终仲裁。独立 Store 并发
+        # 读到同一 max(seq) 时，输家回滚并在新事务重试。
+        last_error: Optional[IntegrityError] = None
+        for attempt in range(16):
+            try:
+                with get_session() as s:
+                    return self._append_in_session(s, draft)
+            except IntegrityError as exc:
+                last_error = exc
+                time.sleep(min(0.001 * (2**attempt), 0.05))
+        assert last_error is not None
+        raise last_error
+
+    @staticmethod
+    def _append_in_session(s: Session, draft: TaskEventDraft) -> TaskEvent:
+        current_max = s.execute(
+            select(func.coalesce(func.max(task_events.c.seq), 0)).where(
+                task_events.c.task_id == draft.task_id
+            )
+        ).scalar()
+        next_seq = int(current_max or 0) + 1
+        ts = draft.ts or _utcnow()
+        values = {
+            "task_id": draft.task_id,
+            "seq": next_seq,
+            "ts": ts,
+            "kind": draft.kind,
+            "payload_json": dict(draft.payload_json),
+            "schema_version": draft.schema_version,
+        }
+        s.execute(task_events.insert().values(**values))
+        row = s.execute(
+            select(task_events).where(
+                and_(
+                    task_events.c.task_id == draft.task_id,
+                    task_events.c.seq == next_seq,
                 )
-            ).scalar()
-            next_seq = int(current_max or 0) + 1
-            ts = draft.ts or _utcnow()
-            values = {
-                "task_id": draft.task_id,
-                "seq": next_seq,
-                "ts": ts,
-                "kind": draft.kind,
-                "payload_json": dict(draft.payload_json),
-                "schema_version": draft.schema_version,
-            }
-            result = s.execute(task_events.insert().values(**values))
-            event_id = result.inserted_primary_key[0] if result.inserted_primary_key else None
-            row = s.execute(
-                select(task_events).where(
-                    and_(
-                        task_events.c.task_id == draft.task_id,
-                        task_events.c.seq == next_seq,
-                    )
-                )
-            ).mappings().first()
-            return _row_to_task_event(row)
+            )
+        ).mappings().first()
+        return _row_to_task_event(row)
 
     def list_for_task(
         self,
@@ -717,7 +746,7 @@ class SqliteTaskEventStore:
         since_seq: Optional[int] = None,
         limit: int = 500,
     ) -> List[TaskEvent]:
-        with get_session() as s:
+        with self._session_scope() as s:
             stmt = select(task_events).where(task_events.c.task_id == task_id)
             if since_seq is not None:
                 stmt = stmt.where(task_events.c.seq > since_seq)
@@ -726,7 +755,7 @@ class SqliteTaskEventStore:
             return [_row_to_task_event(r) for r in rows]
 
     def count_for_task(self, task_id: UUID) -> int:
-        with get_session() as s:
+        with self._session_scope() as s:
             return int(
                 s.execute(
                     select(func.count()).where(task_events.c.task_id == task_id)
@@ -740,9 +769,9 @@ class SqliteTaskEventStore:
 # ---------------------------------------------------------------------------
 
 
-class SqliteArtifactStore:
+class SqliteArtifactStore(_SessionBoundStore):
     def create(self, draft: ArtifactDraft) -> Artifact:
-        with get_session() as s:
+        with self._session_scope() as s:
             now = _utcnow()
             aid = draft.id or uuid.uuid4()
             values = {
@@ -777,14 +806,14 @@ class SqliteArtifactStore:
             return _row_to_artifact(row)
 
     def get(self, artifact_id: UUID) -> Optional[Artifact]:
-        with get_session() as s:
+        with self._session_scope() as s:
             row = s.execute(
                 select(artifacts).where(artifacts.c.id == artifact_id)
             ).mappings().first()
             return _row_to_artifact(row) if row else None
 
     def list_by_task(self, task_id: UUID) -> List[Artifact]:
-        with get_session() as s:
+        with self._session_scope() as s:
             rows = s.execute(
                 select(artifacts)
                 .where(artifacts.c.task_id == task_id)
@@ -793,7 +822,7 @@ class SqliteArtifactStore:
             return [_row_to_artifact(r) for r in rows]
 
     def list_by_node_run(self, node_run_id: UUID) -> List[Artifact]:
-        with get_session() as s:
+        with self._session_scope() as s:
             rows = s.execute(
                 select(artifacts)
                 .where(artifacts.c.node_run_id == node_run_id)

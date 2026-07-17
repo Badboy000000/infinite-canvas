@@ -1,7 +1,7 @@
-"""`app.task` — 任务事实层根包（任务 PR-0）。
+"""`app.task` — 任务事实层根包。
 
 本包承载 Task / NodeRun / ProviderTask / TaskEvent / Artifact 五个对象的
-**schema、契约与 Store 端口**；不接入任何生成路径、不启动 worker loop。
+**schema、契约、Store 端口与服务层**；不接入任何生成路径，worker 默认关闭。
 
 子模块划分：
 
@@ -11,6 +11,8 @@
 - `app.task.contracts` — 端口契约 + Snapshot dataclass。不引入 FastAPI DI
   耦合，不 import SQLAlchemy。
 - `app.task.store` — Store 端口 `Protocol` + 内存实现 + SQLite 实现。
+- `app.task.service` — TaskService 状态机与 Executor / Dispatcher 端口。
+- `app.task.worker` — 显式启动的进程内 worker 实现。
 
 设计原则（承接 [[50 决策记录/决策 - ORM 与迁移工具选型]] §7 三层结构）：
 

@@ -16,6 +16,7 @@ Memory 与 SQLite 参数化同一 fixture，保证两套实现同源行为。
 from __future__ import annotations
 
 import uuid
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Tuple
 
@@ -246,6 +247,73 @@ def test_task_event_seq_isolated_across_tasks(bundle):
     assert e_first_t2.seq == 1  # 每个 task 独立起点
     assert es.count_for_task(t1.id) == 2
     assert es.count_for_task(t2.id) == 1
+
+
+def test_sqlite_event_seq_is_atomic_across_independent_stores(sqlite_bundle):
+    """多个 Store 实例不共享 Python 锁，须由唯一约束 + 冲突重试定序。"""
+    from app.task.store import SqliteTaskEventStore
+
+    task_store, _, _, _, _ = sqlite_bundle
+    task = task_store.create(TaskDraft(task_type="image"))
+    barrier = threading.Barrier(12)
+    events = []
+    errors = []
+
+    def append(index):
+        try:
+            store = SqliteTaskEventStore()
+            barrier.wait()
+            events.append(
+                store.append(
+                    TaskEventDraft(task_id=task.id, kind=f"concurrent.{index}")
+                )
+            )
+        except Exception as exc:  # pragma: no cover - 断言会暴露
+            errors.append(exc)
+
+    threads = [threading.Thread(target=append, args=(index,)) for index in range(12)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert sorted(event.seq for event in events) == list(range(1, 13))
+    assert SqliteTaskEventStore().count_for_task(task.id) == 12
+
+
+def test_sqlite_lease_cas_across_independent_services(sqlite_bundle):
+    from app.task.service import TaskService, TaskStateError
+    from app.task.store import SqliteTaskEventStore, SqliteTaskStore
+
+    creator = TaskService(SqliteTaskStore(), SqliteTaskEventStore())
+    task = creator.submit(TaskDraft(task_type="image", max_attempts=2))
+    barrier = threading.Barrier(2)
+    winners = []
+    losers = []
+
+    def lease(owner):
+        service = TaskService(SqliteTaskStore(), SqliteTaskEventStore())
+        barrier.wait()
+        try:
+            winners.append(service.lease(task.id, owner, ttl_sec=60))
+        except TaskStateError as exc:
+            losers.append(exc)
+
+    threads = [
+        threading.Thread(target=lease, args=("worker-a",)),
+        threading.Thread(target=lease, args=("worker-b",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(winners) == 1
+    assert len(losers) == 1
+    stored = SqliteTaskStore().get(task.id)
+    assert stored.lease_owner == winners[0].lease_owner
+    assert stored.attempt == 1
 
 
 # ---------------------------------------------------------------------------

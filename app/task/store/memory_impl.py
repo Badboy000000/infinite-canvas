@@ -191,11 +191,16 @@ class MemoryTaskStore:
             if current is None:
                 raise CasFailure(f"Task {task_id} 不存在", key="id")
             now = _utcnow()
-            # 抢占条件：当前无 lease，或 lease_until 已过期
-            leaseable = (
-                current.lease_owner is None
-                or current.lease_until is None
-                or current.lease_until <= now
+            # 与 SQLite 条件 CAS 保持同一语义：只有正式可调度
+            # 状态，或一条已过期的现存租约，才允许抢占。
+            leaseable = current.status in {
+                "queued",
+                "retrying",
+                "unknown_recoverable",
+            } or (
+                current.lease_owner is not None
+                and current.lease_until is not None
+                and current.lease_until <= now
             )
             if not leaseable:
                 raise CasFailure(
