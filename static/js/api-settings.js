@@ -2651,7 +2651,10 @@ async function refreshJimengStatus(showCredit=true){
     if(!jimengCliPanel || jimengCliPanel.hidden) return;
     setJimengStatus('检测中...');
     try {
-        const data = await fetch('/api/jimeng/status').then(r => r.json());
+        // seam 期迁移点（前端 PR-2）：`GET /api/jimeng/status` 走 shared/api-client。
+        // 逐字节等价：URL / method / credentials='same-origin' 完全一致。
+        const { apiClient, JIMENG_STATUS } = await import('/static/js/shared/api-client/index.js');
+        const data = await apiClient.get(JIMENG_STATUS);
         setJimengStatus(data.logged_in ? '已登录' : (data.installed ? '未登录' : '未安装'), data.logged_in === true);
         if(data.installed && data.version_ok === false && jimengCredit){
             jimengCredit.textContent = `⚠ 检测到 dreamina CLI 版本 ${data.cli_version || '未知'}，低于推荐的 ${data.min_version || '1.4.2'}。旧版本任务状态可能无法更新，请升级 CLI。`;
@@ -2770,7 +2773,10 @@ async function refreshCodexStatus(showInfo=true){
     if(!codexCliPanel || codexCliPanel.hidden) return;
     setCodexStatus('检测中...');
     try {
-        const data = await fetch('/api/codex/status').then(r => r.json());
+        // seam 期迁移点（前端 PR-2）：`GET /api/codex/status` 走 shared/api-client。
+        // 逐字节等价：URL / method / credentials='same-origin' 完全一致。
+        const { apiClient, CODEX_STATUS } = await import('/static/js/shared/api-client/index.js');
+        const data = await apiClient.get(CODEX_STATUS);
         setCodexStatus(data.installed ? '已安装' : '未安装', data.installed === true);
         if(showInfo && codexCliInfo){
             const parts = [];
@@ -2821,7 +2827,10 @@ async function refreshGeminiCliStatus(showInfo=true){
     if(!geminiCliPanel || geminiCliPanel.hidden) return;
     setGeminiCliStatus('检测中...');
     try {
-        const data = await fetch('/api/gemini-cli/status').then(r => r.json());
+        // seam 期迁移点（前端 PR-2）：`GET /api/gemini-cli/status` 走 shared/api-client。
+        // 逐字节等价：URL / method / credentials='same-origin' 完全一致（CB-01 已订正路径）。
+        const { apiClient, GEMINI_CLI_STATUS } = await import('/static/js/shared/api-client/index.js');
+        const data = await apiClient.get(GEMINI_CLI_STATUS);
         setGeminiCliStatus(data.installed ? '已安装' : '未安装', data.installed === true);
         if(showInfo && geminiCliInfo){
             const parts = [];

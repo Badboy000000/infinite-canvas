@@ -178,12 +178,19 @@ function canvasesInProject(pid){ return canvases.filter(c => (c.project || 'defa
 
 async function loadAll(){
     try {
-        const [pRes, cRes] = await Promise.all([
+        // seam 期迁移点（前端 PR-2）：`/api/canvases` GET 走 shared/api-client。
+        // 逐字节等价：URL / method / 无 body / credentials='same-origin' 与原生 fetch 一致；
+        // ApiClientError（非 2xx）沿用原 `cRes.ok ? … : {canvases:[]}` 的兜底语义；
+        // 网络错误继续抛给外层 try/catch，与原实现一致。
+        const { apiClient, ApiClientError, LIST_CANVASES } = await import('/static/js/shared/api-client/index.js');
+        const [pRes, cData] = await Promise.all([
             fetch('/api/projects'),
-            fetch('/api/canvases')
+            apiClient.get(LIST_CANVASES).catch(err => {
+                if(err instanceof ApiClientError && !err.isNetworkError) return { canvases: [] };
+                throw err;
+            })
         ]);
         const pData = pRes.ok ? await pRes.json() : { projects: [] };
-        const cData = cRes.ok ? await cRes.json() : { canvases: [] };
         projects = (pData.projects || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
         if(!projects.length) projects = [{ id: 'default', name: L('默认项目','Default'), order: 0, canvas_count: 0 }];
         canvases = cData.canvases || [];
@@ -592,9 +599,18 @@ async function exportCanvas(id){
     const c = canvases.find(x => x.id === id);
     setStatus(L('正在导出...','Exporting...'));
     try {
-        const res = await fetch(`/api/canvases/${encodeURIComponent(id)}`);
-        if(!res.ok) throw new Error('export failed');
-        const data = await res.json();
+        // seam 期迁移点（前端 PR-2）：`GET /api/canvases/{id}` 走 shared/api-client。
+        // 逐字节等价：URL / method / credentials='same-origin' 完全一致。
+        // 原 `if(!res.ok) throw new Error('export failed')` 语义 → ApiClientError（非 2xx）转
+        // 抛为同名 Error 保持外层 catch 行为一致；网络错误继续冒泡。
+        const { apiClient, ApiClientError, CANVAS_BY_ID } = await import('/static/js/shared/api-client/index.js');
+        let data;
+        try {
+            data = await apiClient.get(CANVAS_BY_ID(id));
+        } catch(err){
+            if(err instanceof ApiClientError && !err.isNetworkError) throw new Error('export failed');
+            throw err;
+        }
         const cv = data.canvas || data;
         const base = String((c?.title) || cv.title || 'canvas').replace(/[\\/:*?"<>|]+/g, '_').trim().slice(0, 60) || 'canvas';
         const blob = new Blob([JSON.stringify(cv, null, 2)], { type: 'application/json' });
@@ -884,9 +900,16 @@ async function deleteCanvas(id){
 /* ===== Trash / recycle bin ===== */
 async function refreshTrashCount(){
     try {
-        const res = await fetch('/api/canvases/trash');
-        if(!res.ok) return;
-        const data = await res.json();
+        // seam 期迁移点（前端 PR-2）：`GET /api/canvases/trash` 走 shared/api-client。
+        // 逐字节等价；原 `if(!res.ok) return` 语义 → ApiClientError 非网络类直接 return。
+        const { apiClient, ApiClientError, LIST_CANVASES_TRASH } = await import('/static/js/shared/api-client/index.js');
+        let data;
+        try {
+            data = await apiClient.get(LIST_CANVASES_TRASH);
+        } catch(err){
+            if(err instanceof ApiClientError && !err.isNetworkError) return;
+            throw err;
+        }
         deletedCanvases = data.canvases || [];
         const n = deletedCanvases.length;
         trashBadge.textContent = String(n);
@@ -905,9 +928,17 @@ function closeTrashView(){
 }
 async function loadTrash(){
     try {
-        const res = await fetch('/api/canvases/trash');
-        if(!res.ok) throw new Error('trash load failed');
-        const data = await res.json();
+        // seam 期迁移点（前端 PR-2）：`GET /api/canvases/trash` 走 shared/api-client。
+        // 逐字节等价；原 `if(!res.ok) throw new Error('trash load failed')` 语义
+        // → ApiClientError 非网络类转抛为同名 Error 保留外层 catch 行为。
+        const { apiClient, ApiClientError, LIST_CANVASES_TRASH } = await import('/static/js/shared/api-client/index.js');
+        let data;
+        try {
+            data = await apiClient.get(LIST_CANVASES_TRASH);
+        } catch(err){
+            if(err instanceof ApiClientError && !err.isNetworkError) throw new Error('trash load failed');
+            throw err;
+        }
         deletedCanvases = data.canvases || [];
         renderTrash();
         const n = deletedCanvases.length;

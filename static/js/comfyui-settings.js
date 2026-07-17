@@ -205,7 +205,11 @@ function defaultMiniTestNodes(){
 let comfyInstances = [];
 async function loadComfyInstances(){
     try {
-        const data = await fetch('/api/comfyui/instances').then(r => r.json());
+        // seam 期迁移点（前端 PR-2）：`GET /api/comfyui/instances` 走 shared/api-client。
+        // 逐字节等价：URL / method / credentials='same-origin' 完全一致。
+        // 原 `.then(r => r.json())` 语义由 apiClient.get 自动 parse 承接。
+        const { apiClient, COMFYUI_INSTANCES } = await import('/static/js/shared/api-client/index.js');
+        const data = await apiClient.get(COMFYUI_INSTANCES);
         comfyInstances = Array.isArray(data.instances) ? data.instances : [];
         renderComfyInstances();
     } catch(e){ console.error(e); }
