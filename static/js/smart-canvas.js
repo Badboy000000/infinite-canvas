@@ -14951,10 +14951,18 @@ async function comfyNameForRef(ref){
     const blob = await response.blob();
     const form = new FormData();
     form.append('files', blob, ref.name || 'smart-ref.png');
-    const data = await fetch('/api/upload', {method:'POST', body:form}).then(async r => {
-        if(!r.ok) throw new Error(await r.text());
-        return r.json();
-    });
+    // seam 期迁移点（前端 PR-4）：`POST /api/upload` 走 shared/api-client/fileApi。
+    // [[前端兼容合同冻结清单]] §7.2 smart-canvas.js:14954；method/body/multipart 逐字节等价。
+    let data;
+    try {
+        const { fileApi } = await import('/static/js/shared/api-client/domains/fileApi.js');
+        data = await fileApi.upload(form);
+    } catch(err) {
+        // 与旧实现 `throw new Error(await r.text())` 契约等价：
+        // ApiClientError.rawText 保留后端原文（非 JSON 场景），message 为中文 detail。
+        const message = err && (err.rawText || err.message) ? (err.rawText || err.message) : String(err);
+        throw new Error(message);
+    }
     const name = data.files?.[0]?.comfy_name || ref.name || ref.url;
     const node = ref.nodeId ? nodes.find(n => n.id === ref.nodeId) : null;
     const image = node?.images?.find(img => img.url === ref.url) || (nodes || []).flatMap(n => n.images || []).find(img => img?.url === ref.url);
@@ -17035,4 +17043,87 @@ window.onload = async () => {
     await loadCanvas();
     syncApiKindToggleVisibility();
     render();
+};
+
+// -------------------------------------------------------------------------
+// MediaEditor seam 注册（[[前端组件化治理实施计划与PR清单]] PR-4）
+// -------------------------------------------------------------------------
+// smart-canvas.js 内的 openImageEditor / setImageEditMode / setGridOperationMode
+// / openGroupGridJoin 保持不变，通过 MediaEditor.open 收敛外部调用。
+if (window.MediaEditorReady) {
+    window.MediaEditorReady.then(() => {
+        try {
+            window.MediaEditor.register('smart', {
+                openImageEditor: (nodeId, imageIndex) => openImageEditor(nodeId, imageIndex),
+                setImageEditMode: (mode, touched) => setImageEditMode(mode, touched),
+                setGridOperationMode: (m) => (typeof setGridOperationMode === 'function' ? setGridOperationMode(m) : undefined),
+                openGridJoin: (source) => {
+                    // 与 openGroupGridJoin 契约对齐：优先根据 source.groupId 找 group 分派。
+                    if (source && source.groupId) {
+                        const group = nodes.find(n => n.id === source.groupId);
+                        if (group) return openGroupGridJoin(group);
+                    }
+                    // 兜底：走 openImageEditor + setImageEditMode('grid') + setGridOperationMode('join')
+                    const anchor = (source && source.nodeId) || (source && source.items && source.items[0] && source.items[0].nodeId);
+                    if (!anchor) throw new Error("smart grid-join 缺少 nodeId 锚点");
+                    openImageEditor(anchor, (source && source.imageIndex) || 0);
+                    if (typeof setImageEditMode === 'function') setImageEditMode('grid', true);
+                    if (typeof setGridOperationMode === 'function') setGridOperationMode('join');
+                    return undefined;
+                },
+            });
+        } catch (err) {
+            console.warn('[MediaEditor] smart adapter register failed', err);
+        }
+    }).catch(() => {});
+}
+
+// 公共 wrapper 函数（PR-4 冻结签名）；body 一律走 MediaEditor.open。
+window.openCropDialog = function openCropDialog(nodeId, options = {}) {
+    if (window.MediaEditor) {
+        return window.MediaEditor.open({ canvasKind: 'smart', mode: 'crop', source: { nodeId, ...options } });
+    }
+    openImageEditor(nodeId, options.imageIndex || 0);
+    if (typeof setImageEditMode === 'function') setImageEditMode('crop', true);
+    return Promise.resolve({ ok: true, mode: 'crop', canvasKind: 'smart', fallback: true });
+};
+
+window.openMaskDialog = function openMaskDialog(nodeId, options = {}) {
+    if (window.MediaEditor) {
+        return window.MediaEditor.open({ canvasKind: 'smart', mode: 'mask', source: { nodeId, ...options } });
+    }
+    openImageEditor(nodeId, options.imageIndex || 0);
+    if (typeof setImageEditMode === 'function') setImageEditMode('mask', true);
+    return Promise.resolve({ ok: true, mode: 'mask', canvasKind: 'smart', fallback: true });
+};
+
+window.openGridSplitDialog = function openGridSplitDialog(nodeId, options = {}) {
+    if (window.MediaEditor) {
+        return window.MediaEditor.open({ canvasKind: 'smart', mode: 'grid-split', source: { nodeId, ...options } });
+    }
+    openImageEditor(nodeId, options.imageIndex || 0);
+    if (typeof setImageEditMode === 'function') setImageEditMode('grid', true);
+    if (typeof setGridOperationMode === 'function') setGridOperationMode('split');
+    return Promise.resolve({ ok: true, mode: 'grid-split', canvasKind: 'smart', fallback: true });
+};
+
+window.openGridJoinDialog = function openGridJoinDialog(source) {
+    if (window.MediaEditor) {
+        return window.MediaEditor.open({ canvasKind: 'smart', mode: 'grid-join', source });
+    }
+    // 兜底：直接调 openGroupGridJoin（若有 groupId）
+    if (source && source.groupId) {
+        const group = nodes.find(n => n.id === source.groupId);
+        if (group) openGroupGridJoin(group);
+    }
+    return Promise.resolve({ ok: true, mode: 'grid-join', canvasKind: 'smart', fallback: true });
+};
+
+window.openInpaintDialog = function openInpaintDialog(nodeId, options = {}) {
+    if (window.MediaEditor) {
+        return window.MediaEditor.open({ canvasKind: 'smart', mode: 'inpaint', source: { nodeId, ...options } });
+    }
+    openImageEditor(nodeId, options.imageIndex || 0);
+    if (typeof setImageEditMode === 'function') setImageEditMode('brush', true);
+    return Promise.resolve({ ok: true, mode: 'inpaint', canvasKind: 'smart', fallback: true });
 };

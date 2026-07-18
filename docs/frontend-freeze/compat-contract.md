@@ -323,6 +323,7 @@
 | `static/js/canvas.js:4353` | `/api/canvases/batch-history` | DELETE | — |
 | `static/js/canvas.js:4372` | `/api/canvases/batch-history/tasks/${taskId}` | DELETE | — |
 | `static/js/canvas.js:4394` | `/api/canvases/batch-history/tasks/${taskId}/retry` | POST | — |
+| `static/js/canvas.js:10629` | `/api/upload` | POST | multipart formdata（前端 PR-4 迁移至 `shared/api-client/fileApi.upload`；URL / method / body 逐字节等价） |
 
 其他 canvas.js fetch（≥ 30 处，覆盖 `/api/runninghub/*`、`/api/online-image`、`/api/image-task-query`、`/api/canvas-workflows/*`、`/api/canvases/*/thumbnail` 等）：见 §14 待补一览。PR-2 落地 `shared/api-client/legacy/endpoints.js` 时须以本节 + `canvas.js` 全量 grep 为直接输入。
 
@@ -361,6 +362,7 @@
 | `static/js/smart-canvas.js:3004` | `/api/asset-library/workflows` | POST | multipart formdata |
 | `static/js/smart-canvas.js:3037` | `/api/asset-library/workflows/${id}` | DELETE | — |
 | `static/js/smart-canvas.js:3066` | `/api/asset-library/workflows/${id}` | PATCH | `name`, `category_id` |
+| `static/js/smart-canvas.js:14954` | `/api/upload` | POST | multipart formdata（前端 PR-4 迁移至 `shared/api-client/fileApi.upload`；URL / method / body 逐字节等价） |
 
 其余 smart-canvas.js fetch（≈ 25 处）覆盖 `/api/canvas-image-tasks`、`/api/canvas-video`、`/api/media-preview`、`/api/download-output`、`/api/upload`、`/api/asset-library/import-from-url`、`/api/runninghub/*` 等；PR-2 需全量迁移。
 

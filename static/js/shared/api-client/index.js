@@ -23,3 +23,4 @@ export {
   isConflictError,
 } from './errors.js';
 export * from './endpoints.js';
+export { fileApi } from './domains/fileApi.js';

@@ -91,3 +91,52 @@ export const GEMINI_CLI_STATUS = '/api/gemini-cli/status';
  * 后端路由：`main.py` `@app.get/put("/api/comfyui/instances")`。
  */
 export const COMFYUI_INSTANCES = '/api/comfyui/instances';
+
+// ---------------------------------------------------------------------------
+// File / Media（前端 PR-4 消费 §7.1 / §7.2）
+// ---------------------------------------------------------------------------
+
+/**
+ * 通用 multipart 上传（原始 ComfyUI 输入队列）。
+ * compat-contract §7.1 `canvas.js:10629` / §7.2 `smart-canvas.js:14954`；POST multipart。
+ * 后端路由：`main.py` `@app.post("/api/upload")`。
+ */
+export const UPLOAD = '/api/upload';
+
+/**
+ * AI 上传（生成/编辑图片流程使用；返回本地资源 URL）。
+ * compat-contract §7.1 `canvas.js:2005` / §7.2 `smart-canvas.js:396` 等；POST multipart。
+ * 后端路由：`main.py` `@app.post("/api/ai/upload")`。
+ */
+export const AI_UPLOAD = '/api/ai/upload';
+
+/**
+ * ComfyUI 代理 view（后端转发到 ComfyUI 输出）。
+ * compat-contract §7.1 `main.py:11277`；GET；由 query 参数携带原始 URL。
+ * 后端路由：`main.py` `@app.get("/api/view")`。
+ *
+ * @param {URLSearchParams|Record<string,string>} [params]
+ * @returns {string}
+ */
+export function API_VIEW(params) {
+  if (!params) return '/api/view';
+  const usp = params instanceof URLSearchParams
+    ? params
+    : new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+  const qs = usp.toString();
+  return qs ? `/api/view?${qs}` : '/api/view';
+}
+
+/**
+ * 媒体预览代理（带宽度参数、包裹本地 / 远端资源）。
+ * compat-contract §7.1 `main.py:6712`；GET；`w=<int>&url=<encoded>` 。
+ * 后端路由：`main.py` `@app.get("/api/media-preview")`。
+ */
+export const MEDIA_PREVIEW = '/api/media-preview';
+
+/**
+ * 输出下载代理（可选 inline=1 内联预览）。
+ * compat-contract §7.1 `main.py:11300`；GET。
+ * 后端路由：`main.py` `@app.get("/api/download-output")`。
+ */
+export const DOWNLOAD_OUTPUT = '/api/download-output';

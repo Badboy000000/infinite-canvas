@@ -10626,10 +10626,17 @@ async function uploadCanvasUrlToComfy(url){
     const filename = (url || '').split('/').pop()?.split('?')[0] || `canvas_${Date.now()}.png`;
     const form = new FormData();
     form.append('files', blob, filename);
-    const data = await fetch('/api/upload', {method:'POST', body:form}).then(async r => {
-        if(!r.ok) throw new Error(await responseErrorMessage(r, langIsEn() ? 'Image upload to ComfyUI failed' : '图片上传到 ComfyUI 失败'));
-        return r.json();
-    });
+    // seam 期迁移点（前端 PR-4）：`POST /api/upload` 走 shared/api-client/fileApi。
+    // [[前端兼容合同冻结清单]] §7.1 canvas.js:10629；method/body/multipart 逐字节等价。
+    let data;
+    try {
+        const { fileApi } = await import('/static/js/shared/api-client/domains/fileApi.js');
+        data = await fileApi.upload(form);
+    } catch(err) {
+        // ApiClientError.message 是后端 detail pass-through 或网络错误原文，
+        // 与旧实现 `responseErrorMessage(r, fallback)` 契约等价。
+        throw new Error(err && err.message ? err.message : (langIsEn() ? 'Image upload to ComfyUI failed' : '图片上传到 ComfyUI 失败'));
+    }
     return data.files?.[0]?.comfy_name || filename;
 }
 async function comfyNameForRef(ref){
@@ -14788,4 +14795,59 @@ window.onload = async () => {
     } else {
         window.location.replace(canvasListUrlForProject(rememberedCanvasListProject()));
     }
+};
+
+// -------------------------------------------------------------------------
+// MediaEditor seam 注册（[[前端组件化治理实施计划与PR清单]] PR-4）
+// -------------------------------------------------------------------------
+// canvas.js 内的编辑器实现（openImageEditor / setImageEditMode）保持不变；
+// 通过 MediaEditor.open({canvasKind:'classic', mode, source}) 收敛外部调用点。
+// 旧函数 wrapper（openCropDialog / openMaskDialog / openGridSplitDialog /
+// openInpaintDialog）以 window.* 对外暴露，body 内直接走 MediaEditor.open。
+if (window.MediaEditorReady) {
+    window.MediaEditorReady.then(() => {
+        try {
+            window.MediaEditor.register('classic', {
+                openImageEditor: (nodeId, mode) => openImageEditor(nodeId, mode),
+                setImageEditMode: (mode, touched) => setImageEditMode(mode, touched),
+            });
+        } catch (err) {
+            console.warn('[MediaEditor] classic adapter register failed', err);
+        }
+    }).catch(() => {});
+}
+
+// 公共 wrapper 函数（PR-4 冻结签名）；body 一律走 MediaEditor.open。
+// [[前端兼容合同冻结清单]] §6 全局函数清单可扩展。
+window.openCropDialog = function openCropDialog(nodeId, options = {}) {
+    if (window.MediaEditor) {
+        return window.MediaEditor.open({ canvasKind: 'classic', mode: 'crop', source: { nodeId, ...options } });
+    }
+    // 兜底：MediaEditor 未就绪时直接回退旧实现，保证保活。
+    openImageEditor(nodeId, 'crop');
+    return Promise.resolve({ ok: true, mode: 'crop', canvasKind: 'classic', fallback: true });
+};
+
+window.openMaskDialog = function openMaskDialog(nodeId, options = {}) {
+    if (window.MediaEditor) {
+        return window.MediaEditor.open({ canvasKind: 'classic', mode: 'mask', source: { nodeId, ...options } });
+    }
+    openImageEditor(nodeId, 'mask');
+    return Promise.resolve({ ok: true, mode: 'mask', canvasKind: 'classic', fallback: true });
+};
+
+window.openGridSplitDialog = function openGridSplitDialog(nodeId, options = {}) {
+    if (window.MediaEditor) {
+        return window.MediaEditor.open({ canvasKind: 'classic', mode: 'grid-split', source: { nodeId, ...options } });
+    }
+    openImageEditor(nodeId, 'grid');
+    return Promise.resolve({ ok: true, mode: 'grid-split', canvasKind: 'classic', fallback: true });
+};
+
+window.openInpaintDialog = function openInpaintDialog(nodeId, options = {}) {
+    if (window.MediaEditor) {
+        return window.MediaEditor.open({ canvasKind: 'classic', mode: 'inpaint', source: { nodeId, ...options } });
+    }
+    openImageEditor(nodeId, 'brush');
+    return Promise.resolve({ ok: true, mode: 'inpaint', canvasKind: 'classic', fallback: true });
 };
