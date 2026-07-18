@@ -215,6 +215,23 @@ asyncio.run(r())"`
 
 ---
 
+## 28. 幂等导入器 + 对账工具 + 0002_baseline_tables 建表（数据 PR-3，承接 Wave 3-B 编号 §28）
+
+- 命令：
+  - `python -m pytest tests/data_import/ -v`
+  - `DATA_DB_PATH="$(pwd)/be28_smoke.db" python main.py migrate head`
+  - `python -c "import sqlite3, os; c = sqlite3.connect(os.path.abspath('be28_smoke.db')); print(sorted(r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()))"`
+  - `DATA_DB_PATH="$(pwd)/be28_smoke.db" python main.py data-import canvas --dry-run`
+  - `DATA_DB_PATH="$(pwd)/be28_smoke.db" python main.py data-reconcile canvas`
+  - `python -c "from app.data_import import import_domain, reconcile_domain, SUPPORTED_DOMAINS; print(SUPPORTED_DOMAINS)"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+- 期望：**21 passed / 0 failed / 0 skipped**（`test_migration_0002.py` 4 项 + `test_metadata_singleton.py` 3 项 + `test_importer_idempotent.py` 9 项 + `test_provider_credential_never_imported.py` 2 项 + `test_cli_smoke.py` 3 项）；`migrate head` 完成后 `sqlite_master` 应含 `alembic_version` + task 层 5 张 + baseline 9 张 = **15 张 table**（`alembic_version` `artifacts` `asset_categories` `asset_items` `asset_libraries` `canvases` `node_runs` `projects` `prompt_items` `prompt_libraries` `provider_configs` `provider_tasks` `task_events` `tasks` `workflow_definitions`）；`data-import canvas --dry-run` 返回稳定 JSON `{"candidate_count": ..., "domain": "canvas", "dry_run": true, "inserted": ..., "skipped": ..., "source_count": ...}`；`data-reconcile canvas` 返回稳定 JSON `{"counts": {"db": ..., "json": ...}, "domain": "canvas", "field_diffs": [], "missing": [...]}`；`SUPPORTED_DOMAINS == ('project', 'provider_config', 'prompt_library', 'workflow_definition', 'asset_library', 'canvas')`；`openapi_diff` exit=0；全量测试 **390 passed / 35 skipped**（本 PR 前基线 369 = 文件 PR-2 后 357 + 前端 PR-4 `7a19a31` 已合入的 12 项 MediaEditor seam；本 PR 新增 21 项 → 390 完全吻合）。
+- 关联事实：新增 Alembic revision `0002_baseline_tables`（`down_revision="0001_task_layer"`）建 9 张业务表（`projects / provider_configs / prompt_libraries / prompt_items / workflow_definitions / asset_libraries / asset_categories / asset_items / canvases`）；主键统一 UUIDv7（`Uuid(as_uuid=True) + default=generate_id`）；`legacy_id TEXT UNIQUE NOT NULL` 幂等键；`raw_json TEXT NULL` + `schema_version TEXT DEFAULT 'v1_legacy_json'` + `imported_at`/`created_at`/`updated_at`（`DateTime(timezone=True)`）；`asset_items` 附带 `file_ref TEXT NULL`（文件对象专题接口预留占位，本 PR 不启用）+ `legacy_url` / `source_url` / `workspace_id NULL` / `project_id NULL`；`canvases` 附带 `content_json TEXT` + `revision INTEGER DEFAULT 0` + `base_updated_at TEXT` + `deleted_at TEXT NULL`；15 个显式命名 Index + 9 个 UNIQUE 约束（每张 `uq_<tbl>_legacy_id`）。新增 `app/data_import/` 包（`__init__.py` re-export `import_domain / reconcile_domain`；`orchestrator.py` 调度；`reconcile.py` re-export；`_shared.py` `now_utc / serialize_raw_json / insert_if_absent`；`importers/{canvas,project,provider_config,prompt_library,workflow_definition,asset_library}.py` 6 个幂等 importer，`INSERT OR IGNORE ON legacy_id` via `sqlite_insert(...).on_conflict_do_nothing(index_elements=['legacy_id'])`；`tables.py` 9 张 Table 全部挂 `app.db.base.metadata` 单例）；`app/db/migrations/env.py` +1 行 `import app.data_import.tables`；`main.py` `if __name__ == "__main__":` 段追加 `data-import <domain> [--dry-run] [--from <path>]` / `data-reconcile <domain>` CLI dispatch +31 行（**不 import sqlalchemy / Session；只调 `from app.data_import import import_domain, reconcile_domain`**）；冻结区（`class StorageSettings` body + `def apply_storage_settings` body + `storage_settings_snapshot` body）AST byte-equivalent 断言通过。归属：数据 PR-3（[[70 开发过程跟踪/PR 状态总账/PR - 数据模型#数据 PR-3：幂等导入器与对账工具]]）。
+
+> **AST 层机器可验证契约**：`tests/data_import/test_no_sqlalchemy_in_main.py` 用 AST 遍历强制 `main.py` 顶层 body **不许** `import sqlalchemy` / `from sqlalchemy.orm import Session` —— CLI 层禁 SQL 泄漏的机器可验证契约。`tests/data_import/test_metadata_singleton.py` 强制 9 张 baseline 表挂 `app.db.base.metadata` 单例 + AST 禁自建 `MetaData()`。`tests/data_import/test_provider_credential_never_imported.py::test_provider_importer_calls_safe_records` AST 断言 provider importer 必须调用 `_safe_provider_records` 深层脱敏。三条 AST 契约任一失败即视为违反治理约定，直接 REJECT。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：

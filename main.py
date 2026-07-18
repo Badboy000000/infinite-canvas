@@ -17883,6 +17883,37 @@ if __name__ == "__main__":
         _run_migrations(revision)
         sys.exit(0)
 
+    # --- 数据模型治理 PR-3：`python main.py data-import <domain> [--dry-run] --
+    #                        [--from <path>]` / `data-reconcile <domain>` CLI --
+    # CLI 层禁 `import sqlalchemy` / `Session`；只调 `app.data_import` re-export
+    # `import_domain / reconcile_domain`。输出稳定 JSON。详见
+    # [[40 实施计划/数据模型治理实施计划与PR清单]] PR-3。
+    if len(sys.argv) >= 2 and sys.argv[1] in ("data-import", "data-reconcile"):
+        _sub = sys.argv[1]
+        if len(sys.argv) < 3:
+            print(json.dumps({
+                "error": "missing_domain",
+                "hint": f"usage: python main.py {_sub} <domain> [--dry-run] [--from <path>]",
+            }, ensure_ascii=False))
+            sys.exit(2)
+        _domain = sys.argv[2]
+        _dry_run = "--dry-run" in sys.argv[3:]
+        _from_path = None
+        _rest = sys.argv[3:]
+        if "--from" in _rest:
+            _idx = _rest.index("--from")
+            if _idx + 1 < len(_rest):
+                _from_path = _rest[_idx + 1]
+        from app.data_import import import_domain, reconcile_domain
+
+        if _sub == "data-import":
+            _outcome = import_domain(_domain, source_path=_from_path, dry_run=_dry_run)
+            print(json.dumps(_outcome.to_dict(), ensure_ascii=False, sort_keys=True))
+        else:
+            _report = reconcile_domain(_domain)
+            print(json.dumps(_report.to_dict(), ensure_ascii=False, sort_keys=True))
+        sys.exit(0)
+
     import uvicorn
     # 关闭服务端协议级 WebSocket ping：部分客户端（如 PS UXP 面板）不会自动回 pong，
     # 默认 20s ping/20s 超时会把这些连接每隔一会儿就踢掉造成"频繁断连"。
