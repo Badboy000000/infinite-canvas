@@ -69,9 +69,18 @@ def repo_root() -> Path:
 
 def read_base(base_path: Path) -> str:
     """按 LF 语义读取 base 内容并规范化换行符。"""
-    raw = base_path.read_text(encoding="utf-8", newline="")
+    # ``Path.read_text(newline=...)`` 直到 Python 3.14 才支持，为兼容 3.11 / 3.12 / 3.13
+    # 改走 ``open`` + ``.read()``。
+    with base_path.open(encoding="utf-8", newline="") as handle:
+        raw = handle.read()
     # 允许 base 存放为任意换行符，内部一律按 LF 处理。
     return raw.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _read_text_binary_safe(path: Path) -> str:
+    """跨 Python 版本读取保留原换行符的文本内容（与 read_base 同理由）。"""
+    with path.open(encoding="utf-8", newline="") as handle:
+        return handle.read()
 
 
 def render(content_lf: str, line_sep: str) -> str:
@@ -134,7 +143,7 @@ def main() -> int:
             if not target.is_file():
                 drifted.append(f"{rel}（文件不存在）")
                 continue
-            current = target.read_text(encoding="utf-8", newline="")
+            current = _read_text_binary_safe(target)
             if current != expected:
                 drifted.append(rel)
         if drifted:
@@ -158,7 +167,7 @@ def main() -> int:
     print(f"Base 源：{BASE_PATH}（{base_lf.count(chr(10))} 行）")
     for target, expected, rel in plan:
         if target.is_file():
-            current = target.read_text(encoding="utf-8", newline="")
+            current = _read_text_binary_safe(target)
             if current == expected:
                 print(f"   {rel}: 已是最新，无变化")
                 continue

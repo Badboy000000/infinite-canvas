@@ -68,11 +68,14 @@ def repo_root() -> Path:
 def load_normalized(path: Path) -> list[str]:
     """按 UTF-8 读文件并 strip 掉行尾 CR，返回逐行列表。
 
-    - 用 ``newline=""`` 避免 Python 自作主张转换换行符；
+    - 用 ``open(..., newline="")`` 避免 Python 自作主张转换换行符；
+      （``Path.read_text(newline=...)`` 直到 Python 3.14 才支持，为兼容 3.11 / 3.12 / 3.13
+       改走 ``open`` + ``.read()``）
     - 手动 ``rstrip("\r")`` 剥掉 CR，让 CRLF / LF 视为等价；
     - 不 strip 空白其他部分，避免掩盖真实内容差异。
     """
-    text = path.read_text(encoding="utf-8", newline="")
+    with path.open(encoding="utf-8", newline="") as handle:
+        text = handle.read()
     lines = text.splitlines()
     return [line.rstrip("\r") for line in lines]
 
