@@ -49,6 +49,9 @@ from app.shared.settings import (  # noqa: E402,F401
 # [[40 实施计划/数据模型治理实施计划与PR清单]] PR-1、
 # [[50 决策记录/决策 - ORM 与迁移工具选型]]。
 from app.db import engine as _db_engine  # noqa: E402,F401  # facade re-export
+# --- File governance PR-2 shadow-registration facade -----------------------
+from app.adapters.storage.local_dir import LocalDirAdapter  # noqa: E402
+from app.services.files import FileService, LegacyPathConflictError  # noqa: E402
 # --- PR-BE-05 low-risk read-only router assembly ----------------------------
 from app.api.routers.comfyui import create_router as create_comfyui_router  # noqa: E402
 from app.api.routers.history import create_router as create_history_router  # noqa: E402
@@ -85,8 +88,9 @@ import shlex
 import functools
 import html
 import xml.etree.ElementTree as ET
+import ipaddress
 from typing import List, Dict, Any, Optional, Tuple
-from threading import Lock, Thread
+from threading import BoundedSemaphore, Lock, Thread
 import httpx
 from PIL import Image, ImageOps
 from io import BytesIO
@@ -686,6 +690,108 @@ def load_env_file():
         print(f"加载 API/.env 失败: {e}")
 ensure_runtime_config_files()
 load_env_file()
+
+def _parse_file_shadow_write(value):
+    normalized = str(value if value is not None else "true").strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    logging.getLogger("infinite_canvas.files").warning(
+        "Invalid FILE_SHADOW_WRITE value; shadow registration disabled",
+        extra={"event": "file_shadow_flag_invalid"},
+    )
+    return False
+
+FILE_SHADOW_WRITE = _parse_file_shadow_write(os.environ.get("FILE_SHADOW_WRITE"))
+FILE_INDEX_PATH = os.path.join(DATA_DIR, "file_index.json")
+file_service = FileService(LocalDirAdapter(ASSETS_DIR), FILE_INDEX_PATH)
+_FILE_SHADOW_BACKGROUND_SLOTS = BoundedSemaphore(4)
+
+def _shadow_error_code(exc):
+    if isinstance(exc, FileNotFoundError):
+        return "legacy_file_missing"
+    if isinstance(exc, PermissionError):
+        return "legacy_file_unreadable"
+    if isinstance(exc, LegacyPathConflictError):
+        return "digest_conflict"
+    if isinstance(exc, (ValueError, TypeError)):
+        return "invalid_registration"
+    return "registration_error"
+
+def shadow_register_existing(path, url, origin, mime=""):
+    """Best-effort synchronous shadow registration; never changes legacy flow."""
+    if not FILE_SHADOW_WRITE:
+        return None
+    try:
+        with open(path, "rb") as stream:
+            return file_service.create_from_stream(
+                stream,
+                legacy_path=path,
+                legacy_url=url or None,
+                origin_kind=origin,
+                mime_type=mime or mimetypes.guess_type(path)[0],
+            )
+    except Exception as exc:
+        error_code = _shadow_error_code(exc)
+        if not isinstance(exc, LegacyPathConflictError):
+            try:
+                file_service.record_failure(origin, error_code)
+            except Exception:
+                pass
+        logging.getLogger("infinite_canvas.files").warning(
+            "File shadow registration failed",
+            extra={"event": "file_shadow_registration_failed", "origin": origin, "error": error_code},
+        )
+        return None
+
+def _run_shadow_registration(path, url, origin, mime=""):
+    try:
+        shadow_register_existing(path, url, origin, mime)
+    finally:
+        _FILE_SHADOW_BACKGROUND_SLOTS.release()
+
+def _deployment_mode_value_from_environment():
+    value = str(os.environ.get("IC_DEPLOYMENT_MODE") or "local_personal").strip().lower()
+    return value or "local_personal"
+
+async def shadow_register_existing_async(path, url, origin, mime=""):
+    shadow_register_existing_in_thread(path, url, origin, mime)
+
+def shadow_register_existing_in_thread(path, url, origin, mime=""):
+    if not FILE_SHADOW_WRITE:
+        return
+    if not _FILE_SHADOW_BACKGROUND_SLOTS.acquire(blocking=False):
+        logging.getLogger("infinite_canvas.files").warning(
+            "File shadow registration skipped",
+            extra={"event": "file_shadow_registration_skipped", "origin": origin, "error": "background_queue_full"},
+        )
+        return
+    try:
+        thread = Thread(
+            target=_run_shadow_registration,
+            args=(path, url, origin, mime),
+            name="file-shadow-register",
+            daemon=True,
+        )
+        thread.start()
+    except Exception:
+        _FILE_SHADOW_BACKGROUND_SLOTS.release()
+        logging.getLogger("infinite_canvas.files").warning(
+            "File shadow registration skipped",
+            extra={"event": "file_shadow_registration_skipped", "origin": origin, "error": "background_start_failed"},
+        )
+
+@app.get("/api/_diag/file-shadow-align", include_in_schema=False)
+async def file_shadow_alignment_diagnostic(request: Request):
+    client_host = request.client.host if request.client else ""
+    try:
+        is_loopback = ipaddress.ip_address(client_host).is_loopback
+    except ValueError:
+        is_loopback = False
+    if _deployment_mode_value_from_environment() != "local_personal" or not is_loopback:
+        raise HTTPException(status_code=404, detail="Not Found")
+    return await asyncio.to_thread(file_service.alignment_summary, 24 * 60 * 60)
 
 COMFYUI_INSTANCES = [s.strip() for s in os.getenv("COMFYUI_INSTANCES", "127.0.0.1:8188").split(",") if s.strip()]
 COMFYUI_ADDRESS = COMFYUI_INSTANCES[0]
@@ -3104,7 +3210,9 @@ def download_image(comfy_address, comfy_url_path, prefix="studio_"):
     try:
         with urllib.request.urlopen(full_url, timeout=COMFYUI_DOWNLOAD_TIMEOUT) as response, open(local_path, 'wb') as out_file:
             shutil.copyfileobj(response, out_file)
-        return output_url_for(filename, "output")
+        local_url = output_url_for(filename, "output")
+        shadow_register_existing_in_thread(local_path, local_url, "comfy_output", mimetypes.guess_type(local_path)[0] or "")
+        return local_url
     except Exception as e:
         print(f"下载图片失败: {e}")
         if comfy_url_path.startswith("/view"):
@@ -3171,7 +3279,9 @@ def download_comfy_output(comfy_address, item, prefix="studio_"):
     try:
         with urllib.request.urlopen(full_url, timeout=COMFYUI_DOWNLOAD_TIMEOUT) as response, open(local_path, 'wb') as out_file:
             shutil.copyfileobj(response, out_file)
-        return output_url_for(filename, "output")
+        local_url = output_url_for(filename, "output")
+        shadow_register_existing_in_thread(local_path, local_url, "comfy_output", mimetypes.guess_type(local_path)[0] or "")
+        return local_url
     except Exception as e:
         print(f"下载 ComfyUI 输出失败: {e}")
         if comfy_url_path.startswith("/view"):
@@ -3188,7 +3298,9 @@ def save_comfy_text_output(value, prefix="studio_", name=""):
     path = output_path_for(filename, "output")
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
-    return output_url_for(filename, "output")
+    local_url = output_url_for(filename, "output")
+    shadow_register_existing_in_thread(path, local_url, "comfy_output", mimetypes.guess_type(path)[0] or "text/plain")
+    return local_url
 
 def comfy_text_values_from_output(node_output):
     values = []
@@ -4982,6 +5094,7 @@ async def generate_codex_provider_image_via_gpt_image_2_skill(prompt, size, mode
             processed_path = codex_postprocess_image_to_requested_size(path, size, attempt_provider)
             url = codex_output_url_from_path(processed_path or path)
             if url:
+                shadow_register_existing_in_thread(processed_path or path, url, "ai_output", content_type_for_path(processed_path or path))
                 urls.append(url)
         if not urls:
             status_text = (out_text or err_text or "")[:1200]
@@ -5355,6 +5468,7 @@ async def generate_gemini_cli_provider_image(prompt, size, model, reference_imag
             processed_path = codex_postprocess_image_to_requested_size(path, size, "gemini-cli")
             url = codex_output_url_from_path(processed_path or path)
             if url and url not in urls:
+                shadow_register_existing_in_thread(processed_path or path, url, "ai_output", content_type_for_path(processed_path or path))
                 urls.append(url)
         if not urls:
             text = f"{raw.get('text') or raw.get('_stdout') or ''}\n{raw.get('_stderr') or ''}"
@@ -5364,6 +5478,7 @@ async def generate_gemini_cli_provider_image(prompt, size, model, reference_imag
                 processed_path = codex_postprocess_image_to_requested_size(match_path, size, "gemini-cli")
                 url = codex_output_url_from_path(processed_path or match_path)
                 if url and url not in urls:
+                    shadow_register_existing_in_thread(processed_path or match_path, url, "ai_output", content_type_for_path(processed_path or match_path))
                     urls.append(url)
         if not urls:
             status_text = (raw.get("text") or raw.get("_stdout") or raw.get("_stderr") or "")[:1200]
@@ -5994,7 +6109,9 @@ def jimeng_local_output_url(path, kind="image"):
     filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
     dest = output_path_for(filename, "output")
     shutil.copyfile(path, dest)
-    return output_url_for(filename, "output")
+    local_url = output_url_for(filename, "output")
+    shadow_register_existing_in_thread(dest, local_url, "ai_output", content_type_for_path(dest))
+    return local_url
 
 async def jimeng_store_output_value(value, kind="image"):
     text = str(value or "").strip()
@@ -6773,7 +6890,9 @@ def import_local_image_file(path):
         shutil.copyfile(path, dest)
     except OSError:
         raise HTTPException(status_code=500, detail="导入本地图片失败")
-    return {"url": output_url_for(filename, "input"), "name": os.path.basename(path) or filename, "kind": "image"}
+    local_url = output_url_for(filename, "input")
+    shadow_register_existing_in_thread(dest, local_url, "ai_input", mimetypes.guess_type(dest)[0] or "image")
+    return {"url": local_url, "name": os.path.basename(path) or filename, "kind": "image"}
 
 def default_asset_library():
     categories = [
@@ -6950,6 +7069,7 @@ def make_asset_library_item(src: str, name: str = "", subdir: str = "") -> Tuple
         "kind": kind,
         "created_at": now_ms(),
     }
+    shadow_register_existing_in_thread(dest_path, item["url"], "library_copy", mimetypes.guess_type(dest_path)[0] or "")
     return dest_name, item
     return lib
 
@@ -7219,7 +7339,7 @@ def make_workflow_library_item_from_bytes(raw: bytes, filename: str, name: str =
     with open(dest_path, "wb") as f:
         f.write(raw)
     display_name = sanitize_asset_name(name or os.path.splitext(safe_filename)[0], "工作流")
-    return {
+    item = {
         "id": f"wf_{uuid.uuid4().hex[:12]}",
         "name": display_name[:120],
         "url": f"/assets/library/{dest_name}",
@@ -7229,6 +7349,8 @@ def make_workflow_library_item_from_bytes(raw: bytes, filename: str, name: str =
         "size": len(raw),
         "created_at": now_ms(),
     }
+    shadow_register_existing_in_thread(dest_path, item["url"], "workflow_export", mimetypes.guess_type(dest_path)[0] or "")
+    return item
 
 def save_asset_library(lib):
     lib = normalize_asset_library(lib)
@@ -8949,7 +9071,9 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
             path = output_path_for(filename, category)
         with open(path, "wb") as f:
             f.write(base64.b64decode(image_data["value"]))
-        return output_url_for(filename, category)
+        local_url = output_url_for(filename, category)
+        await shadow_register_existing_async(path, local_url, "ai_output", mime_type)
+        return local_url
     value = image_data["value"]
     if value.startswith("/output/") or value.startswith("/assets/"):
         return value
@@ -8968,7 +9092,9 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
                 path = output_path_for(filename, category)
             with open(path, "wb") as f:
                 f.write(response.content)
-            return output_url_for(filename, category)
+            local_url = output_url_for(filename, category)
+            await shadow_register_existing_async(path, local_url, "ai_output", content_type)
+            return local_url
     except Exception as e:
         print(f"保存上游图片失败: {e}; url={value}")
         return value
@@ -9049,7 +9175,9 @@ async def save_remote_video_to_output(url, prefix="video_", category="output"):
                 f.write(response.content)
             if os.path.getsize(path) <= 0:
                 raise RuntimeError("empty video response")
-            return output_url_for(filename, category)
+            local_url = output_url_for(filename, category)
+            await shadow_register_existing_async(path, local_url, "ai_output", content_type)
+            return local_url
     except Exception as e:
         print(f"保存上游视频失败: {e}")
         try:
@@ -9614,7 +9742,9 @@ async def runninghub_store_remote_output(client, remote):
     path = output_path_for(filename, "output")
     with open(path, "wb") as f:
         f.write(response.content)
-    return output_url_for(filename, "output")
+    local_url = output_url_for(filename, "output")
+    await shadow_register_existing_async(path, local_url, "ai_output", response.headers.get("content-type", ""))
+    return local_url
 
 def runninghub_fail_reason(raw):
     data = raw.get("data") if isinstance(raw, dict) else None
@@ -11281,7 +11411,9 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
         path = output_path_for(filename, "input")
         with open(path, "wb") as f:
             f.write(content)
-        uploaded.append({"url": output_url_for(filename, "input"), "name": file.filename or filename, "kind": kind, "mime": content_type})
+        local_url = output_url_for(filename, "input")
+        await shadow_register_existing_async(path, local_url, "ai_input", content_type)
+        uploaded.append({"url": local_url, "name": file.filename or filename, "kind": kind, "mime": content_type})
     return {"files": uploaded}
 
 class Base64UploadRequest(BaseModel):
@@ -11314,7 +11446,9 @@ async def upload_ai_base64(payload: Base64UploadRequest):
     path = output_path_for(filename, "input")
     with open(path, "wb") as f:
         f.write(content)
-    return {"files": [{"url": output_url_for(filename, "input"), "name": payload.name or filename, "kind": kind}]}
+    local_url = output_url_for(filename, "input")
+    await shadow_register_existing_async(path, local_url, "ai_input", ct)
+    return {"files": [{"url": local_url, "name": payload.name or filename, "kind": kind}]}
 
 @app.post("/api/comfyui/upload-base64")
 async def upload_comfyui_base64(payload: Base64UploadRequest):
@@ -11644,6 +11778,8 @@ async def upload_local_assets(files: List[UploadFile] = File(...), folder: str =
         path = os.path.join(folder_abs, filename)
         with open(path, "wb") as f:
             f.write(content)
+        local_url = _local_upload_item(rel_name)["url"]
+        await shadow_register_existing_async(path, local_url, "upload", file.content_type or "")
         if kind == "image":
             classification = await classify_asset_image_best_effort(path)
             if classification:
@@ -11712,6 +11848,8 @@ async def import_local_assets_from_urls(payload: LocalAssetUrlImportRequest):
                 path = os.path.join(folder_abs, filename)
                 with open(path, "wb") as f:
                     f.write(content)
+                local_url = _local_upload_item(rel_name)["url"]
+                await shadow_register_existing_async(path, local_url, "upload", content_type)
                 if payload.classify and kind == "image":
                     classification = await classify_asset_image_best_effort(path, payload.provider, payload.model, payload.ms_model, payload.prompt)
                     if classification:
@@ -15161,6 +15299,7 @@ async def import_canvas_workflow(file: UploadFile = File(...)):
                         shutil.copyfileobj(src, dst)
                     rel = os.path.relpath(target, ASSETS_DIR).replace("\\", "/")
                     new_url = f"/assets/{rel}"
+                    await shadow_register_existing_async(target, new_url, "workflow_import", mimetypes.guess_type(target)[0] or "")
                     old_url = str(res.get("url") or "").strip()
                     if old_url:
                         resource_mapping[old_url] = new_url
@@ -16543,6 +16682,7 @@ async def poll_angle_cloud(req: CloudPollRequest):
                                 with open(file_path, "wb") as f:
                                     f.write(img_res.content)
                                 local_path = output_url_for(filename, "output")
+                                await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
                             else:
                                 local_path = img_url
                     except Exception:
@@ -16633,6 +16773,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
                                 with open(file_path, "wb") as f:
                                     f.write(img_res.content)
                                 local_path = output_url_for(filename, "output")
+                                await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
                             else:
                                 local_path = img_url
                     except Exception:
@@ -16731,6 +16872,7 @@ async def generate_cloud(req: CloudGenRequest):
                                 with open(file_path, "wb") as f:
                                     f.write(img_res.content)
                                 local_path = output_url_for(filename, "output")
+                                await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
                             else:
                                 local_path = img_url
                     except Exception as dl_e:
@@ -16827,6 +16969,7 @@ async def ms_generate(req: MsGenerateRequest):
                                     with open(file_path, "wb") as f:
                                         f.write(img_res.content)
                                     local_path = output_url_for(filename, "output")
+                                    await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
                                 else:
                                     local_path = img_url
                         except Exception:
