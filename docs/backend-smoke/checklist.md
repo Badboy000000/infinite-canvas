@@ -200,6 +200,19 @@ asyncio.run(r())"`
 
 > **脚本入口防回归**：不得在迁出 router 的 handler 内懒 `import main`。项目用 `python main.py` 启动时入口模块名是 `__main__`，再次 `import main` 会形成第二套模块全局，导致写路由更新 `__main__`、读路由读取副本 `main`。本 PR 使用 `create_router(callback...)` 注入当前模块 helper，专门避免该状态分裂。
 
+## 27. FileService 骨架 + 影子登记（文件 PR-2）
+
+- 命令：
+  - `python -m pytest tests/files/ -v`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python -c "from app.services.files import FileService, LegacyPathConflictError; print('services OK')"`
+  - `python -c "from app.shared.ids import generate_id; import uuid; v=generate_id(); print('ver=', v.version, 'var=', v.variant)"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+- 期望：**16 passed / 0 failed / 0 skipped**（`test_file_service.py` 8 项 + `test_main_integration.py` 6 项 + `test_uuid7.py` 2 项）；`routes` 数从 PR-BE-05 后的 166 增至 **167**（+1 = `/api/_diag/file-shadow-align`，`include_in_schema=False` 不进 OpenAPI），`openapi_diff` exit=0 `baseline == current`；`generate_id()` 返回 `uuid.UUID` ver=7 var=RFC 4122；全量测试 **357 passed / 35 skipped**（PR-BE-05 后 341 → +16 与新增测试面吻合）。
+- 关联事实：新增 `app/services/files/{__init__,file_service.py}`（FileService 骨架，进程内锁 + 跨进程 `_CrossProcessLock` + `os.replace` 原子写；schema_version=1 索引；事件保留 8 天 + 上限 10_000）；`app/shared/ids.py` +60 行（UUIDv7 `generate_id`）；`main.py` 五段 facade 桥后新增第六段 +169 行（`FILE_SHADOW_WRITE` 三值解析 + `file_service` 单例 + `shadow_register_existing[_in_thread|_async]` + `BoundedSemaphore(4)` 后台并发上限 + 21 处 durable 挂钩点 + 3 处 AST 排除函数 + `/api/_diag/file-shadow-align` 内部诊断 `local_personal` + loopback 双门禁）；`data/file_index.json` 治理期 JSON 索引（未入库，`.gitignore` 已就地补一行）；冻结区 AST byte-equivalent 断言（`class StorageSettings` / `apply_storage_settings` / `storage_settings_snapshot` 三段与 `ba4b87e` baseline 完全一致）。归属：文件 PR-2（[[70 开发过程跟踪/开发编年史/2026-07-18 文件 PR-2 补验收]] Lead 亲自补验收）。
+
+> **AST 层机器可验证契约**：`test_ast_has_required_durable_hooks_and_exclusions` 用 AST 遍历强制 21 个 durable 写入函数**必须**挂钩 `shadow_register_existing`，同时强制 3 个明确排除函数（`_local_upload_item` / `export_canvas_workflow` / `upload_comfyui_base64`）**必须不**挂钩 —— 硬门槛防止未来 subagent 手滑加错或遗漏。`test_file_service_never_calls_adapter_put` 用 AST 遍历强制 `FileService` 内部**从不**调用 `adapter.put` / `open_writable_stream` —— 影子不切主写的机器可验证契约。`test_storage_settings_frozen_functions_match_baseline` 用 `git show ba4b87e:main.py` AST byte-equivalent 断言冻结区。三条 AST 契约任一失败即视为 PR 违反治理约定，直接 REJECT。
+
 ---
 
 ## 附：OpenAPI baseline 差异校验

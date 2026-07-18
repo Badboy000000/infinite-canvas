@@ -24,6 +24,12 @@ htmlcov/
 /Y/
 /Z/
 
+# 文件对象治理期 JSON 索引（FILE_SHADOW_WRITE=true 生产运行时生成，不入库）
+# 归属：文件 PR-2（[[70 开发过程跟踪/开发编年史/2026-07-18 文件 PR-2 补验收 F-1]]）
+data/file_index.json
+data/file_index.json.lock
+data/file_index.json.*.tmp
+
 # 编辑器与系统临时文件
 .idea/
 .vscode/
