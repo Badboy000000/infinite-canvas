@@ -1,146 +1,80 @@
 # Infinite Canvas - Agent Protocol
 
-This file defines how agents should work in this repository. Keep project decisions, architecture notes, implementation plans, and development records in the Obsidian knowledge base, not here.
+This file is the operational contract for any AI agent working in this repository. It states **what to do, when, and where to look for details** — nothing more. Historical rationale, detailed workflows, and specific templates live in the Obsidian knowledge base and `tools/README.md`.
 
-## Knowledge Base
+**Rules are generated. Do not edit `AGENTS.md` / `CLAUDE.md` / `.trae/rule.md` directly.** They are produced from `docs/agent-protocol/base.md` by `tools/sync_agent_configs.py`. `pre-commit` refuses commits when the three files drift from `base.md`.
 
-Path:
+## Two source-of-truth graphs
 
-```txt
-E:\个人知识库\Infinite Canvas 二开与架构治理项目知识库
-```
+| Graph | Answers | Consult |
+|---|---|---|
+| **Obsidian knowledge base** at `E:\个人知识库\Infinite Canvas 二开与架构治理项目知识库` | What the system should be, why, and under what constraint | Read `Infinite Canvas 二开与架构治理项目知识库 Index.md` first; follow only links relevant to the current task |
+| **CodeGraph** (`.codegraph/` in this repo) | What the code currently is, who calls whom, blast radius of a change | `codegraph_explore` first; treat returned source as already read |
 
-Required entry:
+When they disagree, report the discrepancy before acting, then reconcile the knowledge-base note after the discrepancy is resolved.
 
-```txt
-Infinite Canvas 二开与架构治理项目知识库 Index.md
-```
+## CodeGraph rules
 
-Current organization:
+1. **Query CodeGraph before raw `Read`/`Grep` on code.** Use `codegraph_explore` for "how does X work / where is X used / what is the flow X→Y / what depends on X". Do not re-verify returned source with grep.
+2. **Impact analysis before public-surface changes.** Renaming, deleting, moving, or changing a public function / class / route → `codegraph_impact` or include the symbol in `codegraph_explore` first.
+3. **Respect index freshness.** If a response includes the staleness banner, `Read` the listed files directly. If the project is not indexed (no `.codegraph/`), fall back to `Read`/`Grep` and do **not** run `codegraph init` yourself.
+4. **CodeGraph does not replace tests / lint / type checks.** Structural context only.
 
-- Root keeps only the required Index entry.
-- `00 索引与规范/`: index notes, vault rules, and navigation.
-- `10 架构基线/`: target architecture, gap analysis, roadmap, and engineering rules.
-- `20 现状地图/`: current code facts and module maps.
-- `30 治理方案/`: long-lived governance plans.
-- `40 实施计划/`: implementation plans, PR lists, and issue breakdowns.
-- `50 决策记录/`: formal architecture decisions.
-- `60 讨论记录/`: discussion or review records that still serve as current baseline context.
-- `90 资料归档/`: completed or historical material kept for traceability only.
+## Knowledge-base rules
 
-Before any non-trivial architecture discussion, refactor plan, or code change:
+- Read the required entry `Infinite Canvas 二开与架构治理项目知识库 Index.md` before any non-trivial architecture discussion, refactor plan, or code change.
+- Prefer `00 索引与规范/` index notes over deep-dive notes; prefer current baseline (`10 架构基线/`, `20 现状地图/`, `30 治理方案/`, `40 实施计划/`, `50 决策记录/`) over archived material (`90 资料归档/`).
+- After meaningful work, write back: current baseline → the corresponding note; active discussion / review → `60 讨论记录/`; completed / historical material → `90 资料归档/`. Do not create a separate long-term memory system inside this repository.
+- Do not read `90 资料归档/` unless historical traceability is explicitly needed.
 
-1. Read this file.
-2. Read the required knowledge-base entry.
-3. Follow only links relevant to the current task, preferring `00 索引与规范/` index notes before detailed notes.
-4. Prefer current baseline, maps, governance plans, implementation plans, and decision records over archived material.
-5. Read `90 资料归档/` only when historical traceability or source discussion context is explicitly needed.
-6. Inspect the relevant repository files, scripts, tests, configuration, and recent changes.
+## Work style
 
-Source-of-truth rule:
-
-- Use the repository for what currently exists.
-- Use the knowledge base for intended architecture and recorded decisions.
-- If they disagree, report the discrepancy before making consequential changes, then update the relevant knowledge-base note after the discrepancy is resolved.
-
-After meaningful architecture discussion, refactor planning, or implementation work:
-
-- Update the relevant knowledge-base index or note.
-- Put active baseline discussion or review records under `60 讨论记录/` when needed.
-- Put reference material, historical notes, completed source discussions, and other non-current material under `90 资料归档/` when needed.
-- Do not create a separate long-term memory system inside this repository.
-
-## Work Style
-
-- Proceed without repeated confirmation for ordinary, reversible project work.
-- Ask before destructive or difficult-to-reverse operations, deleting user data, changing credentials, touching billing or production infrastructure, or making materially ambiguous product or architecture decisions.
-- Search for existing implementations and conventions before adding new abstractions, dependencies, frameworks, or workflow changes.
-- Preserve established conventions unless a documented reason justifies changing them.
-- Avoid duplicate abstractions, parallel state systems, and redundant tooling.
+- Proceed without repeated confirmation for ordinary, reversible work.
+- **Ask** before destructive or hard-to-reverse operations, deleting user data, changing credentials, touching billing / production infra, or making materially ambiguous product / architecture decisions.
+- Search for existing conventions before adding new abstractions, dependencies, or workflow changes. Prefer three similar lines over a premature abstraction.
 - Identify migration and compatibility impact before changing shared interfaces.
-
-For AI or AIGC functionality, also check model/provider compatibility, prompt and workflow versioning, structured-output contracts, retry/timeout/cancellation behavior, cost and latency impact, validation, deterministic post-processing, observability, reproducibility, secret handling, and prompt-injection exposure.
+- For AI / AIGC work, also check: model-provider compatibility, prompt versioning, structured-output contracts, retry / timeout / cancellation, cost & latency, validation, deterministic post-processing, observability, reproducibility, secret handling, prompt-injection exposure.
 
 ## Subagents
 
-Claude is the lead orchestrator. Subagents are optional specialists, not a checklist.
+Claude is the lead orchestrator. Subagents are optional specialists.
 
-Use subagents only when they improve quality or speed through specialized expertise, independent investigation, parallel analysis, implementation on disjoint files, or unbiased review. Do not delegate trivial edits or simple lookups.
+- Use a subagent only when it improves quality or speed through specialized expertise, independent investigation, parallel work, or unbiased review. Do **not** delegate trivial edits or lookups.
+- **Every delegation must follow** [[70 开发过程跟踪/治理机制/subagent 任务书回写义务清单]] — the complete task-book template (objective, cross-topic write-back matrix, reserved shared identifiers, zero-touch evidence requirement, mandatory report fields) lives there. Do not paraphrase from memory.
+- The lead resolves contradictions between agent outputs, owns final synthesis, verifies actual repository state, and must not rely only on a self-report.
 
-Before delegation:
+## Delivery standard
 
-1. Restate the objective and acceptance criteria.
-2. Identify affected repository areas and relevant knowledge-base notes.
-3. Read enough context to avoid generic assignments.
-4. Select the smallest useful set of specialists.
-5. Separate parallel work from sequential work and avoid concurrent edits to the same or tightly coupled files.
+For substantial work: (1) context → (2) specialist analysis if useful → (3) synthesize order + file ownership → (4) implement with serialized edits to shared files → (5) run lint / tests / smoke → (6) verify repository state → (7) write back to knowledge base.
 
-Every delegated task must include the objective, constraints, edit permission, owned files or modules, expected output, acceptance criteria, required checks, and explicit exclusions.
+- **Do not claim completion until acceptance criteria are checked against actual project state.**
+- Final response states: files changed, checks run with results, knowledge-base updates, unresolved risks, subagents used (or "none — delegation would not improve quality").
 
-For concurrent governance work, the lead must also:
+## Git delivery closure
 
-- Give each subagent an explicit cross-topic write-back matrix. The final report must mark every listed repository and knowledge-base target as updated or not applicable, with evidence or a reason.
-- Reserve shared identifiers before dispatch, including smoke-check sections, OpenAPI registration slots, current-map `M-` numbers, and any other shared sequence. Subagents must not choose identifiers from a shared pool themselves.
-- Require evidence for declared zero-touch areas. "No change" is a delivery fact and must be verified with a scoped diff or equivalent check.
-- Keep the root knowledge-base Index under lead ownership during concurrent work. Subagents report required Index changes; the lead applies them once during wave or batch close-out.
+- Commits align with the PR / issue boundaries defined in the knowledge base. Use the currently designated branch unless the task requires another.
+- **A PR is not `merged` until**: its commits are pushed, remote-reachable, and the PR status ledger has the branch + commit hash(es). Tests passing / KB write-back do **not** replace push evidence.
+- Before committing, inspect the staged diff. Exclude unrelated user changes, credentials, real user data, test artifacts. Never absorb pre-existing unrelated work.
+- Enforcement + full policy: `tools/check_delivery_closure.py` (when present) and [[10 架构基线/技术开发规则与工程实施规范#Git 交付闭环规则]].
 
-Every subagent report must include inspected files and notes, findings or decisions, changed files, commands or tests run, completion evidence, unresolved risks, and recommended next action.
+## Test artifact hygiene
 
-The lead resolves contradictions between agent outputs, owns final synthesis, verifies actual repository state, and must not rely only on a subagent self-report.
+After **any** test / smoke / contract / `curl` run, before the turn ends:
 
-## Delivery Standard
+1. `python tools/cleanup_test_artifacts.py` — dry-run
+2. `python tools/cleanup_test_artifacts.py --apply`
+3. `git status` shows only intended production diff
 
-For substantial implementation work, follow this order when applicable:
+Extending patterns, exclusion list, and full rationale: `tools/README.md#测试残留清理`.
 
-1. Establish context and requirements.
-2. Run specialist analysis only when useful.
-3. Synthesize the implementation order and file ownership.
-4. Implement with serialized edits to shared or coupled files.
-5. Run relevant linting, type checks, tests, builds, or smoke checks.
-6. Verify the final repository state.
-7. Write back to the knowledge base when required.
+## Automation & guardrails
 
-Do not claim completion until the acceptance criteria are checked against the actual project state.
+Regenerate rules and hard-checked invariants (do not skip):
 
-Final responses for substantial work should state files changed, checks run, verification results, knowledge-base updates, unresolved risks, and which subagents were used. If no subagent was needed, say the task was completed directly because delegation would not improve quality or speed.
+- **Session preflight** (recommended first step of any coding session): `python tools/check_env.py` — verifies Obsidian path, CodeGraph index, `codegraph` CLI, Node/fnm, tools/ scripts.
+- **Regenerate rules** after editing `docs/agent-protocol/base.md`: `python tools/sync_agent_configs.py --apply`
+- **Rule consistency** (pre-commit blocks otherwise): `python tools/check_agent_configs.py`
+- **Delivery closure** (before marking a PR merged): `python tools/check_delivery_closure.py`
+- **Test residue** (before finishing any turn that ran tests): `python tools/cleanup_test_artifacts.py --apply`
 
-## Git Delivery Closure
-
-Knowledge-base completion records and Git delivery must describe the same work. A governance PR / issue is not complete merely because its code was written, reviewed, or documented.
-
-- Keep commits aligned with the PR / issue boundaries defined in the knowledge base. Do not mix unrelated governance work into one commit. A PR may use a small ordered series of commits when one commit would hide meaningful implementation steps.
-- Use the currently designated branch unless the task explicitly requires another branch. Do not create a branch per PR by default.
-- Before a PR can be marked `merged` / completed in the knowledge base, its in-scope changes must be committed, pushed to the configured remote, and recorded in the corresponding PR status ledger with the branch and commit hash(es).
-- A successful test, smoke check, Lead review, or knowledge-base write-back does not replace commit and push evidence. If push has not succeeded, keep the PR in `submitted` or `in_progress` and report the blocker.
-- Before committing, inspect the staged diff and exclude unrelated user changes, credentials, secrets, real user data, and test artifacts. Never absorb pre-existing unrelated work merely to make `git status` clean.
-- At delivery, verify that the PR's commit is reachable from the recorded remote branch and that no in-scope change remains uncommitted. Report any unrelated pre-existing working-tree changes separately.
-- Historical recovery commits that cover more than one recorded PR require explicit Lead approval and must map every included PR to the recovery commit in the status ledger. They are a repair mechanism, not the normal workflow.
-- Unless the user or task explicitly says not to push, governance implementation work is expected to complete the local commit, remote push, and knowledge-base commit-hash write-back in the same delivery cycle.
-
-## Test Artifact Hygiene
-
-Every time you run tests, backend/frontend smoke checks, contract tests, or ad-hoc `curl` verification against the local server, you MUST leave the repository in a clean "production code only" state before finishing the turn. The repository is not a scratch space; test artifacts are not deliverables.
-
-Canonical cleanup script: `tools/cleanup_test_artifacts.py`.
-
-Mandatory workflow after any test / smoke / verification run:
-
-1. Preview: `python tools/cleanup_test_artifacts.py` — dry-run listing everything the script would remove.
-2. Apply: `python tools/cleanup_test_artifacts.py --apply` — actually remove the listed items.
-3. Verify: `git status` should now show only the intended production diff. No `__pycache__/`, `.pytest_cache/`, stray top-level letter directories (`X/` / `Y/` / `Z/`), empty smoke-only `output/` subdirs, or `__smoke*` entries inside `data/api_providers.json` / `data/canvases/*.json`.
-
-The script covers:
-
-- Python caches: recursive `__pycache__/`, `*.pyc`, `*.pyo`, top-level `.pytest_cache/`.
-- Stray empty letter directories at the repo root (`X/`, `Y/`, `Z/`) created by ad-hoc curl / adhoc scripts.
-- Empty smoke-only output subdirs (`output/input/`, `output/output/`) — deleted only when empty, real generated artifacts are preserved.
-- Smoke pollution in `data/`: provider entries with `id` starting with `__smoke` inside `data/api_providers.json`, and canvas files whose `title` starts with `__smoke` (or is exactly `smoke`) inside `data/canvases/`.
-
-The script never touches: `API/.env*`, `app/`, `docs/`, `tests/`, `tools/`, `static/`, `packages/`, `assets/`, `workflows/`, or the rest of `data/` (asset library, conversations, history — real user data).
-
-Rules:
-
-- If you added a new class of test artifact (a new temp directory, a new smoke fixture pattern in `data/`, etc.), extend `tools/cleanup_test_artifacts.py` in the same commit — do not leave "please clean up manually" notes for the next agent.
-- If a real (non-smoke) file happens to match a smoke pattern, rename the file rather than weakening the pattern.
-- `.gitignore` already excludes the cache classes; cleanup is still required so `git status` is meaningful for anyone else inspecting the working tree.
-- Subagents that run tests must run the cleanup script themselves before reporting completion; the lead will re-verify with `git status`.
+Full script index: `tools/README.md`.
