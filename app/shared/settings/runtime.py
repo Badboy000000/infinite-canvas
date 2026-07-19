@@ -97,6 +97,7 @@ class Settings:
         project_primary_write                  → PROJECT_PRIMARY_WRITE           (数据 PR-8 新增)
         prompt_library_primary_write           → PROMPT_LIBRARY_PRIMARY_WRITE    (数据 PR-8 新增)
         workflow_definition_primary_write      → WORKFLOW_DEFINITION_PRIMARY_WRITE (数据 PR-8 新增)
+        asset_library_primary_write            → ASSET_LIBRARY_PRIMARY_WRITE     (数据 PR-9 新增)
     """
 
     base_dir: str
@@ -159,6 +160,12 @@ class Settings:
     project_primary_write: str
     prompt_library_primary_write: str
     workflow_definition_primary_write: str
+    # 数据 PR-9（Wave 3-H）新增 1 个字段：AssetLibrary 主写机制门禁。默认
+    # `"json"`（老 JSON 主写完全等价 PR-0 行为）；显式 `"db"` 才启用
+    # `app.db.asset_library_writer` DB 主写 + JSON 异步回写。值域 `{"json","db"}`，
+    # 其他值走 `_validate_asset_library_primary_write` fail-fast。契约测试
+    # 断言字段总数 33 → 34。
+    asset_library_primary_write: str
 
     # Deployment PR-01 adds a mode declaration and the non-secret switches that
     # later security PRs will consume. Defaults mirror today's runtime exactly;
@@ -180,6 +187,7 @@ _CANVAS_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _PROJECT_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _PROMPT_LIBRARY_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _WORKFLOW_DEFINITION_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
+_ASSET_LIBRARY_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 
 
 def _validate_canvas_primary_write(raw: object) -> str:
@@ -247,6 +255,22 @@ def _validate_workflow_definition_primary_write(raw: object) -> str:
         allowed = ", ".join(sorted(_WORKFLOW_DEFINITION_PRIMARY_WRITE_ALLOWED))
         raise ValueError(
             f"Invalid WORKFLOW_DEFINITION_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
+        )
+    return text
+
+
+def _validate_asset_library_primary_write(raw: object) -> str:
+    """校验 `main.ASSET_LIBRARY_PRIMARY_WRITE` 值域（数据 PR-9）。"""
+
+    if raw is None:
+        return "json"
+    text = str(raw).strip().lower()
+    if not text:
+        return "json"
+    if text not in _ASSET_LIBRARY_PRIMARY_WRITE_ALLOWED:
+        allowed = ", ".join(sorted(_ASSET_LIBRARY_PRIMARY_WRITE_ALLOWED))
+        raise ValueError(
+            f"Invalid ASSET_LIBRARY_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
         )
     return text
 
@@ -337,6 +361,7 @@ def get_settings() -> Settings:
         project_primary_write=_validate_project_primary_write(main.PROJECT_PRIMARY_WRITE),
         prompt_library_primary_write=_validate_prompt_library_primary_write(main.PROMPT_LIBRARY_PRIMARY_WRITE),
         workflow_definition_primary_write=_validate_workflow_definition_primary_write(main.WORKFLOW_DEFINITION_PRIMARY_WRITE),
+        asset_library_primary_write=_validate_asset_library_primary_write(main.ASSET_LIBRARY_PRIMARY_WRITE),
         **_deployment_snapshot(),
     )
 

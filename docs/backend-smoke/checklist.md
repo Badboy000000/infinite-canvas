@@ -383,6 +383,39 @@ asyncio.run(r())"`
 
 ---
 
+## 37. AssetLibrary 主写机制运维手册（数据 PR-9，Wave 3-H §37）
+
+**定位**：本段是**运维手册**，不是烟测通过条件。数据 PR-9 只交付 AssetLibrary 单 domain "主写机制搭建 + 显式 DB 启用能力"，**默认仍为 JSON 主写**（`ASSET_LIBRARY_PRIMARY_WRITE=json`）。反转默认值（切 `db`）是独立运维动作 / 独立 PR，不在 PR-9 代码范围。
+
+- 命令：
+  - `python -m pytest tests/db/test_asset_library_writer.py tests/db/test_save_functions_frozen.py tests/db/test_primary_write_route_exposure.py tests/shared/test_settings.py -v`
+  - `python -c "from main import ASSET_LIBRARY_PRIMARY_WRITE; assert ASSET_LIBRARY_PRIMARY_WRITE == 'json', 'default must be json'"`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+- 期望：AssetLibrary writer 契约测试 ≥9 项 STRONG 全绿（含 sys.modules 隔离 / 单文档 UPSERT + updated_at 单调 / 异步 JSON 回写字节等价 / e2e fallback diff 链路 / DB 主写失败上抛 / Settings 层 fail-fast / 跨 domain sentinel 抗回归）；`test_save_functions_frozen.py` 4 项 parametrized 全绿（含 `save_asset_library` byte-identical vs `ae50b28`）；`test_primary_write_route_exposure.py` 全绿（结构性 5 常量 + HTTP 黑盒负测）；`tests/shared/test_settings.py` 字段总数断言 33 → 34；`routes=167` 与基线一致；`openapi_diff` exit=0。
+
+### 灰度切换操作手册（AssetLibrary 独立执行；DB 是 SQLite 单库）
+
+1. **前置观察阶段**（可选跳过；AssetLibrary 域**未列入**数据 PR-4 shadow 双读范围，无 `SHADOW_READ_ASSET_LIBRARY` 开关；本 PR 也不新增该开关）：可直接进入对账阶段。若需要观察数据一致性可先跑 `python -m tools.data_reconcile asset_library`（PR-3 已就位）。
+2. **对账阶段**：`python -m tools.data_reconcile asset_library` 严格检查 JSON snapshot 与 DB 行数一致；有任何 missing → 停止切换，先修根因。
+3. **切换阶段**：设置 `ASSET_LIBRARY_PRIMARY_WRITE=db` 后重启进程；观察 `data/shadow_diff/asset_library_json_fallback/*.jsonl` 应零条目（异步 JSON 回写全成功）。
+4. **回滚阶段**：`ASSET_LIBRARY_PRIMARY_WRITE=json` 重启即回退到 PR-0 行为；JSON 文件已被 DB 主写阶段的异步回写维持最新，无数据回退风险。
+5. **禁止**：HTTP 不可修改此开关；只能通过环境变量 + 进程重启切换（P0 硬约束 #6）。
+
+### 关联事实
+
+- 新增 `app/db/asset_library_writer.py`（`save_asset_library_db(lib: dict) -> None` **单文档 UPSERT**——AssetLibrary payload 是单个 dict，走 `legacy_id="__root__"` 固定值保证幂等 UPSERT 单行；`load_asset_library_db() -> dict | None` 反序列化 `raw_json`；`_async_write_json_fallback(lib)` 走 `asyncio.run_in_executor` / `threading.Thread(daemon=True)` 双通道；`_write_json_fallback_sync` 内部复现 `main.save_asset_library` 落盘字节：`normalize_asset_library` + `sort_asset_library_items` + `updated_at=now_ms()` + `json.dump(indent=2)`；shadow diff 落 `data/shadow_diff/asset_library_json_fallback/<yyyymmdd>.jsonl` 稳定键位 `(ts, domain, error, fallback_reason)`——**不含内容体**）。
+- `app/stores/asset_library_store.py` wrapper 新增 `_get_primary_write_mode(domain)` 分派：`json`（默认）分支 100% 保留 PR-0 行为（**必须**保证 `sys.modules` 无 `app.db.asset_library_writer`，不构造 DB engine，不落 fallback 文件）；`db` 分支懒 import writer + JSON 异步回写。**`load_asset_library()` 也做分派**：`db` 模式下优先 `load_asset_library_db()`，返回 `None` 时 fallback JSON。
+- `main.py` 追加 1 行常量（紧邻 L372 `WORKFLOW_DEFINITION_PRIMARY_WRITE`）：`ASSET_LIBRARY_PRIMARY_WRITE`，默认 `"json"`。**`save_asset_library` 函数体（L7438-7446）零字节触碰**（AST byte-identical vs baseline `ae50b28`），`make_asset_library_item` / `migrate_asset_library_into_dirs` / `migrate_asset_item_registrations` 函数体同样零触碰。`main.py` 净改动 = **+1 行常量**。
+- `app/shared/settings/runtime.py:Settings` 追加 1 字段（33 → 34 项）：`asset_library_primary_write: str` 默认 `"json"`；追加校验器 `_validate_asset_library_primary_write` 值域 `{"json","db"}`（大小写不敏感、strip 后），其他值 `ValueError` fail-fast。`tests/shared/test_settings.py` `FIELD_TO_MAIN_CONST` + 断言字段总数 33 → 34；4 组 parametrized 测试（default/db-accepted/fail-fast/asset_library）全绿。
+- **D-1=B 决策**：不新增 Alembic migration（`0002_baseline_tables` 的 `asset_libraries` 表已够用；raw_json 承载单文档）。**D-2=B 决策**：`asset_libraries.raw_json` 保存完整嵌套 payload（含 `libraries: [{categories: [{items: [...]}]}]`）；`asset_categories` / `asset_items` 表 PR-9 **不主写**（文件对象专题 PR-3+ 接手 `file_ref` 时再展平）。**不启用** `file_ref`（列已 nullable 就位，本 PR 全部 NULL）。
+- 冻结区 AST 3/3（`class StorageSettings` / `def apply_storage_settings` / `def storage_settings_snapshot`）byte-equivalent 断言跨 10 PR 保持。**5 个 save 函数体** byte-identical 断言：`save_canvas` / `save_projects` / `save_prompt_libraries` / `save_runninghub_workflow_store` / **`save_asset_library`**（本 PR 首次确立契约，pin baseline `ae50b28`）。`routes=167` 不变；OpenAPI baseline exit=0。
+- **P0 抗回归**：`test_default_json_mode_does_not_import_writer` 断言 `ASSET_LIBRARY_PRIMARY_WRITE=json` 默认下 `sys.modules` 无 `app.db.asset_library_writer`；`test_db_mode_write_error_raises` monkeypatch `get_engine` raise → DB 主写失败必须原样上抛（P0 硬约束 #4）；`test_no_provider_credentials_in_raw_json_or_diff` 跨 domain sentinel（`AKIA_LEAK_TOP` / `SECRET_VALUE` / `Bearer LEAK`）→ diff jsonl 零出现（键位稳定护栏；跨 domain 抗回归护栏，即使 AssetLibrary 域本身不涉及 Provider 凭据）。
+
+归属：数据 PR-9（[[70 开发过程跟踪/PR 状态总账/PR - 数据模型#数据 PR-9]]）。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：

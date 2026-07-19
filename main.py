@@ -370,6 +370,7 @@ CANVAS_PRIMARY_WRITE = str(os.environ.get("CANVAS_PRIMARY_WRITE", "json")).strip
 PROJECT_PRIMARY_WRITE = str(os.environ.get("PROJECT_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-8（Wave 3-G）Project 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 PROMPT_LIBRARY_PRIMARY_WRITE = str(os.environ.get("PROMPT_LIBRARY_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-8（Wave 3-G）PromptLibrary 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 WORKFLOW_DEFINITION_PRIMARY_WRITE = str(os.environ.get("WORKFLOW_DEFINITION_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-8（Wave 3-G）WorkflowDefinition 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
+ASSET_LIBRARY_PRIMARY_WRITE = str(os.environ.get("ASSET_LIBRARY_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-9（Wave 3-H）AssetLibrary 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 DEFAULT_STORAGE_DIRS = {
     "upload": OUTPUT_INPUT_DIR,
     "generated": OUTPUT_OUTPUT_DIR,

@@ -34,6 +34,7 @@ FLAG_CONSTS = (
     "PROJECT_PRIMARY_WRITE",
     "PROMPT_LIBRARY_PRIMARY_WRITE",
     "WORKFLOW_DEFINITION_PRIMARY_WRITE",
+    "ASSET_LIBRARY_PRIMARY_WRITE",
 )
 FLAG_SETTINGS_FIELDS = tuple(f.lower() for f in FLAG_CONSTS)
 FLAG_PATTERN = re.compile(r"primary_write", re.IGNORECASE)
@@ -155,6 +156,7 @@ def _snapshot_flags() -> dict[str, Any]:
                 "upload": "custom/uploads",
                 "canvas_primary_write": "db",
                 "PROJECT_PRIMARY_WRITE": "db",
+                "ASSET_LIBRARY_PRIMARY_WRITE": "db",
             },
             "storage_settings",
         ),
@@ -180,6 +182,8 @@ def _snapshot_flags() -> dict[str, Any]:
                 "instances": [],
                 "workflow_definition_primary_write": "db",
                 "WORKFLOW_DEFINITION_PRIMARY_WRITE": "db",
+                "asset_library_primary_write": "db",
+                "ASSET_LIBRARY_PRIMARY_WRITE": "db",
             },
             "comfyui_instances",
         ),
