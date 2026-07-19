@@ -93,10 +93,28 @@ let didPan = false;
 let portDragState = null;
 let connectionEraseState = null;
 let saveTimer = null;
-let apiProviders = [];
-let comfyWorkflows = [];
+// 前端 PR-5：`apiProviders` / `comfyWorkflows` / `assetLibrary` 迁到 stores 投影
+// （[[前端组件化治理实施计划与PR清单]] PR-5）。函数体 6+ 处引用点保持不变；
+// setter 反向落盘到 store，保证 legacy 赋值路径（loadConfig）与 store 视图一致。
+let __smartApiProvidersFallback = [];
+Object.defineProperty(globalThis, 'apiProviders', {
+    configurable: true,
+    get(){ try { const s = window.stores?.providers?.state; if (s && Array.isArray(s.providers) && s.providers.length) return s.providers; } catch(_) {} return __smartApiProvidersFallback; },
+    set(v){ __smartApiProvidersFallback = Array.isArray(v) ? v : []; try { window.stores?.providers?.setState?.({ providers: __smartApiProvidersFallback }, 'smart-canvas.js:set'); } catch(_) {} },
+});
+let __smartComfyWorkflowsFallback = [];
+Object.defineProperty(globalThis, 'comfyWorkflows', {
+    configurable: true,
+    get(){ try { const s = window.stores?.workflows?.comfy?.state; if (s && Array.isArray(s.workflows) && s.workflows.length) return s.workflows; } catch(_) {} return __smartComfyWorkflowsFallback; },
+    set(v){ __smartComfyWorkflowsFallback = Array.isArray(v) ? v : []; try { window.stores?.workflows?.comfy?.setState?.({ workflows: __smartComfyWorkflowsFallback }, 'smart-canvas.js:set'); } catch(_) {} },
+});
 let comfyInstanceCount = 1;
-let assetLibrary = {categories:[]};
+let __smartAssetLibraryFallback = {categories:[]};
+Object.defineProperty(globalThis, 'assetLibrary', {
+    configurable: true,
+    get(){ try { const s = window.stores?.assetLibrary?.state; if (s && s.library && typeof s.library === 'object') return s.library; } catch(_) {} return __smartAssetLibraryFallback; },
+    set(v){ __smartAssetLibraryFallback = v && typeof v === 'object' ? v : {categories:[]}; try { window.stores?.assetLibrary?.setState?.({ library: __smartAssetLibraryFallback }, 'smart-canvas.js:set'); } catch(_) {} },
+});
 let assetLibraryOpen = false;
 let assetTab = 'image';
 let activeAssetCategoryId = '';

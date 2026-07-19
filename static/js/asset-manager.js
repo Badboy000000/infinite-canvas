@@ -26,9 +26,22 @@ function writeLocalCaptionSettings(){
 const savedLocalCaptionSettings = readLocalCaptionSettings();
 
 let activeTab = 'assets';
-let assetLibrary = {libraries:[], categories:[]};
+// 前端 PR-5：`assetLibrary` / `apiProviders` 迁到 stores 投影
+// （[[前端组件化治理实施计划与PR清单]] PR-5）。函数体引用点保持不变；
+// setter 反向落盘到 store，保证 legacy 赋值路径与 store 视图一致。
+let __amAssetLibraryFallback = {libraries:[], categories:[]};
+Object.defineProperty(globalThis, 'assetLibrary', {
+    configurable: true,
+    get(){ try { const s = window.stores?.assetLibrary?.state; if (s && s.library && typeof s.library === 'object') return s.library; } catch(_) {} return __amAssetLibraryFallback; },
+    set(v){ __amAssetLibraryFallback = v && typeof v === 'object' ? v : {libraries:[], categories:[]}; try { window.stores?.assetLibrary?.setState?.({ library: __amAssetLibraryFallback }, 'asset-manager.js:set'); } catch(_) {} },
+});
 let promptLibrary = {libraries:[]};
-let apiProviders = [];
+let __amApiProvidersFallback = [];
+Object.defineProperty(globalThis, 'apiProviders', {
+    configurable: true,
+    get(){ try { const s = window.stores?.providers?.state; if (s && Array.isArray(s.providers) && s.providers.length) return s.providers; } catch(_) {} return __amApiProvidersFallback; },
+    set(v){ __amApiProvidersFallback = Array.isArray(v) ? v : []; try { window.stores?.providers?.setState?.({ providers: __amApiProvidersFallback }, 'asset-manager.js:set'); } catch(_) {} },
+});
 let avatarRegisterProvider = '';
 let avatarBusyId = '';
 let activeAssetLibraryId = '';

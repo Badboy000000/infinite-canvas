@@ -375,9 +375,22 @@ let imageModels = ['gpt-image-2', 'nano-banana-pro'];
 let chatModels = ['gpt-4o-mini'];
 let videoModels = [];
 let msChatModels = [];
-let apiProviders = [];
+// 前端 PR-5：`apiProviders` / `comfyWorkflows` 迁到 `stores.providers` / `stores.workflows.comfy`。
+// 保留同名标识符供函数体 6+ 处引用点不改；setter 保持 legacy 写路径（`loadConfig` 会写入）——
+// setter 反向落盘到对应 store（配置中心内部投影），保证 store 与顶层变量视图一致。
+let __canvasApiProvidersFallback = [];
+Object.defineProperty(globalThis, 'apiProviders', {
+    configurable: true,
+    get(){ try { const s = window.stores?.providers?.state; if (s && Array.isArray(s.providers) && s.providers.length) return s.providers; } catch(_) {} return __canvasApiProvidersFallback; },
+    set(v){ __canvasApiProvidersFallback = Array.isArray(v) ? v : []; try { window.stores?.providers?.setState?.({ providers: __canvasApiProvidersFallback }, 'canvas.js:set'); } catch(_) {} },
+});
 let comfyBackendCount = 1;
-let comfyWorkflows = [];
+let __canvasComfyWorkflowsFallback = [];
+Object.defineProperty(globalThis, 'comfyWorkflows', {
+    configurable: true,
+    get(){ try { const s = window.stores?.workflows?.comfy?.state; if (s && Array.isArray(s.workflows) && s.workflows.length) return s.workflows; } catch(_) {} return __canvasComfyWorkflowsFallback; },
+    set(v){ __canvasComfyWorkflowsFallback = Array.isArray(v) ? v : []; try { window.stores?.workflows?.comfy?.setState?.({ workflows: __canvasComfyWorkflowsFallback }, 'canvas.js:set'); } catch(_) {} },
+});
 let comfyWorkflowCache = {};
 let runningHubWorkflowCache = {};
 let managedProviderId = 'comfly';

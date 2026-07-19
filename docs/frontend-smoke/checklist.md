@@ -385,6 +385,8 @@
 
 **失败降级**：频道名 / type 被改 → 违反 §2.4；回滚到 PR-0。
 
+**关联 PR-5（`shared/stores` 六件套，2026-07-19）**：本条烟测是 PR-5 的**核心承接项**。PR-5 引入 `configStore.broadcastStudioApiChange` wrapper（compat-contract §6 冻结的函数名保留）+ `providersStore.invalidate('providers-changed')` + 六 store `subscribe/invalidate/refetch` 契约；bootstrap.js 在 6 个 HTML 页面装配 `window.stores`，同时通过 `StudioMessaging` bus 监听 `providers-changed` / `workflows-changed` / `comfy-instances-changed` 三个 type 字符串——PR-5 后仍保持 5 个订阅点触发、消息 type 未改、频道名 `studio-api` 未改。**PR-5 完成判据核心**：一次 Provider 保存导致的 `/api/providers` 调用数**不增**（`providersStore.subscribe` 幂等 refetch，devtools 抓包对比 PR-5 前后）。
+
 **执行记录模板**：`[ ] 通过 / [ ] 失败 备注：____`
 
 ---
@@ -474,6 +476,8 @@
 - `prompt_id` 恢复：从 `/api/comfy/history/${id}` GET 恢复（§7.5 `:240`）——**前端源码事实**，具体 field 名与 backend-smoke item 10 baseline 对齐。
 
 **失败降级**：URL / body 字段被改 → 违反 §7.8；回滚到 PR-0。
+
+**关联 PR-5（`shared/stores` 六件套，2026-07-19）**：本条烟测是 PR-5 的**关联项**。PR-5 引入 `workflowsStore`（内部区分 `comfy` / `runninghub` / `canvasSubgraph` 三 kind，一次 comfy invalidate 不推高 runninghub / canvasSubgraph 的 revision）；`comfyWorkflows` 顶层变量在 `canvas.js` / `smart-canvas.js` 迁到 `Object.defineProperty` getter wrapper，投影到 `stores.workflows.comfy.state.workflows`。**冻结要点**：`/api/comfyui/instances` GET / PUT 与 `/api/comfy/generate` POST body（`prompt` / `workflow` / `images` / `node_id_overrides` / `instance_id`）**逐字节等价**；`prompt_id` 恢复语义不变；PR-5 未消费 §7.5 表格漂移（本 PR 不 fetch workflow endpoint）。
 
 **执行记录模板**：`[ ] 通过 / [ ] 失败 备注：____`
 
@@ -571,6 +575,8 @@
 - `client_id` key 首次访问自动生成随机 id 并落盘（compat-contract §3.1 描述）。
 
 **失败降级**：任一 key 被改名 / shape 变更 → 违反 §4.5；回滚到 PR-0。
+
+**关联 PR-5（`shared/stores` 六件套，2026-07-19）**：本条烟测是 PR-5 的**关联项**。PR-5 `promptStore` 内部**合并读取**五个 legacy localStorage key（`canvas_prompt_template_groups_v1` / `canvas_prompt_template_overrides` / `smart_canvas_prompt_presets_v1` / `smart_canvas_prompt_template_groups_v1` / `smart_canvas_prompt_template_overrides_v1`）为 `{ canvas: {templateGroups, templateOverrides}, smart: {presets, templateGroups, templateOverrides} }` 命名空间投影；**不合并 key 本身**——五个 legacy key 各自在 localStorage 层保持独立、未被改名、未被合并为新 key（compat-contract §4.5 硬约束）。测试 `test_prompt_store_reads_five_legacy_keys_but_does_not_merge_keys` 抗回归。
 
 **执行记录模板**：`[ ] 通过 / [ ] 失败 备注：____`
 
