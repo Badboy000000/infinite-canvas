@@ -754,7 +754,7 @@
 | `_dom` | `smart-canvas.js:782` | DOM 引用（严禁落盘） |
 | `_inlineVideoActive` | `smart-canvas.js:521`、`:529`、`:696` | 内联视频状态 |
 | `_pending` | **未在源码中直接命中该字面量**（协调纲要点名） | 详见 §14 |
-| `_renderPatchToken` | **未在源码中直接命中该字面量**（协调纲要点名） | 详见 §14 |
+| `_renderPatchToken` | 前端 PR-6 引入，渲染层脏检查 token；`serializableCanvasNode()` / `canvasForStorage()` 清理清单已覆盖 | 由前端 PR-6 首次登记，任何后续 PR 在两画布内注入该字段时必须同步进入清理链，CI 抗回归见 `tests/frontend/test_canvas_renderer_seam.py::test_render_patch_token_not_written_to_save_payload` |
 
 ### 13.5 冻结要点
 
