@@ -1,8 +1,13 @@
-"""Provider config store facade — 数据模型治理 PR-0。
+"""Provider config store facade — 数据模型治理 PR-0 + PR-4 shadow 双读。
 
 包裹 `main.py` 中 API 提供商配置读写函数
 `load_api_providers` / `save_api_providers`。密钥仍走 `API/.env` 现有路径，
 本 facade 不做任何脱敏或转换——完全透传。
+
+**数据 PR-4**（Wave 3-C）：`load_api_providers()` 在 JSON 读成功后惰性触发
+`read_shadow()`；shadow diff 只承载 `_PROVIDER_SNAPSHOT_FIELD_ORDER` 白名单
+字段 —— 密钥字段永不进 shadow diff 日志（走 `_safe_provider_records`
+深层脱敏；数据 PR-3 抗回归模式）。
 
 后续 Provider 适配体系治理 PR 落地后会补齐 provider protocol 抽象，
 本 facade 的签名保持稳定。
@@ -20,6 +25,9 @@ from .legacy_snapshot import (
     read_json_source,
     serialize_json,
 )
+
+
+DOMAIN = "provider_config"
 
 
 _PROVIDER_SNAPSHOT_FIELD_ORDER = (
@@ -44,7 +52,10 @@ _SENSITIVE_VALUE_FIELDS = frozenset({
 
 def load_api_providers(*args: Any, **kwargs: Any) -> Any:
     from main import load_api_providers as _impl
-    return _impl(*args, **kwargs)
+    result = _impl(*args, **kwargs)
+    # 数据 PR-4 shadow read hook；env 关闭时零开销 return。
+    read_shadow(result)
+    return result
 
 
 def save_api_providers(*args: Any, **kwargs: Any) -> Any:
@@ -137,6 +148,23 @@ def _safe_provider_records(value: Any) -> list[dict[str, Any]]:
         for item in value
         if isinstance(item, dict)
     ]
+
+
+def read_shadow(json_snapshot: Any, *, request_id: str | None = None) -> None:
+    """Shadow-read entry；`load_api_providers` 读成功后调用。
+
+    **硬约束**：diff 只对 `_safe_provider_records()` 输出的白名单字段做，
+    密钥字段永不进入 diff 日志。
+    """
+
+    from app.shadow_read.runner import is_shadow_read_enabled, run_shadow_read
+
+    if not is_shadow_read_enabled(DOMAIN):
+        return
+    # `load_api_providers` 原返回 raw list；这里先剥离到白名单字段后再送
+    # runner —— 双保险：即使 runner 出错，也不会有密钥出现在 log 里。
+    safe_payload = _safe_provider_records(json_snapshot)
+    run_shadow_read(DOMAIN, safe_payload, request_id=request_id)
 
 
 def snapshot() -> dict[str, Any]:

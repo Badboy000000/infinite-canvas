@@ -248,6 +248,22 @@ asyncio.run(r())"`
 
 ---
 
+## 30. 低风险 4 类 shadow 双读 —— Project / ProviderConfig / PromptLibrary / WorkflowDefinition（数据 PR-4，Wave 3-C §30）
+
+- 命令：
+  - `python -m pytest tests/shadow_read/ -v`
+  - `python -m pytest tests/shared/test_settings.py -q`
+  - `SHADOW_READ_PROJECT=false SHADOW_READ_PROVIDER_CONFIG=false SHADOW_READ_PROMPT_LIBRARY=false SHADOW_READ_WORKFLOW_DEFINITION=false python -c "from app.stores import project_store, provider_config_store, prompt_library_store, workflow_store; from app.shadow_read import is_shadow_read_enabled; print(all(not is_shadow_read_enabled(d) for d in ('project', 'provider_config', 'prompt_library', 'workflow_definition')))"`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+  - `git status --short data/shadow_diff/`
+- 期望：**26 passed / 0 failed / 0 skipped**（`test_diff_jsonl_schema.py` 4 项 + `test_frozen_zone_untouched.py` 2 项 + `test_project_shadow.py` 6 项 + `test_prompt_library_shadow.py` 3 项 + `test_provider_shadow_no_credentials.py` 3 项 + `test_shadow_disabled_default.py` 5 项 + `test_workflow_definition_shadow.py` 3 项）；`tests/shared/test_settings.py` 15 项全绿（字段总数断言 23 → 27）；`is_shadow_read_enabled` 在四个 env 全默认 `false` 时全部返回 `True/False` 组合应为 `True`（`all not ...` = True）；`routes=167` 与文件 PR-2 后基线一致（**不新增路由**）；`openapi_diff` exit=0；`data/shadow_diff/` 只有 `.gitkeep` 入库，运行时子目录与 `*.jsonl` 由根 `.gitignore` 排除；全量测试 **437 passed / 35 skipped**（任务 PR-3 后基线 411 + 本 PR 新增 26）。
+- 关联事实：新增 `app/shadow_read/` 包（`__init__.py` re-export；`runner.py` 通用入口 `run_shadow_read(domain, json_result, *, request_id=None)` + `is_shadow_read_enabled(domain)` 门禁 + JSON→normalized dict + DB baseline 快照读取 + 稳定字段集 diff；`fields.py` 4 domain 稳定字段集常量 `PROJECT_STABLE_FIELDS / PROVIDER_STABLE_FIELDS / PROMPT_LIBRARY_STABLE_FIELDS / WORKFLOW_DEFINITION_STABLE_FIELDS`；`diff_writer.py` `DIFF_RECORD_KEYS = ('ts', 'domain', 'request_id', 'missing_in_db', 'missing_in_json', 'field_diffs')` 稳定键位 + `data/shadow_diff/<domain>/<yyyymmdd>.jsonl` 追加落盘 + 失败隔离）；4 个 Store facade（`app/stores/{project,provider_config,prompt_library,workflow}_store.py`）新增 `read_shadow(json_snapshot, *, request_id=None) -> None` 方法 + `load_*()` 完成 JSON 主读后惰性调 `read_shadow(result)`（`SHADOW_READ_*=false` 时零开销 return，不 import DB 层）；Provider shadow 复用 `_safe_provider_records` 深层脱敏（密钥字段永不进 diff 日志，`grep=0` 硬门槛）；`app/shared/settings/runtime.py` `Settings` 追加 4 字段 `shadow_read_project / shadow_read_provider_config / shadow_read_prompt_library / shadow_read_workflow_definition` + `get_settings()` mirror 到 4 个 `main` 常量（`SHADOW_READ_PROJECT / SHADOW_READ_PROVIDER_CONFIG / SHADOW_READ_PROMPT_LIBRARY / SHADOW_READ_WORKFLOW_DEFINITION`，紧邻 `DATA_DB_PATH` 声明，走 PR-BE-03 "两步走" 约定；`Settings` 字段总数 23 → 27）；`main.py` 冻结区（`class StorageSettings` body + `def apply_storage_settings` body + `def storage_settings_snapshot` body）AST byte-equivalent 断言通过（`test_frozen_zone_untouched.py::test_storage_settings_frozen_zone_unchanged_by_pr4`）；顶层禁 `import sqlalchemy` 抗回归（承接数据 PR-3 `test_no_sqlalchemy_in_main.py` 契约）；`data/shadow_diff/.gitkeep` 保留骨架、根 `.gitignore` 追加 `data/shadow_diff/**/*.jsonl` + `data/shadow_diff/*/` 排除运行时子目录。归属：数据 PR-4（[[70 开发过程跟踪/PR 状态总账/PR - 数据模型#数据 PR-4]]）。
+
+> **AST 层机器可验证契约**：`tests/shadow_read/test_frozen_zone_untouched.py::test_storage_settings_frozen_zone_unchanged_by_pr4` 用 `ast.dump(include_attributes=False)` 对齐 `class StorageSettings` / `def apply_storage_settings` / `def storage_settings_snapshot` 三处与 `ba4b87e:main.py` baseline byte-equivalent —— 数据 PR-4 未来任何 subagent 触碰这三段 body 直接 REJECT。`test_pr4_did_not_import_sqlalchemy_at_main_top_level` 断言 `main.py` 顶层 body 不许 `import sqlalchemy` 或 `from sqlalchemy.orm import Session` —— 承接数据 PR-3 抗回归。`tests/shadow_read/test_shadow_disabled_default.py::test_stores_disabled_do_not_touch_db` 用 monkeypatch 把 `app.db.engine.get_engine` 换成 raise —— 4 个 Store 在 `SHADOW_READ_*=false` 时若触发 engine 构造即视为违反"零开销 short-circuit"契约，直接 REJECT。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：

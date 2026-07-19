@@ -341,6 +341,17 @@ STORAGE_SETTINGS_FILE = os.path.join(DATA_DIR, "storage_settings.json")
 # [[50 决策记录/决策 - ORM 与迁移工具选型]] 使用规范 §3（引擎参数）。
 _DATA_DB_PATH_ENV = os.environ.get("DATA_DB_PATH")
 DATA_DB_PATH = _DATA_DB_PATH_ENV if _DATA_DB_PATH_ENV else os.path.join(DATA_DIR, "app.db")
+# --- 数据模型治理 PR-4（Wave 3-C）低风险 4 类 shadow 双读常量 --------------
+# 4 个门禁 env 变量：默认 `false`；运行时的读时求值仍走
+# `app.shadow_read.runner.is_shadow_read_enabled(<domain>)`。此处的模块级
+# 常量仅作为 `Settings` 字段镜像目标（PR-BE-03 "两步走"约定：`Settings`
+# 加字段 + `main.py` 加对应常量）。切换要求进程重启。详见
+# [[40 实施计划/数据模型治理实施计划与PR清单]] PR-4。
+_TRUTHY_SHADOW_READ = {"1", "true", "yes", "on", "enable", "enabled"}
+SHADOW_READ_PROJECT = str(os.environ.get("SHADOW_READ_PROJECT", "")).strip().lower() in _TRUTHY_SHADOW_READ
+SHADOW_READ_PROVIDER_CONFIG = str(os.environ.get("SHADOW_READ_PROVIDER_CONFIG", "")).strip().lower() in _TRUTHY_SHADOW_READ
+SHADOW_READ_PROMPT_LIBRARY = str(os.environ.get("SHADOW_READ_PROMPT_LIBRARY", "")).strip().lower() in _TRUTHY_SHADOW_READ
+SHADOW_READ_WORKFLOW_DEFINITION = str(os.environ.get("SHADOW_READ_WORKFLOW_DEFINITION", "")).strip().lower() in _TRUTHY_SHADOW_READ
 DEFAULT_STORAGE_DIRS = {
     "upload": OUTPUT_INPUT_DIR,
     "generated": OUTPUT_OUTPUT_DIR,

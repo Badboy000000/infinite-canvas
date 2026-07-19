@@ -87,6 +87,10 @@ class Settings:
         global_config_file             → GLOBAL_CONFIG_FILE
         storage_settings_file          → STORAGE_SETTINGS_FILE
         data_db_path                   → DATA_DB_PATH  (数据 PR-1 新增)
+        shadow_read_project                    → SHADOW_READ_PROJECT             (数据 PR-4 新增)
+        shadow_read_provider_config            → SHADOW_READ_PROVIDER_CONFIG     (数据 PR-4 新增)
+        shadow_read_prompt_library             → SHADOW_READ_PROMPT_LIBRARY      (数据 PR-4 新增)
+        shadow_read_workflow_definition        → SHADOW_READ_WORKFLOW_DEFINITION (数据 PR-4 新增)
     """
 
     base_dir: str
@@ -118,6 +122,15 @@ class Settings:
     # 22 → 23 项。已有 22 项测试 `test_settings_fields_match_main_constants`
     # 断言精确匹配 23 项字段清单。
     data_db_path: str
+    # 数据 PR-4（Wave 3-C）新增 4 个字段：低风险 shadow 双读门禁。默认 `False`；
+    # 走同一"两步走"约定（`Settings` 加字段 + `main.py` 加对应常量）。运行时
+    # 的读时求值仍由 `app.shadow_read.runner.is_shadow_read_enabled()` 从
+    # env 现读，本快照仅作为 mirror 目标供 `tests/shared/test_settings.py`
+    # 契约测试断言字段总数 23 → 27。
+    shadow_read_project: bool
+    shadow_read_provider_config: bool
+    shadow_read_prompt_library: bool
+    shadow_read_workflow_definition: bool
 
     # Deployment PR-01 adds a mode declaration and the non-secret switches that
     # later security PRs will consume. Defaults mirror today's runtime exactly;
@@ -211,6 +224,10 @@ def get_settings() -> Settings:
         global_config_file=main.GLOBAL_CONFIG_FILE,
         storage_settings_file=main.STORAGE_SETTINGS_FILE,
         data_db_path=main.DATA_DB_PATH,
+        shadow_read_project=bool(main.SHADOW_READ_PROJECT),
+        shadow_read_provider_config=bool(main.SHADOW_READ_PROVIDER_CONFIG),
+        shadow_read_prompt_library=bool(main.SHADOW_READ_PROMPT_LIBRARY),
+        shadow_read_workflow_definition=bool(main.SHADOW_READ_WORKFLOW_DEFINITION),
         **_deployment_snapshot(),
     )
 

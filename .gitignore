@@ -30,6 +30,13 @@ data/file_index.json
 data/file_index.json.lock
 data/file_index.json.*.tmp
 
+# 数据模型治理 PR-4 shadow 双读差异日志（SHADOW_READ_*=true 运行时生成，不入库）
+# 归属：数据 PR-4（[[70 开发过程跟踪/PR 状态总账/PR - 数据模型#数据 PR-4]]）
+# 目录结构 `data/shadow_diff/<domain>/<yyyymmdd>.jsonl`；保留 .gitkeep 骨架
+# 但排除所有实际 diff 输出与运行时生成的 domain 子目录。
+data/shadow_diff/**/*.jsonl
+data/shadow_diff/*/
+
 # 编辑器与系统临时文件
 .idea/
 .vscode/
