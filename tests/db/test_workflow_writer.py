@@ -369,30 +369,46 @@ def test_db_mode_json_fallback_failure_does_not_propagate(
     monkeypatch, data_dir_fixture, tmp_path
 ):
     """`db` 模式下 JSON 回写失败不冒泡；shadow diff 落地（P0 密钥剪枝：diff 只
-    落 error/reason，不落内容体）。"""
+    落 error/reason，不落内容体）。
 
-    from app.db import workflow_writer
+    数据 PR-8 承接强化补丁：**端到端**触发 `_async_write_json_fallback →
+    _write_json_fallback_sync → _record_json_fallback_failure` 全链路
+    （与 canvas C6' 对齐）。通过 monkeypatch `main.RUNNINGHUB_WORKFLOW_STORE_FILE`
+    到不存在的父目录让 `open()` 抛 FileNotFoundError，走真实 except 链路。
+    """
+
     from app.stores import workflow_store
+
+    import main
 
     migrate_baseline(tmp_path)
     monkeypatch.setenv("WORKFLOW_DEFINITION_PRIMARY_WRITE", "db")
 
-    def _boom(store):
-        raise IOError("simulated disk full")
+    monkeypatch.setattr(
+        main,
+        "RUNNINGHUB_WORKFLOW_STORE_FILE",
+        str(tmp_path / "nonexistent_dir" / "runninghub_workflow_store.json"),
+    )
 
-    monkeypatch.setattr(workflow_writer, "_write_json_fallback_sync", _boom)
+    # 主写路径不应抛错
     workflow_store.save_runninghub_workflow_store({"wf1": _entry("wf1")})
 
-    ret = workflow_writer._record_json_fallback_failure(
-        error="simulated disk full", fallback_reason="json_write_error"
+    diff_dir = tmp_path / "shadow_diff" / "workflow_definition_json_fallback"
+    deadline = time.perf_counter() + 2.0
+    diff_files: list = []
+    while time.perf_counter() < deadline:
+        if diff_dir.exists():
+            diff_files = list(diff_dir.glob("*.jsonl"))
+            if diff_files:
+                break
+        time.sleep(0.02)
+
+    assert diff_files, (
+        "端到端 fallback diff 链路应真实产生 jsonl 文件（与 canvas C6' 对齐）"
     )
-    assert ret is not None
-    diff_files = list(
-        (tmp_path / "shadow_diff" / "workflow_definition_json_fallback").glob("*.jsonl")
-    )
-    assert len(diff_files) == 1
     rec = json.loads(diff_files[0].read_text(encoding="utf-8").strip().splitlines()[-1])
     assert rec["domain"] == "workflow_definition"
+    assert rec["fallback_reason"] == "json_write_error"
     # P0：diff 不含内容体（只有 error/reason/ts/domain）
     assert set(rec.keys()) == {"ts", "domain", "error", "fallback_reason"}
 

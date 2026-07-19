@@ -219,34 +219,54 @@ def test_db_mode_async_json_fallback_writes_file(
 def test_db_mode_json_fallback_failure_does_not_propagate(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    """`db` 模式下 JSON 回写失败（IO 异常）不冒泡；shadow diff 落地。"""
+    """`db` 模式下 JSON 回写失败（IO 异常）不冒泡；shadow diff 落地。
 
-    from app.db import project_writer
+    数据 PR-8 承接强化补丁：**端到端**触发 `_async_write_json_fallback →
+    _write_json_fallback_sync → _record_json_fallback_failure` 全链路
+    （与 canvas C6' 对齐，不再手工调用 `_record_json_fallback_failure`）。
+    通过 monkeypatch `main.PROJECTS_PATH` 到不存在的父目录 → 内部
+    `open()` 抛 FileNotFoundError → 真实 except → 真实 diff 记录。
+    """
+
     from app.stores import project_store
+
+    import main
 
     migrate_baseline(tmp_path)
     monkeypatch.setenv("PROJECT_PRIMARY_WRITE", "db")
 
-    def _boom(projects):
-        raise IOError("simulated disk full")
-
-    monkeypatch.setattr(project_writer, "_write_json_fallback_sync", _boom)
+    # 指向不存在的父目录 → `_write_json_fallback_sync` 内部 `open()` 抛
+    # FileNotFoundError（主写路径已完成，异步 fallback 才触发这条异常路径）
+    monkeypatch.setattr(
+        main,
+        "PROJECTS_PATH",
+        str(tmp_path / "nonexistent_dir" / "projects.json"),
+    )
 
     # 主写路径不应抛错
     project_store.save_projects([_seed_project("p_boom", "B")])
 
-    # 手动调用 diff 记录（覆盖 _record_json_fallback_failure）
-    ret = project_writer._record_json_fallback_failure(
-        error="simulated disk full", fallback_reason="json_write_error"
+    # 等待异步 fallback 走完真实链路：
+    # _async_write_json_fallback → _write_json_fallback_sync（抛错）
+    # → 内部 except → _record_json_fallback_failure → jsonl 落盘
+    diff_dir = tmp_path / "shadow_diff" / "project_json_fallback"
+    deadline = time.perf_counter() + 2.0
+    diff_files: list = []
+    while time.perf_counter() < deadline:
+        if diff_dir.exists():
+            diff_files = list(diff_dir.glob("*.jsonl"))
+            if diff_files:
+                break
+        time.sleep(0.02)
+
+    assert diff_files, (
+        "端到端 fallback diff 链路应真实产生 jsonl 文件（与 canvas C6' 对齐）"
     )
-    assert ret is not None
-    diff_files = list(
-        (tmp_path / "shadow_diff" / "project_json_fallback").glob("*.jsonl")
-    )
-    assert len(diff_files) == 1
     rec = json.loads(diff_files[0].read_text(encoding="utf-8").strip().splitlines()[-1])
     assert rec["domain"] == "project"
     assert rec["fallback_reason"] == "json_write_error"
+    # P0：diff 不含内容体（只有 error/reason/ts/domain）
+    assert set(rec.keys()) == {"ts", "domain", "error", "fallback_reason"}
 
 
 def test_db_mode_primary_write_error_propagates(

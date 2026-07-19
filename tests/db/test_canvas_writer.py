@@ -409,8 +409,9 @@ def test_db_mode_large_canvas_latency_under_bound(
 ):
     """≥ 1MB canvas 单次 save 延迟 < PR-6 shadow write 基线 (500ms) × 120% = 600ms。
 
-    数据 PR-8 P2 修补：改为 N=20 次采样 + 排序取 P95（不是单次 `perf_counter`），
-    避免单次抖动误判；P95 上界 = PR-6 baseline * 1.2 = 600ms。
+    数据 PR-8 承接强化补丁：N=20 → 50 提高统计稳定度；排序后取 P95 =
+    samples[int(N * 0.95) - 1] = samples[47]；上界 = PR-6 baseline * 1.2 = 600ms
+    保持不变（项目惯例硬界，非 3σ 包络——CI 冷启小样本 stdev 不稳易假阳性）。
     """
 
     from app.stores import canvas_store
@@ -421,7 +422,7 @@ def test_db_mode_large_canvas_latency_under_bound(
     big_nodes = [{"id": f"n{i}", "data": "x" * 128} for i in range(10000)]
 
     samples: list[float] = []
-    N = 20
+    N = 50
     for i in range(N):
         # 每次用不同 id 保证是全新的 UPSERT + shadow diff 路径（避免冷启动误差）
         canvas = _seed_canvas(canvas_id=f"c_big_{i}", nodes=big_nodes)
@@ -430,10 +431,10 @@ def test_db_mode_large_canvas_latency_under_bound(
         samples.append(time.perf_counter() - start)
 
     samples.sort()
-    # P95 = 排序后 index int(N * 0.95) - 1 = 18（20 * 0.95 = 19, 取 samples[18]）
+    # P95 = 排序后 index int(N * 0.95) - 1 = 47（50 * 0.95 = 47.5, 取 samples[47]）
     p95 = samples[int(N * 0.95) - 1] if N * 0.95 >= 1 else samples[-1]
     assert p95 < 0.6, (
-        f"P2 修补：N={N} 次采样 P95 = {p95:.3f}s（上界 = PR-6 baseline * 1.2 = 0.6s）；"
+        f"数据 PR-8 强化补丁：N={N} 次采样 P95 = {p95:.3f}s（上界 = PR-6 baseline * 1.2 = 0.6s）；"
         f"samples[min={samples[0]:.3f}, max={samples[-1]:.3f}]"
     )
 

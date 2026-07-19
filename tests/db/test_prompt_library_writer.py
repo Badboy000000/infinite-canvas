@@ -267,31 +267,48 @@ def test_db_mode_async_json_fallback_writes_file(
 def test_db_mode_json_fallback_failure_does_not_propagate(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    """`db` 模式下 JSON 回写失败不冒泡；shadow diff 落地。"""
+    """`db` 模式下 JSON 回写失败不冒泡；shadow diff 落地。
 
-    from app.db import prompt_library_writer
+    数据 PR-8 承接强化补丁：**端到端**触发 `_async_write_json_fallback →
+    _write_json_fallback_sync → _record_json_fallback_failure` 全链路
+    （与 canvas C6' 对齐）。通过 monkeypatch `main.PROMPT_LIBRARY_PATH` 到
+    不存在的父目录让 `open()` 抛 FileNotFoundError，走真实 except 链路。
+    """
+
     from app.stores import prompt_library_store
+
+    import main
 
     migrate_baseline(tmp_path)
     monkeypatch.setenv("PROMPT_LIBRARY_PRIMARY_WRITE", "db")
 
-    def _boom(payload):
-        raise IOError("simulated disk full")
+    monkeypatch.setattr(
+        main,
+        "PROMPT_LIBRARY_PATH",
+        str(tmp_path / "nonexistent_dir" / "prompt_libraries.json"),
+    )
 
-    monkeypatch.setattr(prompt_library_writer, "_write_json_fallback_sync", _boom)
     # 主写路径不应抛错
     prompt_library_store.save_prompt_libraries(_payload([_lib("system")]))
 
-    ret = prompt_library_writer._record_json_fallback_failure(
-        error="simulated disk full", fallback_reason="json_write_error"
+    diff_dir = tmp_path / "shadow_diff" / "prompt_library_json_fallback"
+    deadline = time.perf_counter() + 2.0
+    diff_files: list = []
+    while time.perf_counter() < deadline:
+        if diff_dir.exists():
+            diff_files = list(diff_dir.glob("*.jsonl"))
+            if diff_files:
+                break
+        time.sleep(0.02)
+
+    assert diff_files, (
+        "端到端 fallback diff 链路应真实产生 jsonl 文件（与 canvas C6' 对齐）"
     )
-    assert ret is not None
-    diff_files = list(
-        (tmp_path / "shadow_diff" / "prompt_library_json_fallback").glob("*.jsonl")
-    )
-    assert len(diff_files) == 1
     rec = json.loads(diff_files[0].read_text(encoding="utf-8").strip().splitlines()[-1])
     assert rec["domain"] == "prompt_library"
+    assert rec["fallback_reason"] == "json_write_error"
+    # P0：diff 不含内容体（只有 error/reason/ts/domain）
+    assert set(rec.keys()) == {"ts", "domain", "error", "fallback_reason"}
 
 
 def test_db_mode_primary_write_error_propagates(
