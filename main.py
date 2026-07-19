@@ -366,6 +366,7 @@ SHADOW_READ_CANVAS = str(os.environ.get("SHADOW_READ_CANVAS", "")).strip().lower
 # 求值由 `app.shadow_write.runner.is_shadow_write_enabled()` 现读 env；此处
 # 常量仅作 `Settings` 字段镜像目标（走 PR-BE-03 "两步走"约定）。
 SHADOW_WRITE_CANVAS = str(os.environ.get("SHADOW_WRITE_CANVAS", "")).strip().lower() in _TRUTHY_SHADOW_READ
+CANVAS_PRIMARY_WRITE = str(os.environ.get("CANVAS_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-7（Wave 3-F）Canvas 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 DEFAULT_STORAGE_DIRS = {
     "upload": OUTPUT_INPUT_DIR,
     "generated": OUTPUT_OUTPUT_DIR,

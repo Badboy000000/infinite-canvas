@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 
-# 路径字段名 → main.py 常量名映射（29 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6）
+# 路径字段名 → main.py 常量名映射（30 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6 + 1 数据 PR-7）
 FIELD_TO_MAIN_CONST = {
     "base_dir": "BASE_DIR",
     "workflow_dir": "WORKFLOW_DIR",
@@ -56,6 +56,8 @@ FIELD_TO_MAIN_CONST = {
     "shadow_read_canvas": "SHADOW_READ_CANVAS",
     # 数据 PR-6（Wave 3-E）新增 canvas shadow write flag
     "shadow_write_canvas": "SHADOW_WRITE_CANVAS",
+    # 数据 PR-7（Wave 3-F）新增 canvas primary write mode
+    "canvas_primary_write": "CANVAS_PRIMARY_WRITE",
 }
 
 DEPLOYMENT_FIELDS = {
@@ -109,7 +111,7 @@ def test_settings_fields_preserve_main_constant_contract():
 
     fields = {f.name for f in dataclasses.fields(Settings)}
     expected_fields = set(FIELD_TO_MAIN_CONST) | DEPLOYMENT_FIELDS
-    assert len(FIELD_TO_MAIN_CONST) == 29
+    assert len(FIELD_TO_MAIN_CONST) == 30
     assert fields == expected_fields, (
         f"Settings 字段名与映射表不一致：\n"
         f"  Settings.fields = {sorted(fields)}\n"

@@ -93,6 +93,7 @@ class Settings:
         shadow_read_workflow_definition        → SHADOW_READ_WORKFLOW_DEFINITION (数据 PR-4 新增)
         shadow_read_canvas                     → SHADOW_READ_CANVAS              (数据 PR-5 新增)
         shadow_write_canvas                    → SHADOW_WRITE_CANVAS             (数据 PR-6 新增)
+        canvas_primary_write                   → CANVAS_PRIMARY_WRITE            (数据 PR-7 新增)
     """
 
     base_dir: str
@@ -142,6 +143,11 @@ class Settings:
     # 从 env 现读；本快照仅作 mirror 目标供 `tests/shared/test_settings.py`
     # 契约测试断言字段总数 28 → 29。
     shadow_write_canvas: bool
+    # 数据 PR-7（Wave 3-F）新增 1 个字段：Canvas 主写机制门禁。默认 `"json"`（
+    # 老 JSON 主写完全等价 PR-6 行为）；显式 `"db"` 才启用 `app.db.canvas_writer`
+    # DB 主写 + JSON 异步回写。值域 `{"json","db"}`，其他值走 `_validate_canvas_primary_write`
+    # fail-fast。契约测试断言字段总数 29 → 30。
+    canvas_primary_write: str
 
     # Deployment PR-01 adds a mode declaration and the non-secret switches that
     # later security PRs will consume. Defaults mirror today's runtime exactly;
@@ -157,6 +163,30 @@ class Settings:
     enable_admin_only_endpoints: bool = False
     file_url_mode: str = "legacy"
     log_dir: str = ""
+
+
+_CANVAS_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
+
+
+def _validate_canvas_primary_write(raw: object) -> str:
+    """校验 `main.CANVAS_PRIMARY_WRITE` 值域（数据 PR-7）。
+
+    - `None` / 空串 → 视为 `"json"`（默认）。
+    - `"json"` / `"db"`（大小写不敏感、strip 后）→ 返回小写值。
+    - 其他值 → `ValueError`（fail-fast，与 `IC_DEPLOYMENT_MODE` 语义一致）。
+    """
+
+    if raw is None:
+        return "json"
+    text = str(raw).strip().lower()
+    if not text:
+        return "json"
+    if text not in _CANVAS_PRIMARY_WRITE_ALLOWED:
+        allowed = ", ".join(sorted(_CANVAS_PRIMARY_WRITE_ALLOWED))
+        raise ValueError(
+            f"Invalid CANVAS_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
+        )
+    return text
 
 
 @lru_cache(maxsize=1)
@@ -241,6 +271,7 @@ def get_settings() -> Settings:
         shadow_read_workflow_definition=bool(main.SHADOW_READ_WORKFLOW_DEFINITION),
         shadow_read_canvas=bool(main.SHADOW_READ_CANVAS),
         shadow_write_canvas=bool(main.SHADOW_WRITE_CANVAS),
+        canvas_primary_write=_validate_canvas_primary_write(main.CANVAS_PRIMARY_WRITE),
         **_deployment_snapshot(),
     )
 

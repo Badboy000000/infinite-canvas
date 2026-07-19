@@ -315,6 +315,39 @@ asyncio.run(r())"`
 
 ---
 
+## 35. Canvas 主写机制运维手册（数据 PR-7，Wave 3-F §35）
+
+**定位**：本段是**运维手册**，不是烟测通过条件。数据 PR-7 只交付"主写机制搭建 + 显式 DB 启用能力"，**默认仍为 JSON 主写**（`CANVAS_PRIMARY_WRITE=json`）。反转默认值（切 `db`）是独立运维动作 / 独立 PR，不在 PR-7 代码范围。
+
+- 命令：
+  - `python -m pytest tests/db/test_canvas_writer.py tests/shared/test_settings.py -v`
+  - `python -c "from main import CANVAS_PRIMARY_WRITE; assert CANVAS_PRIMARY_WRITE == 'json', 'default must be json'"`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+- 期望：`tests/db/test_canvas_writer.py` 全绿（~14 项，含 `sys.modules` 隔离断言 + 幂等 + 乐观锁 409 + 异步回写 + 大画布 P95 < 600ms + Settings fail-fast）；`tests/shared/test_settings.py` 字段总数断言 29 → 30；`routes=167` 与基线一致（**不新增路由**）；`openapi_diff` exit=0。
+
+### 灰度切换操作手册
+
+1. **前置观察阶段**（24-48h）：`SHADOW_WRITE_CANVAS=true` 开启短窗双写，观察 `data/shadow_diff/canvas_write/*.jsonl` 应零异常条目；`python -m tools.data_reconcile canvas` 摘要 `hash_mismatch=[]` 且 `missing_in_db=[]`。
+2. **对账阶段**：`python -m tools.data_reconcile canvas` 严格检查 `content_hash` 全部一致；有任何 mismatch → 停止切换，先修根因。
+3. **切换阶段**：设置 `CANVAS_PRIMARY_WRITE=db` 后重启进程；观察 `data/shadow_diff/canvas_json_fallback/*.jsonl` 应零条目（异步 JSON 回写全成功），`data/shadow_diff/canvas_load_fallback/*.jsonl` 应仅有 `db_empty`（迁移前老数据）条目，无 `db_error`。
+4. **回滚阶段**：`CANVAS_PRIMARY_WRITE=json` 重启即回退到 PR-6 行为；JSON 文件已被 DB 主写阶段的异步回写维持最新，无数据回退风险。
+5. **禁止**：HTTP 不可修改此开关；只能通过环境变量 + 进程重启切换（P0 硬约束 #8）。
+
+### 关联事实
+
+- 新增 `app/db/canvas_writer.py`（`save_canvas_db(canvas: dict) -> None` DB 主写 + 乐观锁 `WHERE base_updated_at = ?` + `revision` 单调递增；`load_canvas_db(canvas_id) -> dict | None` DB 主读；`_async_write_json_fallback` 异步 JSON 回写走 `asyncio.run_in_executor` / `threading.Thread(daemon=True)` 两条路径；`CanvasConflictError(HTTPException)` `status_code=409` `detail={"message": "画布已被其他页面更新，已拒绝旧版本覆盖。"}` 与路由层 `main.py:16286` 冲突 message 键位字节等价；`_record_json_fallback_failure` 落 `data/shadow_diff/canvas_json_fallback/<yyyymmdd>.jsonl` 稳定键位 `(ts, domain, legacy_id, error, fallback_reason)`）。
+- `app/stores/canvas_store.py:save_canvas` 增加 `_get_primary_write_mode("canvas")` 分派；`json` 分支 100% 保留 PR-6 行为（老 `_impl` + `_write_shadow_after_save` hook）；`db` 分支懒 import `app.db.canvas_writer`。`load_canvas` 同理分派；`db` 模式下 DB 命中直接返回，未命中 fallback 到 `main.load_canvas` 并落 `canvas_load_fallback/*.jsonl`（`fallback_reason={db_empty|db_error}`）。
+- `app/shared/settings/runtime.py:Settings` 追加 `canvas_primary_write: str` 字段（29 → 30）+ `_validate_canvas_primary_write` 值域校验 `{"json","db"}`，其他值 `ValueError`；`get_settings()` mirror 到 `main.CANVAS_PRIMARY_WRITE`。
+- `main.py` 追加 `CANVAS_PRIMARY_WRITE` 常量（紧邻 `SHADOW_WRITE_CANVAS`，走 PR-BE-03 "两步走"约定；默认 `"json"`）；**`save_canvas` 函数体（L3534-3538）零字节触碰**（AST byte-equivalent 断言承接数据 PR-6 契约）。
+- 冻结区 AST 3/3（`class StorageSettings` / `def apply_storage_settings` / `storage_settings_snapshot`）继续 byte-equivalent 跨 8 PR 保持。
+- 读/写路径独立：本 PR 不动 `app/shadow_read/` / `app/shadow_write/` 任何文件；三条链路各自扩展。
+- **P0 抗回归**：`tests/db/test_canvas_writer.py::test_json_mode_default_does_not_import_canvas_writer` 断言 `CANVAS_PRIMARY_WRITE=json` 默认下 `sys.modules` 中**没有** `app.db.canvas_writer`；未来任何 subagent 在默认路径引入 DB 层拉起即视为违反"零开销 short-circuit"契约，直接 REJECT。`test_db_mode_primary_write_error_propagates` 用 monkeypatch 把 `get_engine` 换成 raise —— DB 主写失败必须原样上抛，禁止 fallback 到 JSON 主写（P0 硬约束 #4）。
+
+归属：数据 PR-7（[[70 开发过程跟踪/PR 状态总账/PR - 数据模型#数据 PR-7]]）。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：
