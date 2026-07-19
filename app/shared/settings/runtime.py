@@ -92,6 +92,7 @@ class Settings:
         shadow_read_prompt_library             → SHADOW_READ_PROMPT_LIBRARY      (数据 PR-4 新增)
         shadow_read_workflow_definition        → SHADOW_READ_WORKFLOW_DEFINITION (数据 PR-4 新增)
         shadow_read_canvas                     → SHADOW_READ_CANVAS              (数据 PR-5 新增)
+        shadow_write_canvas                    → SHADOW_WRITE_CANVAS             (数据 PR-6 新增)
     """
 
     base_dir: str
@@ -135,6 +136,12 @@ class Settings:
     # 数据 PR-5（Wave 3-D）新增 1 个字段：Canvas shadow 双读门禁。默认 `False`；
     # 契约测试断言字段总数 27 → 28。
     shadow_read_canvas: bool
+    # 数据 PR-6（Wave 3-E）新增 1 个字段：Canvas 内容短窗双写门禁。默认
+    # `False`；走 PR-BE-03 "两步走"约定（`Settings` 加字段 + `main.py` 加对应
+    # 常量）。运行时读时求值仍由 `app.shadow_write.runner.is_shadow_write_enabled()`
+    # 从 env 现读；本快照仅作 mirror 目标供 `tests/shared/test_settings.py`
+    # 契约测试断言字段总数 28 → 29。
+    shadow_write_canvas: bool
 
     # Deployment PR-01 adds a mode declaration and the non-secret switches that
     # later security PRs will consume. Defaults mirror today's runtime exactly;
@@ -233,6 +240,7 @@ def get_settings() -> Settings:
         shadow_read_prompt_library=bool(main.SHADOW_READ_PROMPT_LIBRARY),
         shadow_read_workflow_definition=bool(main.SHADOW_READ_WORKFLOW_DEFINITION),
         shadow_read_canvas=bool(main.SHADOW_READ_CANVAS),
+        shadow_write_canvas=bool(main.SHADOW_WRITE_CANVAS),
         **_deployment_snapshot(),
     )
 

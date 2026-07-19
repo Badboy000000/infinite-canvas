@@ -22,7 +22,53 @@ def save_canvas(*args: Any, **kwargs: Any) -> Any:
     # 懒 import 避免与 `main.py` 顶部 `from app.factory import create_app`
     # 桥接语义冲突（`app.factory` 内部懒 `import main`）。
     from main import save_canvas as _impl
-    return _impl(*args, **kwargs)
+    result = _impl(*args, **kwargs)
+    # 数据 PR-6 shadow write hook；env 关闭时零开销 return，主写路径不受影响。
+    _write_shadow_after_save(args, kwargs)
+    return result
+
+
+def _write_shadow_after_save(args: tuple, kwargs: dict) -> None:
+    """`save_canvas` 主写成功后的短窗双写 hook。
+
+    - 门禁：`SHADOW_WRITE_CANVAS` env truthy 才继续；未启用时零开销 return，
+      不 import DB 层、不构造 engine、不落盘。
+    - 结果永不进入 HTTP 响应；主写返回值原样透传。
+    - 失败隔离：任何异常只落 warning + `data/shadow_diff/canvas_write/*.jsonl`，
+      **永不冒泡**到 `save_canvas` 主路径（P0 硬约束）。
+    """
+
+    try:
+        # 零开销 short-circuit：只 import runner 命名空间，不触发 DB 层。
+        from app.shadow_write.runner import (
+            is_shadow_write_enabled,
+            run_shadow_write,
+        )
+
+        if not is_shadow_write_enabled(DOMAIN):
+            return
+        canvas = _extract_canvas_snapshot(args, kwargs)
+        if canvas is None:
+            return
+        run_shadow_write(DOMAIN, canvas)
+    except Exception:  # pragma: no cover — 失败隔离契约
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "canvas_store: shadow write hook failed", exc_info=True
+        )
+
+
+def _extract_canvas_snapshot(args: tuple, kwargs: dict) -> dict[str, Any] | None:
+    """把 `save_canvas(canvas)` 的位置/关键字参数还原为 dict。"""
+
+    if args:
+        candidate = args[0]
+    else:
+        candidate = kwargs.get("canvas")
+    if isinstance(candidate, dict):
+        return candidate
+    return None
 
 
 def load_canvas(*args: Any, **kwargs: Any) -> Any:

@@ -247,6 +247,9 @@ canvases = Table(
     Column("owner_label", String(255), nullable=True),
     Column("pinned", Boolean, nullable=False, server_default="0"),
     Column("content_json", Text, nullable=True),
+    # 数据 PR-6 (Wave 3-E)：sha256(content_json) 摘要；短窗双写路径同步写入，
+    # 对账 CLI 与 shadow write 消费；raw JSON 语义与 PR-3 保持字节等价。
+    Column("content_hash", Text, nullable=True),
     Column("revision", Integer, nullable=False, server_default="0"),
     Column("base_updated_at", Text, nullable=True),
     Column("deleted_at", Text, nullable=True),

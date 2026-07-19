@@ -6,6 +6,7 @@
 - `legacy_id` = canvas `id` 字段（或文件名 stem）
 - `title / kind / project_legacy_id / owner_label / pinned` 从 payload 顶层
 - `content_json` = 完整原始 JSON 字符串（治理期作为 payload 的字节等价保留）
+- `content_hash` = `sha256(content_json)` hex（数据 PR-6 新增；对账工具依赖）
 - `revision / base_updated_at / deleted_at` 从 payload 抬入独立列
 
 **本 PR 明确不做**：只导入；不启用 shadow 双读；不切主写。
@@ -13,6 +14,7 @@
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
 from typing import Any
@@ -46,6 +48,9 @@ def _record_from_payload(
         "owner_label": payload.get("owner") or None,
         "pinned": bool(payload.get("pinned", False)),
         "content_json": raw_text,
+        # 数据 PR-6：`sha256(content_json)` 字节精确摘要；对账 CLI 与
+        # shadow write 消费；raw JSON 语义与 PR-3 保持不变。
+        "content_hash": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
         "revision": int(payload.get("revision") or 0),
         "base_updated_at": (
             str(payload.get("base_updated_at"))

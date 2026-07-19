@@ -298,6 +298,23 @@ asyncio.run(r())"`
 
 ---
 
+## 34. Canvas 内容 shadow 短窗双写 + `content_hash` 对账（数据 PR-6，Wave 3-E §34）
+
+- 命令：
+  - `python -m pytest tests/shadow_write/ -v`
+  - `python -m pytest tests/shared/test_settings.py -q`
+  - `SHADOW_WRITE_CANVAS=false python -c "from app.shadow_write import is_shadow_write_enabled; print(is_shadow_write_enabled('canvas'))"`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+  - `alembic upgrade head`（首次可选）→ `python -m tools.data_reconcile canvas` → stdout 打印 `{"domain":"canvas","json_count":..,"db_count":..,"missing_in_db":[..],"missing_in_json":[..],"hash_mismatch":[..],"hash_null_in_db":[..]}`
+  - `git status --short data/shadow_diff/`
+- 期望：**8 passed / 0 failed / 0 skipped**（`test_canvas_shadow_write.py` 8 项）；`tests/shared/test_settings.py` 15 项全绿（字段总数断言 28 → 29）；`is_shadow_write_enabled('canvas')` 在 `SHADOW_WRITE_CANVAS=false` 时返回 `False`；`routes=167` 与基线一致（**不新增路由**）；`openapi_diff` exit=0；`data/shadow_diff/` 只有 `.gitkeep` 入库，运行时 `canvas_write/*.jsonl` 由根 `.gitignore` 排除；对账 CLI stdout JSON 键位稳定；开关打开后 `save_canvas(canvas)` 主写延迟不新增（IO 已完成后异步 upsert，>1MB 画布 hash + upsert 单次 P95 < 500ms）；`content_hash = sha256(disk_bytes(canvas.json))` 字节等价（磁盘为字节权威源，避免 Windows text-mode `\r\n` 差异）；全量测试 **488 passed / 35 skipped**（数据 PR-5 后基线 480 + 本 PR 新增 8）。
+- 关联事实：新增 `app/db/migrations/versions/0003_canvas_content_hash.py`（`revision="0003_canvas_content_hash"` / `down_revision="0002_baseline_tables"`；`op.batch_alter_table("canvases", recreate="auto")` 走 SQLite 兼容路径；`alembic upgrade head → downgrade -1 → upgrade head` 三次干净往返）；`app/data_import/tables.py:canvases` 新增 `Column("content_hash", Text, nullable=True)`；`app/data_import/importers/canvas.py:_record_from_payload` 补写 `content_hash = sha256(raw_text.encode("utf-8"))`（导入器幂等契约保持）；新增 `app/shadow_write/` 模块（`__init__.py` re-export `is_shadow_write_enabled` / `run_shadow_write`；`runner.py` 通用入口 `run_shadow_write(domain, snapshot, *, request_id=None)` + `is_shadow_write_enabled(domain)` 门禁 + 磁盘字节读回作 hash 权威源 + `sqlite_insert(...).on_conflict_do_update(index_elements=["legacy_id"])` upsert；`diff_writer.py` `WRITE_FAILURE_KEYS = ('ts','domain','legacy_id','error','request_id')` 稳定键位 + `data/shadow_diff/canvas_write/<yyyymmdd>.jsonl` 追加落盘 + 失败隔离）；`app/stores/canvas_store.py:save_canvas` wrapper 内在 `_impl(*args, **kwargs)` 调用**成功后**追加 `_write_shadow_after_save(args, kwargs)` hook + `_extract_canvas_snapshot` 位置/关键字参数还原 + 双层 `try/except` 失败隔离（异常仅 warning，永不冒泡到 `save_canvas` 主路径）；`app/shared/settings/runtime.py:Settings` 追加 `shadow_write_canvas: bool` 字段（28 → 29）+ `get_settings()` mirror 到 `main.SHADOW_WRITE_CANVAS`；`main.py` 追加 `SHADOW_WRITE_CANVAS = False` 常量（紧邻 `SHADOW_READ_CANVAS` 声明，走 PR-BE-03 "两步走" 约定）；`tests/shared/test_settings.py` 映射 + 断言 28 → 29；`tests/shadow_write/test_canvas_shadow_write.py` 8 项 STRONG 测试；新增 `tools/data_reconcile.py`（`python -m tools.data_reconcile canvas [--source-dir <path>]` 只读对账 CLI，stdout 稳定 JSON 摘要，不写盘、不改数据）；`main.py:save_canvas` 函数体（L3530-3534）零字节触碰（AST byte-equivalent 断言通过 vs baseline `ae50b28`）；`main.py` 冻结区（`class StorageSettings` body + `def apply_storage_settings` body + `storage_settings_snapshot` body）AST byte-equivalent 断言通过；顶层禁 `import sqlalchemy` 抗回归（承接数据 PR-3 契约）；读/写路径独立（不改 `app/shadow_read/` 任何文件）；`SHADOW_WRITE_CANVAS=false` 默认关闭路径无任何行为变化（不 import DB 层、不构造 engine、不落 diff 文件）。归属：数据 PR-6（[[70 开发过程跟踪/PR 状态总账/PR - 数据模型#数据 PR-6]]）。
+
+> **AST 层机器可验证契约**：`tests/shadow_write/test_canvas_shadow_write.py::test_save_canvas_frozen_zone_byte_equivalent` 用 `ast.dump(include_attributes=False)` 对齐当前 `main.py:save_canvas` 与 baseline `ae50b28:main.py:save_canvas` byte-equivalent —— 数据 PR-6 未来任何 subagent 触碰 `save_canvas` 函数体直接 REJECT。`test_frozen_zone_ast_still_byte_equivalent` 保持 `class StorageSettings` / `def apply_storage_settings` / `def storage_settings_snapshot` 三处与 `ba4b87e:main.py` baseline byte-equivalent（承接数据 PR-4 抗回归契约）。`test_shadow_write_disabled_default_is_zero_effect` 用 monkeypatch 把 `app.db.engine.get_engine` 换成 raise —— `SHADOW_WRITE_CANVAS=false` 时若触发 engine 构造即视为违反"零开销 short-circuit"契约，直接 REJECT。`test_shadow_write_failure_does_not_block_json_primary_write` 用 monkeypatch 把 `_upsert_canvas` 换成 raise —— shadow 内部异常必须仅记 warning + 落 `data/shadow_diff/canvas_write/*.jsonl`，JSON 主写仍成功（P0 硬约束）。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：
