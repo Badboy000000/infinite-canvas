@@ -279,7 +279,13 @@ def test_db_mode_async_json_fallback_writes_file(
 def test_db_mode_json_fallback_failure_does_not_propagate(
     monkeypatch, canvas_dir_fixture, tmp_path
 ):
-    """`db` 模式下 JSON 回写失败（IO 异常）不冒泡；shadow diff 落地。"""
+    """`db` 模式下 JSON 回写失败（IO 异常）不冒泡；shadow diff 落地。
+
+    数据 PR-8 P2 修补：**端到端**触发 `_async_write_json_fallback →
+    _write_json_fallback_sync → _record_json_fallback_failure` 链路。
+    通过 monkeypatch `main.canvas_path` 让内部 `open()` 抛错，从而在真实
+    链路里落 diff（不再手工调用 `_record_json_fallback_failure`）。
+    """
 
     from app.db import canvas_writer
     from app.stores import canvas_store
@@ -287,32 +293,42 @@ def test_db_mode_json_fallback_failure_does_not_propagate(
     migrate_baseline(tmp_path)
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "db")
 
-    # 让内部同步写函数抛错（走隔离契约的 shadow diff 分支）
-    def _boom(canvas):
-        raise IOError("simulated disk full")
+    # 让 `_write_json_fallback_sync` 内部的 `open(main.canvas_path(...), "w")`
+    # 抛错——但主写路径已完成，异步 fallback 才触发这条异常路径。
+    import main
 
-    monkeypatch.setattr(canvas_writer, "_write_json_fallback_sync", _boom)
+    def _bad_path(canvas_id):
+        # 指向不存在的父目录 → open() 会抛 FileNotFoundError
+        return str(tmp_path / "nonexistent_dir" / f"{canvas_id}.json")
+
+    monkeypatch.setattr(main, "canvas_path", _bad_path)
 
     canvas = _seed_canvas(canvas_id="c_fb_fail")
     # 主写路径不应抛错
     canvas_store.save_canvas(canvas)
 
-    # 但 fallback 写失败时我们通过 _write_json_fallback_sync 内部记 diff；
-    # 这里 mock 掉了它，所以直接走 fallback error record。
-    # 由 _async_write_json_fallback 内部只调用 _write_json_fallback_sync，
-    # sync helper 已被 mock，所以不会记 diff。手工调用测覆盖 _record_json_fallback_failure。
-    ret = canvas_writer._record_json_fallback_failure(
-        legacy_id="c_fb_fail",
-        error="simulated disk full",
-        fallback_reason="json_write_error",
+    # 等待异步 fallback 走完真实链路：
+    # _async_write_json_fallback → _write_json_fallback_sync（抛错）
+    # → 内部 except → _record_json_fallback_failure → jsonl 落盘
+    diff_dir = tmp_path / "shadow_diff" / "canvas_json_fallback"
+    deadline = time.perf_counter() + 2.0
+    diff_files: list = []
+    while time.perf_counter() < deadline:
+        if diff_dir.exists():
+            diff_files = list(diff_dir.glob("*.jsonl"))
+            if diff_files:
+                break
+        time.sleep(0.02)
+
+    assert diff_files, (
+        "P2 修补：端到端 fallback diff 链路应真实产生 jsonl 文件"
     )
-    assert ret is not None
-    diff_files = list((tmp_path / "shadow_diff" / "canvas_json_fallback").glob("*.jsonl"))
-    assert len(diff_files) == 1
     rec = json.loads(diff_files[0].read_text(encoding="utf-8").strip().splitlines()[-1])
     assert rec["domain"] == "canvas"
     assert rec["legacy_id"] == "c_fb_fail"
     assert rec["fallback_reason"] == "json_write_error"
+    # 键位完整（ts / domain / legacy_id / error / fallback_reason）
+    assert set(rec.keys()) == {"ts", "domain", "legacy_id", "error", "fallback_reason"}
 
 
 def test_db_mode_load_canvas_db_first_then_json_fallback(
@@ -391,7 +407,11 @@ def test_db_mode_upsert_idempotent_row_count(
 def test_db_mode_large_canvas_latency_under_bound(
     monkeypatch, canvas_dir_fixture, tmp_path
 ):
-    """≥ 1MB canvas 单次 save 延迟 < PR-6 shadow write 基线 (500ms) × 120% = 600ms。"""
+    """≥ 1MB canvas 单次 save 延迟 < PR-6 shadow write 基线 (500ms) × 120% = 600ms。
+
+    数据 PR-8 P2 修补：改为 N=20 次采样 + 排序取 P95（不是单次 `perf_counter`），
+    避免单次抖动误判；P95 上界 = PR-6 baseline * 1.2 = 600ms。
+    """
 
     from app.stores import canvas_store
 
@@ -399,12 +419,23 @@ def test_db_mode_large_canvas_latency_under_bound(
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "db")
 
     big_nodes = [{"id": f"n{i}", "data": "x" * 128} for i in range(10000)]
-    canvas = _seed_canvas(canvas_id="c_big", nodes=big_nodes)
 
-    start = time.perf_counter()
-    canvas_store.save_canvas(canvas)
-    elapsed = time.perf_counter() - start
-    assert elapsed < 0.6, f"db-mode save for ~1MB canvas too slow: {elapsed:.3f}s"
+    samples: list[float] = []
+    N = 20
+    for i in range(N):
+        # 每次用不同 id 保证是全新的 UPSERT + shadow diff 路径（避免冷启动误差）
+        canvas = _seed_canvas(canvas_id=f"c_big_{i}", nodes=big_nodes)
+        start = time.perf_counter()
+        canvas_store.save_canvas(canvas)
+        samples.append(time.perf_counter() - start)
+
+    samples.sort()
+    # P95 = 排序后 index int(N * 0.95) - 1 = 18（20 * 0.95 = 19, 取 samples[18]）
+    p95 = samples[int(N * 0.95) - 1] if N * 0.95 >= 1 else samples[-1]
+    assert p95 < 0.6, (
+        f"P2 修补：N={N} 次采样 P95 = {p95:.3f}s（上界 = PR-6 baseline * 1.2 = 0.6s）；"
+        f"samples[min={samples[0]:.3f}, max={samples[-1]:.3f}]"
+    )
 
 
 def test_invalid_canvas_primary_write_fails_fast_at_settings(monkeypatch):

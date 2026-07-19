@@ -348,6 +348,41 @@ asyncio.run(r())"`
 
 ---
 
+## 36. 3 类低风险 domain 主写机制运维手册（数据 PR-8，Wave 3-G §36）
+
+**定位**：本段是**运维手册**，不是烟测通过条件。数据 PR-8 只交付 3 类低风险 domain（Project / PromptLibrary / WorkflowDefinition）"主写机制搭建 + 显式 DB 启用能力"，**默认全部为 JSON 主写**（`PROJECT_PRIMARY_WRITE=json` / `PROMPT_LIBRARY_PRIMARY_WRITE=json` / `WORKFLOW_DEFINITION_PRIMARY_WRITE=json`）。反转默认值（切 `db`）是独立运维动作 / 独立 PR，不在 PR-8 代码范围。
+
+- 命令：
+  - `python -m pytest tests/db/test_project_writer.py tests/db/test_prompt_library_writer.py tests/db/test_workflow_writer.py tests/shared/test_settings.py -v`
+  - `python -c "from main import PROJECT_PRIMARY_WRITE, PROMPT_LIBRARY_PRIMARY_WRITE, WORKFLOW_DEFINITION_PRIMARY_WRITE; assert PROJECT_PRIMARY_WRITE == PROMPT_LIBRARY_PRIMARY_WRITE == WORKFLOW_DEFINITION_PRIMARY_WRITE == 'json', 'defaults must be json'"`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+- 期望：3 个新 writer 契约测试全绿（≥22 项 STRONG，含 sys.modules 隔离 / 集合级 UPSERT+DELETE 事务 / 异步 JSON 回写 / P0 密钥剪枝 AST+grep 双验证 / DB 主写失败上抛 / Settings 层 fail-fast）；`tests/shared/test_settings.py` 字段总数断言 30 → 33；`routes=167` 与基线一致；`openapi_diff` exit=0。
+
+### 灰度切换操作手册（任一 domain 独立执行；DB 是 SQLite 单库）
+
+1. **前置观察阶段**（24-48h，任一 domain 独立执行）：设置对应 `SHADOW_READ_<DOMAIN>=true` 开启只读双读（PR-4 已就位），观察 `data/shadow_diff/<domain>/*.jsonl` 应零异常条目；`python -m tools.data_reconcile <domain>` 摘要 `missing_in_db=[]`。
+2. **对账阶段**：`python -m tools.data_reconcile <domain>` 严格检查 JSON snapshot 与 DB 行数一致；有任何 missing → 停止切换，先修根因。
+3. **切换阶段**：设置 `<DOMAIN>_PRIMARY_WRITE=db` 后重启进程；观察 `data/shadow_diff/<domain>_json_fallback/*.jsonl` 应零条目（异步 JSON 回写全成功）。
+4. **回滚阶段**：`<DOMAIN>_PRIMARY_WRITE=json` 重启即回退到 PR-4 行为；JSON 文件已被 DB 主写阶段的异步回写维持最新，无数据回退风险。
+5. **禁止**：HTTP 不可修改此开关；只能通过环境变量 + 进程重启切换（P0 硬约束 #6）。
+
+### 关联事实
+
+- 新增 `app/db/project_writer.py`（`save_projects_db(projects: list[dict])` 集合级 UPSERT + DELETE 事务 + JSON 异步回写 + shadow diff 落 `data/shadow_diff/project_json_fallback/<yyyymmdd>.jsonl`；`load_projects_db()` DB 主读；D-1=B 决策下不做乐观锁，`updated_at` 仅作诊断）。
+- 新增 `app/db/prompt_library_writer.py`（同上结构；D-2=B 决策：整个 `{active_library_id, libraries: [...]}` payload 全塞 `prompt_libraries.raw_json`；`prompt_items` 表 PR-8 **不主写**，M2 后续 PR 展平；`system/readonly/version` 语义由 `main.normalize_prompt_libraries` 承担字节等价）。
+- 新增 `app/db/workflow_writer.py`（同上结构；**P0 密钥剪枝**：`raw_json` 深度剪除任何 `_is_sensitive_field` 匹配的字段——`api_key` / `access_token` / `secret` / `authorization` / `password` / `client_secret` / `env_file` / `dot_env` / 前缀/后缀匹配 `_SENSITIVE_AFFIXES` 清单；DB DELETE 仅清 `provider_id='runninghub'` 域，不误伤 builtin `file:*`；`prune_runninghub_workflow_store_for_provider` 通过 store facade 调用，`db` 模式下 prune 语义由集合级 DELETE 事务自动承接）。
+- 3 个 store wrapper（`app/stores/project_store.py` / `prompt_library_store.py` / `workflow_store.py`）新增 `_get_primary_write_mode` 分派：`json` 分支 100% 保留 PR-4 行为（**必须**保证 `sys.modules` 无对应 `app.db.*_writer`，不构造 DB engine，不落 fallback 文件）；`db` 分支懒 import writer + JSON 异步回写。
+- `main.py` 追加 3 行常量（紧邻 L369 `CANVAS_PRIMARY_WRITE`）：`PROJECT_PRIMARY_WRITE` / `PROMPT_LIBRARY_PRIMARY_WRITE` / `WORKFLOW_DEFINITION_PRIMARY_WRITE`，全部默认 `"json"`。**`save_projects` / `save_prompt_libraries` / `save_runninghub_workflow_store` 函数体零字节触碰**（byte-identical vs `ae50b28`）。
+- `app/shared/settings/runtime.py:Settings` 追加 3 字段（30 → 33）+ 3 校验器 `_validate_project_primary_write` / `_validate_prompt_library_primary_write` / `_validate_workflow_definition_primary_write`；值域 `{"json","db"}` fail-fast；`tests/shared/test_settings.py` `FIELD_TO_MAIN_CONST` + 断言同步。
+- **PR-7 P2 承接**：`tests/db/test_canvas_writer.py::test_db_mode_large_canvas_latency_p95_sampled` 改造为 N=20 次采样 + 排序取 P95（上界 baseline * 1.2）；`test_db_mode_e2e_fallback_diff_chain` 端到端触发 `_async_write_json_fallback → _write_json_fallback_sync → _record_json_fallback_failure` 链路（注入 IO 异常），断言 `data/shadow_diff/canvas_json_fallback/*.jsonl` 真实产生。
+- 冻结区 AST 3/3（`class StorageSettings` / `def apply_storage_settings` / `def storage_settings_snapshot`）byte-equivalent 断言跨 9 PR 保持。`routes=167` 不变；OpenAPI baseline exit=0。
+- **P0 抗回归**：3 个 `test_json_mode_default_does_not_import_*_writer` 分别断言 `PROJECT_PRIMARY_WRITE=json` / `PROMPT_LIBRARY_PRIMARY_WRITE=json` / `WORKFLOW_DEFINITION_PRIMARY_WRITE=json` 默认下 `sys.modules` 无对应 writer；未来 subagent 在默认路径引入 DB 层拉起即视为违反"零开销 short-circuit"契约，直接 REJECT。3 个 `test_*_db_mode_primary_write_error_propagates` monkeypatch `get_engine` raise → DB 主写失败必须原样上抛，禁止 fallback（P0 硬约束 #4）。`test_workflow_writer_raw_json_strips_provider_secrets` AST + 端到端 dump grep 双验证 provider 密钥零入 DB（P0 硬约束 #5）。
+
+归属：数据 PR-8（[[70 开发过程跟踪/PR 状态总账/PR - 数据模型#数据 PR-8]]）。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：

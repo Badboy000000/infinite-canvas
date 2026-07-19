@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 
-# 路径字段名 → main.py 常量名映射（30 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6 + 1 数据 PR-7）
+# 路径字段名 → main.py 常量名映射（33 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6 + 1 数据 PR-7 + 3 数据 PR-8）
 FIELD_TO_MAIN_CONST = {
     "base_dir": "BASE_DIR",
     "workflow_dir": "WORKFLOW_DIR",
@@ -58,6 +58,10 @@ FIELD_TO_MAIN_CONST = {
     "shadow_write_canvas": "SHADOW_WRITE_CANVAS",
     # 数据 PR-7（Wave 3-F）新增 canvas primary write mode
     "canvas_primary_write": "CANVAS_PRIMARY_WRITE",
+    # 数据 PR-8（Wave 3-G）新增 3 类低风险 domain primary write mode
+    "project_primary_write": "PROJECT_PRIMARY_WRITE",
+    "prompt_library_primary_write": "PROMPT_LIBRARY_PRIMARY_WRITE",
+    "workflow_definition_primary_write": "WORKFLOW_DEFINITION_PRIMARY_WRITE",
 }
 
 DEPLOYMENT_FIELDS = {
@@ -111,7 +115,7 @@ def test_settings_fields_preserve_main_constant_contract():
 
     fields = {f.name for f in dataclasses.fields(Settings)}
     expected_fields = set(FIELD_TO_MAIN_CONST) | DEPLOYMENT_FIELDS
-    assert len(FIELD_TO_MAIN_CONST) == 30
+    assert len(FIELD_TO_MAIN_CONST) == 33
     assert fields == expected_fields, (
         f"Settings 字段名与映射表不一致：\n"
         f"  Settings.fields = {sorted(fields)}\n"
@@ -399,3 +403,76 @@ def test_settings_snapshot_contains_no_secret_values(monkeypatch):
         "token",
         "session_secret",
     }.intersection(snapshot)
+
+
+# ---------------------------------------------------------------------------
+# 数据 PR-8（Wave 3-G）：3 类低风险 domain 主写门禁 env 映射与 fail-fast
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("field_name", "const_name", "env_key"),
+    [
+        ("project_primary_write", "PROJECT_PRIMARY_WRITE", "PROJECT_PRIMARY_WRITE"),
+        (
+            "prompt_library_primary_write",
+            "PROMPT_LIBRARY_PRIMARY_WRITE",
+            "PROMPT_LIBRARY_PRIMARY_WRITE",
+        ),
+        (
+            "workflow_definition_primary_write",
+            "WORKFLOW_DEFINITION_PRIMARY_WRITE",
+            "WORKFLOW_DEFINITION_PRIMARY_WRITE",
+        ),
+    ],
+)
+def test_pr8_primary_write_default_is_json(monkeypatch, field_name, const_name, env_key):
+    """3 类新 domain 默认（env 未设 / main 常量为空）→ `"json"`。"""
+
+    import main
+
+    from app.shared.settings import get_settings
+
+    monkeypatch.setattr(main, const_name, "json")
+    s = get_settings()
+    assert getattr(s, field_name) == "json"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "const_name"),
+    [
+        ("project_primary_write", "PROJECT_PRIMARY_WRITE"),
+        ("prompt_library_primary_write", "PROMPT_LIBRARY_PRIMARY_WRITE"),
+        ("workflow_definition_primary_write", "WORKFLOW_DEFINITION_PRIMARY_WRITE"),
+    ],
+)
+def test_pr8_primary_write_db_mode_accepted(monkeypatch, field_name, const_name):
+    """`db` 值合法（大小写不敏感）。"""
+
+    import main
+
+    from app.shared.settings import get_settings
+
+    monkeypatch.setattr(main, const_name, "DB")
+    s = get_settings()
+    assert getattr(s, field_name) == "db"
+
+
+@pytest.mark.parametrize(
+    "const_name",
+    [
+        "PROJECT_PRIMARY_WRITE",
+        "PROMPT_LIBRARY_PRIMARY_WRITE",
+        "WORKFLOW_DEFINITION_PRIMARY_WRITE",
+    ],
+)
+def test_pr8_invalid_primary_write_fails_fast_at_settings(monkeypatch, const_name):
+    """未知值必须在 `Settings` 构造期抛 `ValueError`（P0 硬约束 #7）。"""
+
+    import main
+
+    from app.shared.settings import get_settings
+
+    monkeypatch.setattr(main, const_name, "invalid")
+    with pytest.raises(ValueError, match=f"Invalid {const_name}"):
+        get_settings()

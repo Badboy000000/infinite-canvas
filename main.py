@@ -367,6 +367,9 @@ SHADOW_READ_CANVAS = str(os.environ.get("SHADOW_READ_CANVAS", "")).strip().lower
 # 常量仅作 `Settings` 字段镜像目标（走 PR-BE-03 "两步走"约定）。
 SHADOW_WRITE_CANVAS = str(os.environ.get("SHADOW_WRITE_CANVAS", "")).strip().lower() in _TRUTHY_SHADOW_READ
 CANVAS_PRIMARY_WRITE = str(os.environ.get("CANVAS_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-7（Wave 3-F）Canvas 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
+PROJECT_PRIMARY_WRITE = str(os.environ.get("PROJECT_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-8（Wave 3-G）Project 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
+PROMPT_LIBRARY_PRIMARY_WRITE = str(os.environ.get("PROMPT_LIBRARY_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-8（Wave 3-G）PromptLibrary 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
+WORKFLOW_DEFINITION_PRIMARY_WRITE = str(os.environ.get("WORKFLOW_DEFINITION_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-8（Wave 3-G）WorkflowDefinition 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 DEFAULT_STORAGE_DIRS = {
     "upload": OUTPUT_INPUT_DIR,
     "generated": OUTPUT_OUTPUT_DIR,

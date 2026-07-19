@@ -94,6 +94,9 @@ class Settings:
         shadow_read_canvas                     → SHADOW_READ_CANVAS              (数据 PR-5 新增)
         shadow_write_canvas                    → SHADOW_WRITE_CANVAS             (数据 PR-6 新增)
         canvas_primary_write                   → CANVAS_PRIMARY_WRITE            (数据 PR-7 新增)
+        project_primary_write                  → PROJECT_PRIMARY_WRITE           (数据 PR-8 新增)
+        prompt_library_primary_write           → PROMPT_LIBRARY_PRIMARY_WRITE    (数据 PR-8 新增)
+        workflow_definition_primary_write      → WORKFLOW_DEFINITION_PRIMARY_WRITE (数据 PR-8 新增)
     """
 
     base_dir: str
@@ -148,6 +151,14 @@ class Settings:
     # DB 主写 + JSON 异步回写。值域 `{"json","db"}`，其他值走 `_validate_canvas_primary_write`
     # fail-fast。契约测试断言字段总数 29 → 30。
     canvas_primary_write: str
+    # 数据 PR-8（Wave 3-G）新增 3 个字段：Project / PromptLibrary /
+    # WorkflowDefinition 主写机制门禁。默认全部 `"json"`（老 JSON 主写完全
+    # 等价 PR-4 行为）；显式 `"db"` 才启用对应 `app.db.*_writer` DB 主写 +
+    # JSON 异步回写。值域 `{"json","db"}`，其他值走对应 `_validate_*_primary_write`
+    # fail-fast。契约测试断言字段总数 30 → 33。
+    project_primary_write: str
+    prompt_library_primary_write: str
+    workflow_definition_primary_write: str
 
     # Deployment PR-01 adds a mode declaration and the non-secret switches that
     # later security PRs will consume. Defaults mirror today's runtime exactly;
@@ -166,6 +177,9 @@ class Settings:
 
 
 _CANVAS_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
+_PROJECT_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
+_PROMPT_LIBRARY_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
+_WORKFLOW_DEFINITION_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 
 
 def _validate_canvas_primary_write(raw: object) -> str:
@@ -185,6 +199,54 @@ def _validate_canvas_primary_write(raw: object) -> str:
         allowed = ", ".join(sorted(_CANVAS_PRIMARY_WRITE_ALLOWED))
         raise ValueError(
             f"Invalid CANVAS_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
+        )
+    return text
+
+
+def _validate_project_primary_write(raw: object) -> str:
+    """校验 `main.PROJECT_PRIMARY_WRITE` 值域（数据 PR-8）。"""
+
+    if raw is None:
+        return "json"
+    text = str(raw).strip().lower()
+    if not text:
+        return "json"
+    if text not in _PROJECT_PRIMARY_WRITE_ALLOWED:
+        allowed = ", ".join(sorted(_PROJECT_PRIMARY_WRITE_ALLOWED))
+        raise ValueError(
+            f"Invalid PROJECT_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
+        )
+    return text
+
+
+def _validate_prompt_library_primary_write(raw: object) -> str:
+    """校验 `main.PROMPT_LIBRARY_PRIMARY_WRITE` 值域（数据 PR-8）。"""
+
+    if raw is None:
+        return "json"
+    text = str(raw).strip().lower()
+    if not text:
+        return "json"
+    if text not in _PROMPT_LIBRARY_PRIMARY_WRITE_ALLOWED:
+        allowed = ", ".join(sorted(_PROMPT_LIBRARY_PRIMARY_WRITE_ALLOWED))
+        raise ValueError(
+            f"Invalid PROMPT_LIBRARY_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
+        )
+    return text
+
+
+def _validate_workflow_definition_primary_write(raw: object) -> str:
+    """校验 `main.WORKFLOW_DEFINITION_PRIMARY_WRITE` 值域（数据 PR-8）。"""
+
+    if raw is None:
+        return "json"
+    text = str(raw).strip().lower()
+    if not text:
+        return "json"
+    if text not in _WORKFLOW_DEFINITION_PRIMARY_WRITE_ALLOWED:
+        allowed = ", ".join(sorted(_WORKFLOW_DEFINITION_PRIMARY_WRITE_ALLOWED))
+        raise ValueError(
+            f"Invalid WORKFLOW_DEFINITION_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
         )
     return text
 
@@ -272,6 +334,9 @@ def get_settings() -> Settings:
         shadow_read_canvas=bool(main.SHADOW_READ_CANVAS),
         shadow_write_canvas=bool(main.SHADOW_WRITE_CANVAS),
         canvas_primary_write=_validate_canvas_primary_write(main.CANVAS_PRIMARY_WRITE),
+        project_primary_write=_validate_project_primary_write(main.PROJECT_PRIMARY_WRITE),
+        prompt_library_primary_write=_validate_prompt_library_primary_write(main.PROMPT_LIBRARY_PRIMARY_WRITE),
+        workflow_definition_primary_write=_validate_workflow_definition_primary_write(main.WORKFLOW_DEFINITION_PRIMARY_WRITE),
         **_deployment_snapshot(),
     )
 
