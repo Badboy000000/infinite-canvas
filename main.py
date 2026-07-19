@@ -57,6 +57,14 @@ from app.db import engine as _db_engine  # noqa: E402,F401  # facade re-export
 # feature flag：`TASK_SHADOW_ENABLE`（默认 `false`）。详见
 # [[40 实施计划/任务模型与后台任务治理实施计划与PR清单]] PR-3。
 from app.task.shadow import get_shadow_registry as _get_shadow_registry  # noqa: E402
+# --- 任务模型治理 PR-4 History writer facade 桥 ----------------------------
+# 在 `main.py` 现有 `history_store.save_to_history(result)` 主写调用**旁边**
+# 挂钩，把生成结果以 Task + Artifact 副本形式派生写入事实层。**主写仍是
+# `history.json`**，读路径也**不切**（`GET /api/history` 仍走 `history_store.
+# snapshot()`）；派生写失败仅记 warning、不阻塞旧路径。
+# feature flag：`TASK_HISTORY_ENABLE`（默认 `false`）。详见
+# [[40 实施计划/任务模型与后台任务治理实施计划与PR清单]] PR-4。
+from app.task.history import get_history_writer as _get_history_writer  # noqa: E402
 # --- File governance PR-2 shadow-registration facade -----------------------
 from app.adapters.storage.local_dir import LocalDirAdapter  # noqa: E402
 from app.services.files import FileService, LegacyPathConflictError  # noqa: E402
@@ -2797,6 +2805,30 @@ def _shadow_register(operation: str, *args, **kwargs):
     try:
         registry = _get_shadow_registry()
         handler = getattr(registry, f"register_{operation}", None)
+        if handler is None:
+            return None
+        return handler(*args, **kwargs)
+    except Exception:  # pragma: no cover — 双保险
+        return None
+
+
+def _history_derive(operation: str, *args, **kwargs):
+    """任务 PR-4 History 派生副本转发器。
+
+    在 `main.py` 3 处 `history_store.save_to_history(result)` 主写调用**旁边**
+    调用，把 record 派生写入 Task + Artifact 副本到 SQLite 事实层。**主写
+    路径 (`history.json`) 完全不变**；派生写任何异常都被 writer 内部吞掉记
+    warning，此包装再兜底一次，保证旧路径永不因派生层退化。
+
+    合法 `operation` 值：`write_from_result`（对应 `HistoryWriter.
+    write_from_task`）。详见 `app/task/history/writer.py`。
+    """
+
+    try:
+        writer = _get_history_writer()
+        if operation == "write_from_result":
+            return writer.write_from_task(source_record=kwargs.get("record"))
+        handler = getattr(writer, f"{operation}", None)
         if handler is None:
             return None
         return handler(*args, **kwargs)
@@ -13562,6 +13594,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
         "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
     }
     history_store.save_to_history(result)
+    _history_derive("write_from_result", record=result)
     if GLOBAL_LOOP:
         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
     return result
@@ -13610,6 +13643,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
                         "raw": raw,
                     }
                     history_store.save_to_history(result)
+                    _history_derive("write_from_result", record=result)
                     if GLOBAL_LOOP:
                         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
                     return result
@@ -13677,6 +13711,7 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "raw": raw,
         }
         history_store.save_to_history(result)
+        _history_derive("write_from_result", record=result)
         if GLOBAL_LOOP:
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
         return result

@@ -264,6 +264,22 @@ asyncio.run(r())"`
 
 ---
 
+## 32. GenerationHistory 与 Task 分离（任务 PR-4，Wave 3-C §32）
+
+- 命令：
+  - `python -m pytest tests/task/history/ -v`
+  - `python -m pytest tests/task -q`
+  - `TASK_HISTORY_ENABLE=true python -c "from app.task.history import get_history_writer, is_history_writer_enabled; print('enabled=', is_history_writer_enabled()); w = get_history_writer(); print('writer_ok=', w is not None)"`
+  - `python scripts/task_history_reconcile.py`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+- 期望：**21 passed / 0 failed / 0 skipped**（`test_history_writer_disabled_default.py` 4 项 + `test_history_writer_idempotent.py` 3 项 + `test_history_writer_failure_isolated.py` 3 项 + `test_history_derive_from_task_snapshot.py` 4 项 + `test_history_reader_compat.py` 3 项 + `test_main_history_hook_count.py` 2 项 + `test_history_reconcile_cli.py` 2 项）；`tests/task -q` **115 passed**（任务 PR-1 遗留 73 + 任务 PR-3 遗留 21 + 本 PR 新增 21）；`is_history_writer_enabled()` 在 flag on 时为 `True`；对账 CLI 输出稳定 JSON 键 `{"history_json_count", "derived_count", "missing_derived", "extra_derived", "kind_stats"}` 且 exit=0；`routes=167` 与文件 PR-2 后基线一致（**不新增路由**）；`openapi_diff` exit=0；全量测试 **474 passed / 35 skipped**（前端 PR-5 未合入基线情形下 =453+21；前端 PR-5 已合入基线情形下 =前端 PR-5 后基线 + 21）。
+- 关联事实：新增 `app/task/history/{__init__.py, writer.py, reader.py}` —— `HistoryWriter` 提供 `write_from_task(task_snapshot, artifacts, *, source_record)` 派生副本入口 + 惰性 `_ensure_ready()`（首次触发 `run_migrations("head")` + `sqlite_stores()`）+ `TASK_HISTORY_ENABLE` env 门禁（`{1, true, yes, on, enable, enabled}` 视为 truthy，与 `TASK_SHADOW_ENABLE` 对齐）+ record 摘要 key（`sha1(task_id|request_id|timestamp)`）幂等（idempotency_key = `history:<sha>`）+ `_HISTORY_TYPE_TO_TASK_TYPE` 5 类字面量映射（online→online-image / angle→online-image / zimage→comfy-workflow / runninghub→runninghub-workflow / video→online-video；未映射 fallback 直传）+ `HistoryReader.read_history_compat(*, filter_type, writer)` 只读兼容层（`TASK_HISTORY_ENABLE=false` 时 byte-equivalent `get_history_api`，启用后追加 `derived_task_id / derived_artifact_ids` 派生字段）；`main.py` 顶部第 7 段 facade 桥 import `_get_history_writer` + 顶层 helper `def _history_derive(operation, *args, **kwargs)` 转发器（对齐任务 PR-3 `_shadow_register` 模式）+ `main.py:13596 / 13645 / 13713` 3 处**在 `history_store.save_to_history` 旁边**追加 `_history_derive("write_from_result", record=result)` 调用（不改主写函数体）；新增 `scripts/task_history_reconcile.py` 对账 CLI（`--since <hours>` 可选窗口，稳定 JSON 输出）；新增 `tests/task/history/` 7 文件 21 项测试；`history.json` 主写路径**完全不变**（`main.save_to_history` body byte-equivalent）；读路径**不切**（`GET /api/history` 仍读 `history.json`）；派生写失败仅记 warning，绝不 raise 到 `save_to_history` 主路径（`_history_derive` 双层 try/except 保护）；`TASK_HISTORY_ENABLE=false`（默认）时 writer 不构造 store、不 migrate、不做任何写入；`main.py` 冻结区（`class StorageSettings` body + `def apply_storage_settings` body + `storage_settings_snapshot` body）AST byte-equivalent 断言通过；任务 PR-3 六处影子挂钩点（image `run_*` / `create_*`、comfy `run_*` / `create_*`）body 零触碰（`_shadow_register` 函数体 byte-equivalent + 调用点数 10 恒定）。归属：任务 PR-4（[[70 开发过程跟踪/PR 状态总账/PR - 任务模型#任务 PR-4：GenerationHistory 与 Task 分离，历史归历史]]）。
+
+> **AST 层机器可验证契约**：`tests/task/history/test_main_history_hook_count.py` 用 AST 遍历强制 `main.py` 内 `_history_derive(...)` 调用点 **≥ 3**、`_history_derive` 顶层 `def` 存在、`from app.task.history import get_history_writer` facade 桥 import 存在。任一项失败即视为未来 PR 误删 History 派生挂钩，直接 REJECT。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：
