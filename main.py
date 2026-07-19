@@ -360,6 +360,8 @@ SHADOW_READ_PROJECT = str(os.environ.get("SHADOW_READ_PROJECT", "")).strip().low
 SHADOW_READ_PROVIDER_CONFIG = str(os.environ.get("SHADOW_READ_PROVIDER_CONFIG", "")).strip().lower() in _TRUTHY_SHADOW_READ
 SHADOW_READ_PROMPT_LIBRARY = str(os.environ.get("SHADOW_READ_PROMPT_LIBRARY", "")).strip().lower() in _TRUTHY_SHADOW_READ
 SHADOW_READ_WORKFLOW_DEFINITION = str(os.environ.get("SHADOW_READ_WORKFLOW_DEFINITION", "")).strip().lower() in _TRUTHY_SHADOW_READ
+# 数据 PR-5（Wave 3-D）：Canvas shadow 双读门禁。默认 `false`。
+SHADOW_READ_CANVAS = str(os.environ.get("SHADOW_READ_CANVAS", "")).strip().lower() in _TRUTHY_SHADOW_READ
 DEFAULT_STORAGE_DIRS = {
     "upload": OUTPUT_INPUT_DIR,
     "generated": OUTPUT_OUTPUT_DIR,

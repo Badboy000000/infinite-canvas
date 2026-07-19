@@ -6,6 +6,8 @@
 - 只选**语义稳定**且**跨 JSON/DB 一致**的字段（`id / name / order` 之类）。
 - **不**收录时间戳（`created_at` / `updated_at` / `imported_at`），因为
   JSON 侧是 epoch ms 而 DB 侧是 tz-aware ISO datetime，本 PR 不做转换。
+  **例外**：Canvas 域因 `revision` / `base_updated_at` 语义需要，`created_at`
+  / `updated_at` / `deleted_at` 也纳入稳定字段集——差异将作为观察数据记录。
 - **不**收录密钥或其他敏感字段。
 - Provider 字段集为 `provider_config_store._PROVIDER_SNAPSHOT_FIELD_ORDER`
   子集（白名单已由 store 侧深层脱敏保证不含密钥）。
@@ -63,11 +65,35 @@ WORKFLOW_DEFINITION_STABLE_FIELDS: frozenset[str] = frozenset({
 """
 
 
+CANVAS_STABLE_FIELDS: frozenset[str] = frozenset({
+    "id",
+    "title",
+    "kind",
+    "project_legacy_id",
+    "owner_label",
+    "pinned",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+    "revision",
+    "base_updated_at",
+})
+"""Canvas：`{id, title, kind, project_legacy_id, owner_label, pinned, created_at,
+updated_at, deleted_at, revision, base_updated_at}`。
+
+**注意**：`created_at` / `updated_at` 在 JSON 侧是 epoch ms 整数，DB 侧是
+`DateTime(timezone=True)` 对象，类型差异会导致始终触发 diff——这是设计使然，
+用于观察两种时间戳表达的一致性。`revision` 和 `base_updated_at` 已由
+`0002_baseline_tables` 建表时提供，本 PR 不做 DDL 改动。
+"""
+
+
 STABLE_FIELDS_BY_DOMAIN: Mapping[str, frozenset[str]] = MappingProxyType({
     "project": PROJECT_STABLE_FIELDS,
     "provider_config": PROVIDER_STABLE_FIELDS,
     "prompt_library": PROMPT_LIBRARY_STABLE_FIELDS,
     "workflow_definition": WORKFLOW_DEFINITION_STABLE_FIELDS,
+    "canvas": CANVAS_STABLE_FIELDS,
 })
 
 SUPPORTED_SHADOW_DOMAINS: tuple[str, ...] = (
@@ -75,6 +101,7 @@ SUPPORTED_SHADOW_DOMAINS: tuple[str, ...] = (
     "provider_config",
     "prompt_library",
     "workflow_definition",
+    "canvas",
 )
 
 
@@ -83,6 +110,7 @@ __all__ = [
     "PROVIDER_STABLE_FIELDS",
     "PROMPT_LIBRARY_STABLE_FIELDS",
     "WORKFLOW_DEFINITION_STABLE_FIELDS",
+    "CANVAS_STABLE_FIELDS",
     "STABLE_FIELDS_BY_DOMAIN",
     "SUPPORTED_SHADOW_DOMAINS",
 ]

@@ -91,6 +91,7 @@ class Settings:
         shadow_read_provider_config            → SHADOW_READ_PROVIDER_CONFIG     (数据 PR-4 新增)
         shadow_read_prompt_library             → SHADOW_READ_PROMPT_LIBRARY      (数据 PR-4 新增)
         shadow_read_workflow_definition        → SHADOW_READ_WORKFLOW_DEFINITION (数据 PR-4 新增)
+        shadow_read_canvas                     → SHADOW_READ_CANVAS              (数据 PR-5 新增)
     """
 
     base_dir: str
@@ -131,6 +132,9 @@ class Settings:
     shadow_read_provider_config: bool
     shadow_read_prompt_library: bool
     shadow_read_workflow_definition: bool
+    # 数据 PR-5（Wave 3-D）新增 1 个字段：Canvas shadow 双读门禁。默认 `False`；
+    # 契约测试断言字段总数 27 → 28。
+    shadow_read_canvas: bool
 
     # Deployment PR-01 adds a mode declaration and the non-secret switches that
     # later security PRs will consume. Defaults mirror today's runtime exactly;
@@ -228,6 +232,7 @@ def get_settings() -> Settings:
         shadow_read_provider_config=bool(main.SHADOW_READ_PROVIDER_CONFIG),
         shadow_read_prompt_library=bool(main.SHADOW_READ_PROMPT_LIBRARY),
         shadow_read_workflow_definition=bool(main.SHADOW_READ_WORKFLOW_DEFINITION),
+        shadow_read_canvas=bool(main.SHADOW_READ_CANVAS),
         **_deployment_snapshot(),
     )
 

@@ -280,6 +280,24 @@ asyncio.run(r())"`
 
 ---
 
+---
+
+## 33. Canvas shadow 双读（数据 PR-5，Wave 3-D §33）
+
+- 命令：
+  - `python -m pytest tests/shadow_read/test_canvas_shadow.py -v`
+  - `python -m pytest tests/shared/test_settings.py -q`
+  - `SHADOW_READ_CANVAS=false python -c "from app.shadow_read import is_shadow_read_enabled; print(is_shadow_read_enabled('canvas'))"`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+  - `git status --short data/shadow_diff/`
+- 期望：**6 passed / 0 failed / 0 skipped**（`test_canvas_shadow.py` 6 项）；`tests/shared/test_settings.py` 15 项全绿（字段总数断言 27 → 28）；`is_shadow_read_enabled('canvas')` 在 `SHADOW_READ_CANVAS=false` 时返回 `False`；`routes=167` 与基线一致（**不新增路由**）；`openapi_diff` exit=0；`data/shadow_diff/` 只有 `.gitkeep` 入库，运行时子目录与 `*.jsonl` 由根 `.gitignore` 排除。
+- 关联事实：`app/shadow_read/fields.py` 新增 `CANVAS_STABLE_FIELDS`（`id, title, kind, project_legacy_id, owner_label, pinned, created_at, updated_at, deleted_at, revision, base_updated_at`）+ `STABLE_FIELDS_BY_DOMAIN` + `SUPPORTED_SHADOW_DOMAINS` 追加 `"canvas"`；`app/shadow_read/runner.py` `_DOMAIN_TO_ENV` 追加 `"canvas": "SHADOW_READ_CANVAS"` + `_normalize_json_canvas` + `_load_db_snapshot` canvas 域查询 + `_project_db_row_to_stable` canvas 域行映射；`app/stores/canvas_store.py` 新增 `DOMAIN = "canvas"` + `read_shadow()` + `load_canvas()` 惰性 hook；`app/shared/settings/runtime.py` `Settings` 追加 `shadow_read_canvas: bool` 字段（27 → 28）；`main.py` 追加 `SHADOW_READ_CANVAS = False` 常量；`tests/shared/test_settings.py` 映射 + 断言 27 → 28；`main.py` 冻结区（`class StorageSettings` body + `def apply_storage_settings` body + `storage_settings_snapshot` body）AST byte-equivalent 断言通过；`save_canvas` 函数体（L3528-3532）零触碰。归属：数据 PR-5（[[70 开发过程跟踪/PR 状态总账/PR - 数据模型#数据 PR-5]]）。
+
+> **AST 层机器可验证契约**：`SHADOW_READ_CANVAS=false` 时 `load_canvas` 行为与数据 PR-4 基线完全一致，shadow 结果不进入 HTTP 响应。任何异常仅记 warning，不冒泡。`main.py` 顶层 body 禁 `import sqlalchemy` 抗回归（承接数据 PR-3 契约）。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：

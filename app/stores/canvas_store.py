@@ -15,6 +15,9 @@ from typing import Any
 from .legacy_snapshot import SchemaVersion, build_snapshot, read_json_source
 
 
+DOMAIN = "canvas"
+
+
 def save_canvas(*args: Any, **kwargs: Any) -> Any:
     # 懒 import 避免与 `main.py` 顶部 `from app.factory import create_app`
     # 桥接语义冲突（`app.factory` 内部懒 `import main`）。
@@ -24,7 +27,26 @@ def save_canvas(*args: Any, **kwargs: Any) -> Any:
 
 def load_canvas(*args: Any, **kwargs: Any) -> Any:
     from main import load_canvas as _impl
-    return _impl(*args, **kwargs)
+    result = _impl(*args, **kwargs)
+    # 数据 PR-5 shadow read hook；env 关闭时零开销 return。
+    read_shadow(result)
+    return result
+
+
+def read_shadow(json_snapshot: Any, *, request_id: str | None = None) -> None:
+    """Shadow-read entry；JSON 主读成功后调用。
+
+    - 门禁：`SHADOW_READ_CANVAS` env truthy 才继续。
+    - 结果永不进入 HTTP 响应；只影响 `data/shadow_diff/canvas/*.jsonl` 落盘。
+    - 失败隔离：任何异常仅记 warning。
+    """
+
+    # 零开销 short-circuit：只 import runner 命名空间，不触发 DB 层。
+    from app.shadow_read.runner import is_shadow_read_enabled, run_shadow_read
+
+    if not is_shadow_read_enabled(DOMAIN):
+        return
+    run_shadow_read(DOMAIN, json_snapshot, request_id=request_id)
 
 
 def snapshot(canvas_id: str) -> dict[str, Any]:

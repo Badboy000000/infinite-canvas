@@ -48,6 +48,7 @@ _DOMAIN_TO_ENV: Mapping[str, str] = {
     "provider_config": "SHADOW_READ_PROVIDER_CONFIG",
     "prompt_library": "SHADOW_READ_PROMPT_LIBRARY",
     "workflow_definition": "SHADOW_READ_WORKFLOW_DEFINITION",
+    "canvas": "SHADOW_READ_CANVAS",
 }
 
 
@@ -209,11 +210,38 @@ def _normalize_json_workflow_definition(payload: Any) -> dict[str, dict[str, Any
     return out
 
 
+def _normalize_json_canvas(payload: Any) -> dict[str, dict[str, Any]]:
+    """`load_canvas()` 返回单个 canvas dict；映射 `project` → `project_legacy_id`，
+    `owner` → `owner_label` 以对齐 DB 表列名。"""
+
+    if not isinstance(payload, dict):
+        return {}
+    legacy_id = payload.get("id")
+    if not legacy_id:
+        return {}
+    return {
+        str(legacy_id): {
+            "id": payload.get("id"),
+            "title": payload.get("title"),
+            "kind": payload.get("kind"),
+            "project_legacy_id": payload.get("project"),
+            "owner_label": payload.get("owner"),
+            "pinned": bool(payload.get("pinned", False)),
+            "created_at": payload.get("created_at"),
+            "updated_at": payload.get("updated_at"),
+            "deleted_at": payload.get("deleted_at"),
+            "revision": payload.get("revision", 0),
+            "base_updated_at": payload.get("base_updated_at"),
+        }
+    }
+
+
 _NORMALIZERS: Mapping[str, Callable[[Any], dict[str, dict[str, Any]]]] = {
     "project": _normalize_json_project,
     "provider_config": _normalize_json_provider,
     "prompt_library": _normalize_json_prompt_library,
     "workflow_definition": _normalize_json_workflow_definition,
+    "canvas": _normalize_json_canvas,
 }
 
 
@@ -270,6 +298,22 @@ def _load_db_snapshot(domain: str) -> dict[str, dict[str, Any]]:
                 t.workflow_definitions.c.name,
                 t.workflow_definitions.c.provider_id,
                 t.workflow_definitions.c.kind,
+            ],
+        ),
+        "canvas": (
+            t.canvases,
+            [
+                t.canvases.c.legacy_id,
+                t.canvases.c.title,
+                t.canvases.c.kind,
+                t.canvases.c.project_legacy_id,
+                t.canvases.c.owner_label,
+                t.canvases.c.pinned,
+                t.canvases.c.created_at,
+                t.canvases.c.updated_at,
+                t.canvases.c.deleted_at,
+                t.canvases.c.revision,
+                t.canvases.c.base_updated_at,
             ],
         ),
     }
@@ -339,6 +383,26 @@ def _project_db_row_to_stable(
             "name": row.get("name"),
             "provider_id": row.get("provider_id"),
             "kind": row.get("kind"),
+        }
+    if domain == "canvas":
+        def _iso(v: Any) -> Any:
+            """Convert datetime to ISO string for JSON-safe serialization."""
+            if hasattr(v, "isoformat"):
+                return v.isoformat()
+            return v
+
+        return {
+            "id": row.get("legacy_id"),
+            "title": row.get("title"),
+            "kind": row.get("kind"),
+            "project_legacy_id": row.get("project_legacy_id"),
+            "owner_label": row.get("owner_label"),
+            "pinned": bool(row.get("pinned", False)),
+            "created_at": _iso(row.get("created_at")),
+            "updated_at": _iso(row.get("updated_at")),
+            "deleted_at": row.get("deleted_at"),
+            "revision": row.get("revision", 0),
+            "base_updated_at": row.get("base_updated_at"),
         }
     return {}
 
