@@ -232,6 +232,22 @@ asyncio.run(r())"`
 
 ---
 
+## 29. 影子登记 —— CANVAS_TASKS / pendingTasks 双记录（任务 PR-3，Wave 3-B §29）
+
+- 命令：
+  - `python -m pytest tests/task/shadow/ -v`
+  - `python -m pytest tests/task -q`
+  - `TASK_SHADOW_ENABLE=true python -c "from app.task.shadow import get_shadow_registry, is_shadow_enabled; print('enabled=', is_shadow_enabled()); r = get_shadow_registry(); print('registry_ok=', r is not None)"`
+  - `python scripts/task_shadow_reconcile.py`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+- 期望：**21 passed / 0 failed / 0 skipped**（`test_shadow_registration.py` 3 项 + `test_shadow_disabled_default.py` 4 项 + `test_shadow_failure_isolated.py` 3 项 + `test_shadow_state_transitions.py` 3 项 + `test_shadow_provider_task.py` 3 项 + `test_main_shadow_hook_count.py` 3 项 + `test_shadow_reconcile_cli.py` 2 项）；`tests/task -q` **94 passed**（任务 PR-1 遗留 73 + 本 PR 新增 21）；`is_shadow_enabled()` 在 flag on 时为 `True`；对账 CLI 输出稳定 JSON 键 `{"canvas_tasks_count", "shadow_tasks_count", "missing_shadow", "extra_shadow", "kind_stats"}` 且 exit=0；`routes=167` 与文件 PR-2 后基线一致（**不新增路由**）；`openapi_diff` exit=0；全量测试 **411 passed / 35 skipped**（数据 PR-3 后基线 390 + 本 PR 新增 21）。
+- 关联事实：新增 `app/task/shadow/{__init__.py, register.py}` —— `ShadowRegistry` 提供 5 个挂钩 API（`register_submit / register_transition / register_provider_task / register_node_run / register_release`）+ 惰性 `_ensure_ready()`（首次触发 `run_migrations("head")` + `sqlite_stores()`）+ `TASK_SHADOW_ENABLE` env 门禁（`{1, true, yes, on, enable, enabled}` 视为 truthy）+ CANVAS 状态字面量到治理方案 14 态的映射表 + `_shortest_path` BFS 合成 `queued→leased→running` 中间态（`_SHADOW_LEASE_OWNER = "shadow-registry@pr3"`）+ 幂等（`idempotency_key=f"canvas_task:{canvas_task_id}"` + `(provider_id, upstream_task_id)` 复用）；`main.py` 第 6 段 facade 桥 import `_get_shadow_registry` + `_shadow_register(operation, ...)` 转发器 + `CANVAS_TASKS` 6 处交互点挂钩（image：running / succeeded / failed + jimeng provider_task；comfy：running / succeeded / failed；create_image：submit；create_comfy：submit）；新增 `scripts/task_shadow_reconcile.py` 对账 CLI（`--since <hours>` 可选窗口，稳定 JSON 输出）；新增 `tests/task/shadow/` 7 个测试文件；`CANVAS_TASKS` 事实源 + `/api/canvas-image-tasks/{id}` / `/api/canvas-comfy-tasks/{id}` 读路径**不切**；`main.py` 冻结区（`class StorageSettings` body + `def apply_storage_settings` body + `storage_settings_snapshot` body）AST byte-equivalent 断言通过；影子写失败仅记 warning，绝不 raise 到旧路径；`TASK_SHADOW_ENABLE=false`（默认）时 registry 不构造 store、不 migrate、不做任何写入。归属：任务 PR-3（[[70 开发过程跟踪/PR 状态总账/PR - 任务模型#任务 PR-3：影子登记 —— CANVAS_TASKS / pendingTasks 双记录]]）。
+
+> **AST 层机器可验证契约**：`tests/task/shadow/test_main_shadow_hook_count.py` 用 AST 遍历强制 `main.py` 内 `_shadow_register(...)` 调用点 **≥ 6**、`_shadow_register` 顶层 `def` 存在、`from app.task.shadow import get_shadow_registry` facade 桥 import 存在。任一项失败即视为未来 PR 误删影子挂钩，直接 REJECT。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：

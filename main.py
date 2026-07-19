@@ -49,6 +49,14 @@ from app.shared.settings import (  # noqa: E402,F401
 # [[40 实施计划/数据模型治理实施计划与PR清单]] PR-1、
 # [[50 决策记录/决策 - ORM 与迁移工具选型]]。
 from app.db import engine as _db_engine  # noqa: E402,F401  # facade re-export
+# --- 任务模型治理 PR-3 影子登记 facade 桥 ----------------------------------
+# 在 `main.py` 现有 `CANVAS_TASKS` 的 6 处交互点旁挂钩，把 Task /
+# ProviderTask / NodeRun / TaskEvent 副本写入 SQLite 事实层。**读路径不切**：
+# `GET /api/canvas-image-tasks/{id}` 与 `GET /api/canvas-comfy-tasks/{id}`
+# 仍读 `CANVAS_TASKS`；影子写失败仅记 warning、不阻塞旧路径。
+# feature flag：`TASK_SHADOW_ENABLE`（默认 `false`）。详见
+# [[40 实施计划/任务模型与后台任务治理实施计划与PR清单]] PR-3。
+from app.task.shadow import get_shadow_registry as _get_shadow_registry  # noqa: E402
 # --- File governance PR-2 shadow-registration facade -----------------------
 from app.adapters.storage.local_dir import LocalDirAdapter  # noqa: E402
 from app.services.files import FileService, LegacyPathConflictError  # noqa: E402
@@ -2762,6 +2770,28 @@ class ImageTaskQueryRequest(BaseModel):
 
 CANVAS_TASKS: Dict[str, Dict[str, Any]] = {}
 CANVAS_TASK_LOCK = Lock()
+
+
+def _shadow_register(operation: str, *args, **kwargs):
+    """任务 PR-3 影子登记转发器。
+
+    把 `main.py` 6 处 `CANVAS_TASKS` 交互点的意图翻译到
+    `app.task.shadow.ShadowRegistry` 上的对应方法。任何异常都被 registry
+    内部吞掉记 warning，此包装再兜底一次，保证旧路径永不因影子层退化。
+
+    合法 `operation` 值：`submit / transition / provider_task / node_run /
+    release`。详见 `app/task/shadow/register.py`。
+    """
+
+    try:
+        registry = _get_shadow_registry()
+        handler = getattr(registry, f"register_{operation}", None)
+        if handler is None:
+            return None
+        return handler(*args, **kwargs)
+    except Exception:  # pragma: no cover — 双保险
+        return None
+
 
 class CanvasVideoRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
@@ -13662,6 +13692,8 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
         if task_id in CANVAS_TASKS:
             CANVAS_TASKS[task_id]["status"] = "running"
             CANVAS_TASKS[task_id]["updated_at"] = time.time()
+    # 任务 PR-3 影子登记 (1/6)：running 状态跃迁副本
+    _shadow_register("transition", task_id, status="running")
     try:
         result = await build_online_image_result(payload)
         with CANVAS_TASK_LOCK:
@@ -13671,6 +13703,8 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
                 "error": "",
                 "updated_at": time.time(),
             })
+        # 任务 PR-3 影子登记 (2/6)：succeeded 终态副本
+        _shadow_register("release", task_id, status="succeeded")
     except JimengPendingError as exc:
         # 即梦云端还在排队：标记为 jimeng_pending，前端据 submit_id 持久续查（任务未丢失）
         info = jimeng_pending_payload(exc)
@@ -13685,6 +13719,17 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
                 "error": "",
                 "updated_at": time.time(),
             })
+        # jimeng_pending 字面量当前无标准 TaskStatus 映射，PR-4/PR-5 承接；
+        # 只登记 provider 副本（若 submit_id 已知），主 Task 不做非法状态跃迁。
+        if exc.submit_id:
+            _shadow_register(
+                "provider_task",
+                task_id,
+                provider_id="jimeng",
+                provider_protocol="jimeng",
+                upstream_task_id=str(exc.submit_id),
+                upstream_task_kind="image",
+            )
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
@@ -13697,6 +13742,17 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
                 "upstream_task_id": upstream_task_id,
                 "updated_at": time.time(),
             })
+        # 任务 PR-3 影子登记 (3/6)：failed 终态副本 + 可选 provider ID 登记
+        if upstream_task_id:
+            _shadow_register(
+                "provider_task",
+                task_id,
+                provider_id=str(getattr(payload, "provider_id", "") or "unknown"),
+                provider_protocol="online_image",
+                upstream_task_id=str(upstream_task_id),
+                upstream_task_kind="image",
+            )
+        _shadow_register("release", task_id, status="failed", error_message=str(detail))
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
@@ -13713,6 +13769,14 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
             "provider_id": payload.provider_id,
             "model": payload.model,
         }
+    # 任务 PR-3 影子登记 (4/6)：submit 副本；`canvas_task:{task_id}` 幂等键
+    _shadow_register(
+        "submit",
+        task_id,
+        task_type="online-image",
+        provider_id=getattr(payload, "provider_id", None),
+        model=getattr(payload, "model", None),
+    )
     asyncio.create_task(run_canvas_image_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
 
@@ -13729,6 +13793,8 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
         if task_id in CANVAS_TASKS:
             CANVAS_TASKS[task_id]["status"] = "running"
             CANVAS_TASKS[task_id]["updated_at"] = time.time()
+    # 任务 PR-3 影子登记 (5/6)：comfy running 状态跃迁副本
+    _shadow_register("transition", task_id, status="running")
     try:
         result = await asyncio.to_thread(generate, payload)
         if isinstance(result, dict) and result.get("error"):
@@ -13740,6 +13806,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
                 "error": "",
                 "updated_at": time.time(),
             })
+        _shadow_register("release", task_id, status="succeeded")
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
@@ -13750,6 +13817,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
                 "status_code": status_code,
                 "updated_at": time.time(),
             })
+        _shadow_register("release", task_id, status="failed", error_message=str(detail))
 
 @app.post("/api/canvas-comfy-tasks")
 async def create_canvas_comfy_task(payload: GenerateRequest):
@@ -13765,6 +13833,13 @@ async def create_canvas_comfy_task(payload: GenerateRequest):
             "error": "",
             "workflow_json": payload.workflow_json,
         }
+    # 任务 PR-3 影子登记 (6/6)：comfy submit 副本
+    _shadow_register(
+        "submit",
+        task_id,
+        task_type="comfy",
+        workflow_id=getattr(payload, "workflow_json", None),
+    )
     asyncio.create_task(run_canvas_comfy_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
 
