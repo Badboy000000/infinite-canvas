@@ -20,9 +20,43 @@ CANVAS_JS = ROOT / "static/js/canvas.js"
 SMART_CANVAS_JS = ROOT / "static/js/smart-canvas.js"
 
 
+def _extract_function_source(src: str, name: str) -> str:
+    """从 JS 源码中提取 `function <name>(...) {...}` 的完整定义。
+
+    简单大括号平衡计数(逃逸串/注释未考虑,canvas.js 实现足够简单)。
+    """
+    m = re.search(rf"function\s+{re.escape(name)}\s*\([^)]*\)\s*\{{", src)
+    if not m:
+        return ""
+    start = m.start()
+    depth = 0
+    i = m.end() - 1  # 指向左花括号
+    while i < len(src):
+        ch = src[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start:i+1]
+        i += 1
+    return ""
+
+
 def _extract_escape_html_body(src: str) -> str:
-    m = re.search(r"function escapeHtml\(str\)\s*\{[^}]+\}", src)
-    return m.group(0) if m else ""
+    """兼容 T1/T2 的旧 signature,委托到通用提取器。"""
+    return _extract_function_source(src, "escapeHtml")
+
+
+def _run_node_with_source(src_snippet: str, epilogue: str) -> dict:
+    """把一段 JS(通常是从 canvas.js 提取的函数定义)+ 一段调用/断言尾巴
+    一起用 node -e 跑,回读 JSON 输出。"""
+    script = src_snippet + "\n" + epilogue
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8"
+    )
+    return json.loads(completed.stdout)
 
 
 def test_escape_html_covers_five_chars_canvas():
@@ -40,20 +74,46 @@ def test_escape_html_covers_five_chars_smart():
 
 
 def test_escape_attr_runtime_transforms_five_chars_canvas():
-    # 通过 Node 运行 escapeAttr 直接验证输出
-    script = r"""
-        const escapeHtml = (str) => String(str == null ? '' : str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
-        const escapeAttr = escapeHtml;
+    """Wave 3-I 承接补丁 P0-1(前端 TRA):从内联复制升级为**真正执行 canvas.js
+    的 escapeHtml / escapeAttr 定义体**。
+
+    P0 反审背景:原测试内联写一份 `const escapeHtml = ...`,断言其行为
+    符合契约 —— canvas.js 里的 escapeAttr 即使被改坏(比如漏 `'` 映射)
+    测试仍然会 PASS(因为它跑的是内联副本,不是真实实现)。
+    """
+    src = CANVAS_JS.read_text(encoding="utf-8")
+    escape_html_fn = _extract_function_source(src, "escapeHtml")
+    escape_attr_fn = _extract_function_source(src, "escapeAttr")
+    assert escape_html_fn, "canvas.js escapeHtml 定义体未提取到"
+    assert escape_attr_fn, "canvas.js escapeAttr 定义体未提取到"
+
+    # 直接把两个函数体 evaluate 到 node global scope,再调 escapeAttr
+    out = _run_node_with_source(
+        escape_html_fn + "\n" + escape_attr_fn,
+        r"""
         const result = escapeAttr(`<img src=x onerror="alert('xss')" & ' " > <`);
         console.log(JSON.stringify({result}));
-    """
-    completed = subprocess.run(
-        ["node", "-e", script],
-        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8"
+        """,
     )
-    out = json.loads(completed.stdout)
     for c in ["&lt;", "&gt;", "&amp;", "&quot;", "&#39;"]:
-        assert c in out["result"], f"escapeAttr 未转义 {c}"
+        assert c in out["result"], f"canvas.js escapeAttr 未转义 {c}"
+
+
+def test_escape_attr_runtime_transforms_five_chars_smart():
+    """T3b(承接补丁新增):smart-canvas.js 只有 escapeHtml(没有独立 escapeAttr)。
+    验证 escapeHtml 5 字符全转义运行时。"""
+    src = SMART_CANVAS_JS.read_text(encoding="utf-8")
+    escape_html_fn = _extract_function_source(src, "escapeHtml")
+    assert escape_html_fn, "smart-canvas.js escapeHtml 定义体未提取到"
+    out = _run_node_with_source(
+        escape_html_fn,
+        r"""
+        const result = escapeHtml(`<img src=x onerror="alert('xss')" & ' " > <`);
+        console.log(JSON.stringify({result}));
+        """,
+    )
+    for c in ["&lt;", "&gt;", "&amp;", "&quot;", "&#39;"]:
+        assert c in out["result"], f"smart-canvas.js escapeHtml 未转义 {c}"
 
 
 def test_canvas_js_onclick_interpolation_wrapped():
@@ -64,13 +124,44 @@ def test_canvas_js_onclick_interpolation_wrapped():
     )
 
 
-def test_no_unwrapped_onclick_interpolation_in_two_canvases():
-    """禁字段名正则守护(CI 抗回归):
-    onclick="...${bareExpr}..." 未被 escapeAttr / escapeHtml 包裹的场景为 0.
+def test_no_unwrapped_high_risk_attribute_interpolation_in_two_canvases():
+    """Wave 3-I 承接补丁 P1-1(前端 TRA):正则从只覆盖 `onclick=` 扩到全部
+    **高风险 sink** attribute:
+      - `on\\w+` 所有事件属性(onclick / onload / onerror / onmouseover / …)
+      - `href` / `src` / `action` — URL / navigation sink
+      - `formaction` — 表单提交 URL sink
 
-    正则拒绝: onclick="foo(${x})" (x 不以 escapeAttr / escapeHtml 开头)
-    正则允许: onclick="foo(${escapeAttr(x)})"
+    豁免 attribute(仅显示,非 sink):`title` / `value` / `placeholder` /
+    `alt` / `data-i18n-title` / `aria-*` —— 这些即使含 `${tr('key')}` 也不构成
+    XSS,不视为回归。承接补丁把范围收敛到"确实是 handler / URL sink"的属性,
+    避免误报 i18n / 显示串。
+
+    允许的包裹函数:`escapeAttr` / `escapeHtml` / `CSS.escape`(CSS/URL 场景)
+    + 允许变量名 `safe`/`escaped`(通过命名约定标注上游已转义;若不放心可
+    独立小 PR 收敛)。
+
+    此测试是回归锚点:未来任何 PR 新增高风险 attribute 拼串场景必须显式加
+    escape 包裹或加入允许清单;不允许自由漂移。
     """
+    # 关键 sink attributes(可以执行 JS 或改变导航目标)
+    sink_attrs = r'(on\w+|href|src|action|formaction)'
+    # 允许清单:以下 identifier 开头视为已转义 / 已白名单
+    allowlist = r'(?:escapeAttr|escapeHtml|CSS\.escape|safe\b|escaped\b|urlSafe\b)'
+    pattern = re.compile(
+        rf'\b{sink_attrs}="[^"]*\$\{{(?!{allowlist})[^}}]+\}}[^"]*"'
+    )
+    for path in [CANVAS_JS, SMART_CANVAS_JS]:
+        real_hits = [m.group(0) for m in pattern.finditer(path.read_text(encoding="utf-8"))]
+        assert real_hits == [], (
+            f"{path.name} 存在未包裹 escapeAttr/escapeHtml/CSS.escape 的**高风险 sink** "
+            f"attribute 拼串(共 {len(real_hits)} 处,前 3 处):\n  " +
+            "\n  ".join(real_hits[:3]) +
+            "\n\n允许清单:escapeAttr / escapeHtml / CSS.escape / 变量名 safe / escaped / urlSafe"
+        )
+
+
+def test_no_unwrapped_onclick_interpolation_in_two_canvases():
+    """兼容旧断言(承接前的 grep 抗回归)。保留以确保 onclick 特化不被回归。"""
     pattern = re.compile(r'onclick="[^"]*\$\{(?!escapeAttr|escapeHtml)[^}]+\}[^"]*"')
     for path in [CANVAS_JS, SMART_CANVAS_JS]:
         hits = pattern.findall(path.read_text(encoding="utf-8"))
@@ -78,31 +169,54 @@ def test_no_unwrapped_onclick_interpolation_in_two_canvases():
 
 
 def test_p0_credential_sentinel_escaped_not_attribute_breakout():
-    """P0 密钥 sentinel:即使 node.id 未来漂移含 " 或 script,escapeAttr 也把
-    attribute 边界保护住,不允许 attribute-breakout XSS."""
-    script = r"""
-        const escapeHtml = (str) => String(str == null ? '' : str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
-        const escapeAttr = escapeHtml;
-        const nodeId = `n1' onclick="alert('leak_sentinel_bearer_XYZ')`;
-        const html = `<button onclick="deleteNodeFromButton('${escapeAttr(nodeId)}', event)"/>`;
-        console.log(JSON.stringify({html}));
+    """Wave 3-I 承接补丁 P0-2(前端 TRA):**参数化 6 sentinel + 真正跑 canvas.js
+    的 escapeAttr** + attribute-breakout 抗回归。
+
+    P0 反审背景:原测试内联复制 escapeHtml 定义,断言其行为 —— 与 canvas.js
+    实际实现解耦。承接补丁改造为:
+      (a) 提取 canvas.js 中的 escapeHtml/escapeAttr 定义体 evaluate 到 node,
+      (b) 参数化 6 种 P0 密钥 sentinel(api_key/access_token/secret/Bearer/sk-/AKI),
+      (c) 每个 sentinel 尝试 attribute-breakout(用 ' 提前闭合 attribute)
+      (d) 断言 sentinel 字面存在(证明进入了 render 路径)+ attribute-breakout 序列被中和
     """
-    completed = subprocess.run(
-        ["node", "-e", script],
-        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8"
-    )
-    out = json.loads(completed.stdout)
-    html = out["html"]
-    # sentinel 应作为字面文本存在但 attribute 边界应完整
-    assert "leak_sentinel_bearer_XYZ" in html  # 字面 sentinel 出现（正常，因为 nodeId 就是它）
-    # attribute-breakout 攻击应被中和:
-    # attacker 试图用 ' 提前闭合 onclick 值,再插入 onclick="alert(...)"
-    # escapeAttr 应把 ' 转成 &#39;
-    assert "&#39;" in html
-    # 原始未转义的 attacker-injected onclick 不应出现
-    # 语义:整个 payload 被作为单个字符串挂在 deleteNodeFromButton('...') 里
-    # 断言:未逃逸的 attribute-breakout 字符串 (未转义 " 或未转义 ') 不出现
-    # attacker payload 中包含的 " 和 ' 应全被转义
-    assert '"alert(' not in html, "发现未转义的 attribute-breakout 双引号 payload"
-    # 攻击的关键:未转义的 `' onclick="` 序列。这个序列被转义后应变成 `&#39; onclick=&quot;`
-    assert "' onclick=\"" not in html, "发现 raw ' onclick=\" attribute-breakout 未被转义"
+    src = CANVAS_JS.read_text(encoding="utf-8")
+    escape_html_fn = _extract_function_source(src, "escapeHtml")
+    escape_attr_fn = _extract_function_source(src, "escapeAttr")
+    assert escape_html_fn and escape_attr_fn
+
+    sentinels = [
+        ("api_key", "api_key=SECRET_ABC"),
+        ("access_token", "access_token_XYZ"),
+        ("secret", "secret_material_QQQ"),
+        ("Bearer", "Bearer eyJhbGciOiJIUzI1NiJ9"),
+        ("sk-", "sk-abcdef0123456789"),
+        ("AKIA", "AKIAIOSFODNN7EXAMPLE"),
+    ]
+    for tag, payload in sentinels:
+        # 构造 attribute-breakout attack payload:攻击者在 node.id 里塞 `' onclick="alert(...)`
+        node_id_attack = f"n1' onclick=\"alert('leak_{payload}')"
+        escaped_epilogue = (
+            "const nodeId = " + json.dumps(node_id_attack) + ";"
+            "const html = `<button onclick=\"deleteNodeFromButton('${escapeAttr(nodeId)}', event)\"/>`;"
+            "console.log(JSON.stringify({html}));"
+        )
+        out = _run_node_with_source(escape_html_fn + "\n" + escape_attr_fn, escaped_epilogue)
+        html = out["html"]
+        # (a) sentinel 字面存在,证明确实进入了 render 路径
+        assert payload in html, f"[sentinel {tag}] {payload} 未出现在渲染结果,render 路径断裂"
+        # (b) attribute-breakout 序列 `' onclick="` 应被完全中和(`'` 转成 `&#39;` + `"` 转成 `&quot;`)
+        assert "' onclick=\"" not in html, (
+            "[sentinel " + tag + "] 发现 raw `' onclick=\"` 未转义,"
+            "attribute-breakout 攻击面存在"
+        )
+        # (c) `"` 边界被保护
+        # HTML 是 <button onclick="deleteNodeFromButton('...', event)"/> —— 期望的 `"` 只出现在 attribute 定界(2 个)
+        # 攻击者插入的额外 `"` 应被转义为 &quot;
+        dq_count = html.count('"')
+        assert dq_count == 2, (
+            "[sentinel " + tag + "] `\"` 计数异常"
+            + "(期望 2 个 attribute 定界):" + str(dq_count)
+        )
+        # (d) 关键:`&#39;` 应存在(证明攻击 payload 里的 `'` 被转义了)
+        assert "&#39;" in html, "[sentinel " + tag + "] 未在输出中找到 `&#39;`,`'` 转义未生效"
+

@@ -147,20 +147,39 @@ def test_view_field_contract_matches_governance() -> None:
 
 
 def test_pr3_legacy_literals_are_now_normalized() -> None:
-    """`jimeng_pending / apimart_wait / runninghub_wait` 现在都归 waiting_upstream。
+    """`jimeng_pending / apimart_wait / apimart_pending / runninghub_wait /
+    runninghub_pending` 现在都归 waiting_upstream + recoverable。
 
-    PR-3 遗留：`_CANVAS_TO_TASK_STATUS` 只覆盖 8 稳定字面量；view 层现在补
-    齐——本测试直接构造这三个字面量喂给对应 mapper，断言归一化正确。
+    Wave 3-I 承接补丁 P1-2 (任务 PR-5 TRA)：从 3-in-3 扩展到 **5-in-1
+    parametrized** —— 协调纲要 §遗留观察项承接明确要求 5 字面量，原测试只
+    覆盖 3 个，遗漏 apimart_pending / runninghub_pending 意外删除时**不会
+    失败**（实现的 _WAITING_TOKENS 已含全 5 项，但测试未反证）。
     """
 
-    # jimeng_pending
-    view = map_jimeng_task({"submit_id": "jm-x", "gen_status": "jimeng_pending", "jimeng_pending": True, "queue_info": {}})
-    assert view.status == "waiting_upstream" and view.recoverable is True
+    # (mapper 函数, fixture 构造 lambda, 字面量名称)
+    cases = [
+        (map_jimeng_task,
+         lambda: {"submit_id": "jm-x", "gen_status": "jimeng_pending", "jimeng_pending": True, "queue_info": {}},
+         "jimeng_pending"),
+        (map_apimart_task,
+         lambda: {"data": {"task_id": "am-x", "status": "apimart_wait"}},
+         "apimart_wait"),
+        (map_apimart_task,
+         lambda: {"data": {"task_id": "am-y", "status": "apimart_pending"}},
+         "apimart_pending"),
+        (map_runninghub_task,
+         lambda: {"data": {"taskId": "rh-x", "status": "runninghub_wait"}},
+         "runninghub_wait"),
+        (map_runninghub_task,
+         lambda: {"data": {"taskId": "rh-y", "status": "runninghub_pending"}},
+         "runninghub_pending"),
+    ]
 
-    # apimart_wait
-    view = map_apimart_task({"data": {"task_id": "am-x", "status": "apimart_wait"}})
-    assert view.status == "waiting_upstream" and view.recoverable is True
-
-    # runninghub_wait
-    view = map_runninghub_task({"data": {"taskId": "rh-x", "status": "runninghub_wait"}})
-    assert view.status == "waiting_upstream" and view.recoverable is True
+    for mapper, build_fixture, literal in cases:
+        view = mapper(build_fixture())
+        assert view.status == "waiting_upstream", (
+            f"legacy literal '{literal}' 未归 waiting_upstream: 实际 {view.status}"
+        )
+        assert view.recoverable is True, (
+            f"legacy literal '{literal}' recoverable 应为 True: 实际 {view.recoverable}"
+        )

@@ -463,3 +463,117 @@ def test_bootstrap_script_order():
         if idx_legacy < 0:
             idx_legacy = html.find("static/js/smart-canvas.js")
         assert idx_bootstrap > idx_legacy > 0, f"{html_path.name}: bootstrap 必须在 legacy canvas.js 之后"
+
+
+# -------------------------------------------------------------------------
+# Wave 3-I 承接补丁 T18 · P1-3 (前端 TRA):
+# fallback 分支从「静态 grep」升级为「运行时 renderFallback 实际执行」验证。
+#
+# 反审背景:原 T11/T12 只 grep 字符串 `未知类型:` / `_knownClassicTypes`,
+# 不证明 canvas.js 中的 renderNode({type: 'unknown-xyz'}) 真的走到 fallback
+# 分支并生成占位 DOM。承接补丁真正 import renderFallback 并执行,断言:
+#   (a) 无 document 环境(HTML string 分支)输出含 "未知类型: <type>" +
+#       .node.node-unknown class + data-id + data-node-type 属性
+#   (b) 有 document 环境(DOM 分支)输出 textContent 含 "未知类型: <type>",
+#       className 含 node + node-unknown,dataset.id 与 dataset.nodeType 正确
+# -------------------------------------------------------------------------
+def test_render_fallback_html_string_branch_produces_placeholder_dom():
+    """P1-3a:无 document 环境(Node 默认)renderFallback 返回 HTML 字符串。"""
+    render_uri = (ROOT / "static/js/modules/node/registry/NodeRenderRegistry.js").as_uri()
+    script = (
+        f"import {{ renderFallback }} from '{render_uri}';"
+        "const html = renderFallback({id: 'n1-abc', type: 'unknown-xyz'});"
+        "console.log(JSON.stringify({html, isString: typeof html === 'string'}));"
+    )
+    completed = subprocess.run(
+        ["node", "--experimental-default-type=module", "-e", script],
+        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8"
+    )
+    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert payload["isString"], "无 document 环境 renderFallback 必须返回 string"
+    html = payload["html"]
+    assert "未知类型: unknown-xyz" in html, f"fallback DOM 缺 label:\n{html}"
+    assert 'class="node node-unknown"' in html, f"fallback DOM 缺 class:\n{html}"
+    assert 'data-id="n1-abc"' in html, f"fallback DOM 缺 data-id:\n{html}"
+    assert 'data-node-type="unknown-xyz"' in html, f"fallback DOM 缺 data-node-type:\n{html}"
+
+
+def test_render_fallback_dom_branch_with_fake_document():
+    """P1-3b:有 document 环境(浏览器场景)renderFallback 返回 HTMLElement。
+    构造轻量 fake document,验证 dataset / className / textContent 全部正确。"""
+    render_uri = (ROOT / "static/js/modules/node/registry/NodeRenderRegistry.js").as_uri()
+    script = (
+        f"import {{ renderFallback }} from '{render_uri}';"
+        # 极简 fake document:createElement 返回一个 mock element
+        "const fakeDoc = {"
+        "  createElement: (tag) => ({"
+        "    _tag: tag, _style: {},"
+        "    dataset: {}, className: '',"
+        "    style: new Proxy({}, {"
+        "      set: (t, k, v) => { t[k] = v; return true; },"
+        "      get: (t, k) => t[k],"
+        "    }),"
+        "    textContent: '',"
+        "  }),"
+        "};"
+        "const el = renderFallback({id: 'n2-def', type: 'weird-type'}, {document: fakeDoc});"
+        "console.log(JSON.stringify({"
+        "  tag: el._tag,"
+        "  className: el.className,"
+        "  datasetId: el.dataset.id,"
+        "  datasetNodeType: el.dataset.nodeType,"
+        "  textContent: el.textContent,"
+        "  isObject: typeof el === 'object' && el !== null,"
+        "}));"
+    )
+    completed = subprocess.run(
+        ["node", "--experimental-default-type=module", "-e", script],
+        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8"
+    )
+    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert payload["isObject"], "DOM 分支 renderFallback 必须返回对象"
+    assert payload["tag"] == "div", f"fallback 根元素应为 div,实际:{payload['tag']}"
+    assert "node" in payload["className"] and "node-unknown" in payload["className"], (
+        f"fallback className 缺 node/node-unknown: {payload['className']}"
+    )
+    assert payload["datasetId"] == "n2-def", f"dataset.id 未透传: {payload['datasetId']}"
+    assert payload["datasetNodeType"] == "weird-type", (
+        f"dataset.nodeType 未透传: {payload['datasetNodeType']}"
+    )
+    assert payload["textContent"] == "未知类型: weird-type", (
+        f"textContent 与契约不符: {payload['textContent']}"
+    )
+
+
+def test_render_fallback_never_throws_on_edge_inputs():
+    """P1-3c:renderFallback 对多种边界输入均不 throw,契约明确。"""
+    render_uri = (ROOT / "static/js/modules/node/registry/NodeRenderRegistry.js").as_uri()
+    script = (
+        f"import {{ renderFallback }} from '{render_uri}';"
+        "const results = [];"
+        "const cases = ["
+        "  {node: null, tag: 'null'},"
+        "  {node: undefined, tag: 'undefined'},"
+        "  {node: {}, tag: 'empty'},"
+        "  {node: {type: ''}, tag: 'empty-type'},"
+        "  {node: {type: null, id: null}, tag: 'null-type-null-id'},"
+        "  {node: {type: 42, id: 3.14}, tag: 'non-string'},"
+        "];"
+        "for (const c of cases) {"
+        "  try {"
+        "    const out = renderFallback(c.node);"
+        "    results.push({tag: c.tag, ok: true, kind: typeof out});"
+        "  } catch (e) {"
+        "    results.push({tag: c.tag, ok: false, err: String(e)});"
+        "  }"
+        "}"
+        "console.log(JSON.stringify({results}));"
+    )
+    completed = subprocess.run(
+        ["node", "--experimental-default-type=module", "-e", script],
+        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8"
+    )
+    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    for r in payload["results"]:
+        assert r["ok"], f"[边界 {r['tag']}] renderFallback 抛异常: {r.get('err')}"
+

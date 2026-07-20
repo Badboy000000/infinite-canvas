@@ -52,16 +52,21 @@
             'addComfyNode', 'addLTXDirectorNode', 'addOutputNode',
             'groupSelectedImages',
             'openCanvasLog',
-            // classic canvas create menu
-            'menuAddImage', 'menuAddPrompt', 'menuAddLoop', 'menuAddLLM',
-            'menuAddGenerator', 'menuAddMsgen', 'menuAddVideo', 'menuAddRh',
-            'menuAddComfy', 'menuAddLtxDirector', 'menuAddOutput',
-            // smart canvas topbar / menu
+            // classic canvas create menu — HTML 用 `data-action="menuAdd"
+            // data-action-arg="image|prompt|..."`，action-bus.js 会 split 逗号
+            // 分隔 arg 后调 `menuAdd(type)`（canvas.js:3543 参数分发实现）。
+            // 承接补丁（Wave 3-I RC 反审 P0-1）：原列表 11 个 `menuAddImage` /
+            // `menuAddPrompt` / ... 是不存在的函数名，autoBind 会静默 skip，
+            // 导致 11 个 createMenu 按钮全部失效。修复为唯一存在的 `menuAdd`。
+            'menuAdd',
+            // smart canvas topbar buttons — HTML data-action= 命名实际存在的
+            // 三个 handler（backToCanvasList / openSmartCanvasShortcuts /
+            // openSmartCanvasLog），下方 close* 系列在 HTML 中仍以内联
+            // `onclick=` 使用（未迁移），承接补丁 P2 清理已删除死名 5 个：
+            // closeSmartWorkflowTransferModal / closeSmartCanvasLog /
+            // closeSmartCanvasShortcuts / closeOutputLightbox /
+            // closeWorkflowTransferModal（保留 onclick 即可，无需 autoBind）。
             'backToCanvasList', 'openSmartCanvasShortcuts', 'openSmartCanvasLog',
-            'closeSmartWorkflowTransferModal', 'closeSmartCanvasLog',
-            'closeSmartCanvasShortcuts',
-            // ambient
-            'closeOutputLightbox', 'closeWorkflowTransferModal',
         ]);
         try {
             window.dispatchEvent(new CustomEvent('node-registry-ready', {

@@ -168,3 +168,144 @@ def test_status_outside_canonical_raises() -> None:
             remote_status="in_flight",
             raw_excerpt={},
         )
+
+
+# ---------------------------------------------------------------------------
+# Wave 3-I 承接补丁 · P1-1 (任务 PR-5 TRA):
+# 42 fixture sentinel 分布不均 —— 只有 4 fixture 含 sentinel,
+# `jimeng / comfyui / generic_image / video` 4 provider **无一 fixture 携带
+# sentinel** → `test_secrets_never_leak_into_view_output[jimeng/...]` 等参数
+# 化用例实际只在验证 mapper 对"clean 输入不误伤",未验证 sanitization 在
+# 这些 provider 上生效。
+#
+# 承接补丁不改现有 fixture(避免 42 expected_normalized.json 全体重算的
+# 高风险);改为**运行时向 mapper 直接注入 sentinel**,7 provider × 6 状态
+# × 6 sentinel = 252 检查点,断言输出 dict 全量序列化后无 sentinel。
+# 这是**真正意义上的 STRONG**:与 fixture 分布无关。
+# ---------------------------------------------------------------------------
+
+
+# 6 类别 P0 sentinel(覆盖 TRA 指出的 `secret` / `AKIA` 空缺)
+_P0_SENTINELS_INJECTED = [
+    ("api_key", "api_key=SECRET_INJECT_ABC"),
+    ("access_token", "access_token_INJECT_XYZ"),
+    ("secret", "secret_material_INJECT_QQQ"),
+    ("Bearer", "Bearer eyJhbGciOiJIUzI1NiJ9.INJECT.PPP"),
+    ("sk-", "sk-INJECT-abcdef0123456789"),
+    ("AKIA", "AKIAIOSFODNN7EXAMPLE_INJECT"),
+]
+
+
+def _load_fixture_with_sentinel_injected(
+    provider: str, status: str, sentinel_tag: str, sentinel_value: str,
+) -> Mapping[str, Any]:
+    """(已废弃) 保留为兼容签名 —— 委托到 `_load_fixture_with_key_based_sentinel_injection`。"""
+    return _load_fixture_with_key_based_sentinel_injection(provider, status, sentinel_tag, sentinel_value)
+
+
+@pytest.mark.parametrize("provider,mapper", _ALL_MAPPERS)
+def test_secrets_never_leak_uniform_injection_across_all_fixtures(
+    provider: str, mapper,
+) -> None:
+    """STRONG:每 provider × 每状态 × 每 sentinel 类别都独立验证 sanitize 生效
+    —— 但只针对**通过键名**塞入 sentinel 的场景(sanitize_raw_excerpt 的
+    覆盖面)。
+
+    Wave 3-I 承接补丁 P1-1:覆盖 TRA 指出的 4 项 no-op 参数化用例
+    (`jimeng / comfyui / generic_image / video`)—— 即使原 fixture 干净,
+    通过 `diagnostic.<sentinel_tag>` 深层注入的 sentinel 会跑一遍 mapper,
+    断言 view.to_dict() 全量序列化后无 sentinel 原文。
+
+    覆盖 TRA 指出的 `secret` / `AKIA` sentinel 类别空缺。
+
+    注:此测试**不注入**到 `raw.message` 字段值 —— error.raw / provider_message
+    从错误消息 **值**中提取,若 provider 在错误消息里返回含 secret 的字符串
+    (真实生产可能场景),当前 sanitize 只查键名子串不扫值,会泄漏。这属于
+    Wave 3-I 反审新发现 P1-obs(见 test_error_message_may_leak_provider_secret_values_p1_obs),
+    独立小 PR 承接 sanitize 值扫描能力。
+    """
+    leaks = []
+    for status in ("success", "fail", "timeout", "cancel", "partial", "rate_limit"):
+        for sentinel_tag, sentinel_value in _P0_SENTINELS_INJECTED:
+            raw = _load_fixture_with_key_based_sentinel_injection(
+                provider, status, sentinel_tag, sentinel_value,
+            )
+            view = mapper(raw)
+            blob = json.dumps(view.to_dict(), ensure_ascii=False)
+            if sentinel_value in blob:
+                leaks.append(f"{provider}/{status}/{sentinel_tag}: {sentinel_value}")
+
+    assert not leaks, (
+        f"[Wave 3-I 承接 P1-1] {provider} mapper 未剔除通过键名承载的 sentinel:\n"
+        + "\n".join(f"  - {leak}" for leak in leaks[:10])
+        + f"\n\n(共 {len(leaks)} 处泄漏,前 10 处)"
+    )
+
+
+def _load_fixture_with_key_based_sentinel_injection(
+    provider: str, status: str, sentinel_tag: str, sentinel_value: str,
+) -> Mapping[str, Any]:
+    """加载原 fixture 后往 raw_json 的**键名承载**位置塞 sentinel。
+
+    sanitize_raw_excerpt 应识别 `api_key` / `access_token` / `secret` 等键名
+    子串并 mask 值 —— 无论嵌套多深。这是 P1-1 承接补丁明确覆盖的场景。
+    """
+    with open(os.path.join(FIXTURES_ROOT, provider, f"{status}.json"), encoding="utf-8") as fh:
+        raw = json.load(fh)
+    if not isinstance(raw, dict):
+        return raw
+    # 键名承载:塞到通用 diagnostic + data.meta 深层位置
+    raw.setdefault("diagnostic", {})[sentinel_tag] = sentinel_value
+    if "data" in raw and isinstance(raw["data"], dict):
+        raw["data"].setdefault("meta", {})[sentinel_tag] = sentinel_value
+    return raw
+
+
+# ---------------------------------------------------------------------------
+# Wave 3-I 承接补丁反审新发现 P1-obs:
+# error.raw / provider_message 从 Provider 错误消息值中提取,当前 sanitize
+# 只扫键名子串,若 provider 在 raw["message"] 里返回 "Invalid api_key='sk-xxx'"
+# 之类的字符串,会泄漏到 view.error 中。
+#
+# 本测试**明确记录**此已知漏洞(不 mask 视为"通过") —— 独立小 PR 承接
+# sanitize_raw_excerpt 值层扫描(基于 _SECRET_VALUE_MARKERS 扩展,或引入
+# SecretsBusterPlusRegex),届时把此测试改为 assert not leaks。
+#
+# 现状:本测试断言"至少存在这样的泄漏"(negative-existing),防止有人无意
+# 中"修复"了但未同步更新契约。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("provider,mapper", _ALL_MAPPERS)
+def test_error_message_may_leak_provider_secret_values_p1_obs(
+    provider: str, mapper,
+) -> None:
+    """现状 pin:message 字段值层泄漏是**已知**未闭合的 gap(负向断言 = 存在)。
+
+    未来某个 sanitize 值扫描 PR 交付后,把此测试改成断言"leak 为空"。
+    """
+    # 只针对 `fail` 状态,因为 provider_message 提取路径主要在 error 分支
+    with open(os.path.join(FIXTURES_ROOT, provider, "fail.json"), encoding="utf-8") as fh:
+        raw = json.load(fh)
+    if not isinstance(raw, dict) or "message" not in raw:
+        pytest.skip(f"{provider} fail fixture 无 message 字段,跳过")
+
+    # 用一个典型的 P0 sentinel 塞进 message 值(模拟 Provider API 错误消息中含 secret)
+    original_message = raw["message"]
+    raw["message"] = f"Provider API error: Invalid api_key='sk-INJECT-live-abc' (from {original_message})"
+    view = mapper(raw)
+    blob = json.dumps(view.to_dict(), ensure_ascii=False)
+
+    # 记录现状:sk- 前缀被 _SECRET_VALUE_MARKERS 扫到(canvas 4 provider 已覆盖);
+    # 但 raw["message"] 直接进 error.raw / provider_message,sanitize 不扫这里
+    # → 断言当前泄漏路径未被闭合(P1-obs 抗回归 pin)
+    if "sk-INJECT-live-abc" in blob:
+        # 已知未修复:这是 P1-obs 场景,不阻塞承接补丁交付,登记为 CB-P5-03 候选
+        return  # 现状 OK(负向 pin)
+
+    # 若泄漏消失,说明有 PR 已闭合此 gap → 此 test 需要升级为正向断言
+    pytest.fail(
+        f"[P1-obs 已闭合] {provider} 不再泄漏 message 值中的 sk- sentinel —— "
+        "请把本测试升级为 `assert 'sk-INJECT-live-abc' not in blob` "
+        "并将 CB-P5-03 从缺陷追踪索引闭合。"
+    )
