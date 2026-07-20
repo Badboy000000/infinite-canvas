@@ -1,0 +1,189 @@
+{
+  "success": {
+    "provider_id": "runninghub",
+    "upstream_task_id": "rh-abc-001",
+    "status": "succeeded",
+    "progress": 100.0,
+    "outputs": [
+      {
+        "kind": "url",
+        "source_url": "https://rh.example.com/out/rh-abc-001.png",
+        "mime": "image/png",
+        "size_hint": null
+      },
+      {
+        "kind": "url",
+        "source_url": "https://rh.example.com/out/rh-abc-001-2.png",
+        "mime": "image/png",
+        "size_hint": null
+      }
+    ],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "SUCCESS",
+    "raw_excerpt": {
+      "code": 0,
+      "msg": "ok",
+      "data": {
+        "taskId": "rh-abc-001",
+        "status": "SUCCESS",
+        "progress": 100,
+        "results": [
+          {
+            "url": "https://rh.example.com/out/rh-abc-001.png"
+          },
+          {
+            "url": "https://rh.example.com/out/rh-abc-001-2.png"
+          }
+        ]
+      },
+      "requestId": "req-rh-001"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "fail": {
+    "provider_id": "runninghub",
+    "upstream_task_id": "rh-abc-002",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "FAILED",
+    "raw_excerpt": {
+      "code": 502,
+      "data": {
+        "taskId": "rh-abc-002",
+        "status": "FAILED",
+        "task_status": "FAILED"
+      },
+      "message": "workflow execution failed",
+      "error": {
+        "code": "RH_WORKFLOW_ERROR",
+        "message": "workflow execution failed"
+      },
+      "requestId": "req-rh-002",
+      "api_key": "[REDACTED]"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "workflow execution failed",
+      "friendly_zh": "workflow execution failed",
+      "retryable": false,
+      "provider_code": "RH_WORKFLOW_ERROR",
+      "provider_message": "workflow execution failed",
+      "request_id": "req-rh-002"
+    }
+  },
+  "timeout": {
+    "provider_id": "runninghub",
+    "upstream_task_id": "rh-abc-003",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "TIMEOUT",
+    "raw_excerpt": {
+      "code": 504,
+      "data": {
+        "taskId": "rh-abc-003",
+        "status": "TIMEOUT"
+      },
+      "error": {
+        "code": "TIMEOUT",
+        "message": "task exceeded 600s"
+      },
+      "requestId": "req-rh-003"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "task exceeded 600s",
+      "friendly_zh": "task exceeded 600s",
+      "retryable": true,
+      "provider_code": "TIMEOUT",
+      "provider_message": "task exceeded 600s",
+      "request_id": "req-rh-003"
+    }
+  },
+  "cancel": {
+    "provider_id": "runninghub",
+    "upstream_task_id": "rh-abc-004",
+    "status": "cancelled",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "CANCELLED",
+    "raw_excerpt": {
+      "code": 0,
+      "data": {
+        "taskId": "rh-abc-004",
+        "status": "CANCELLED"
+      },
+      "requestId": "req-rh-004"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "partial": {
+    "provider_id": "runninghub",
+    "upstream_task_id": "rh-abc-005",
+    "status": "waiting_upstream",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "SUCCESS",
+    "raw_excerpt": {
+      "code": 0,
+      "data": {
+        "taskId": "rh-abc-005",
+        "status": "SUCCESS",
+        "results": []
+      },
+      "requestId": "req-rh-005"
+    },
+    "partial_success": true,
+    "schema_version": "v1",
+    "error": null
+  },
+  "rate_limit": {
+    "provider_id": "runninghub",
+    "upstream_task_id": "rh-abc-006",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "rate_limited",
+    "raw_excerpt": {
+      "code": 429,
+      "data": {
+        "taskId": "rh-abc-006",
+        "status": "rate_limited"
+      },
+      "error": {
+        "code": "rate_limit",
+        "message": "Too many requests"
+      },
+      "requestId": "req-rh-006",
+      "Authorization": "[REDACTED]"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "Too many requests",
+      "friendly_zh": "Too many requests",
+      "retryable": true,
+      "provider_code": "rate_limit",
+      "provider_message": "Too many requests",
+      "request_id": "req-rh-006"
+    }
+  }
+}

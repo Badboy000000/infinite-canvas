@@ -1,0 +1,8 @@
+{
+  "id": "chatcmpl-6002",
+  "status": "failed",
+  "error": {
+    "code": "invalid_request_error",
+    "message": "unsupported model"
+  }
+}

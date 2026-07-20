@@ -1,0 +1,10 @@
+{
+  "id": "chatcmpl-6006",
+  "status": "failed",
+  "error": {
+    "code": "rate_limit_exceeded",
+    "message": "You are being rate limited. Please retry."
+  },
+  "authorization": "Bearer LEAKED_TOKEN",
+  "request_id": "req-6006"
+}

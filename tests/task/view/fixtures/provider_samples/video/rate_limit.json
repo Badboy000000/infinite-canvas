@@ -1,0 +1,8 @@
+{
+  "task_id": "vid-3006",
+  "status": "queued",
+  "error": {
+    "code": "rate_limit",
+    "message": "上游限流"
+  }
+}

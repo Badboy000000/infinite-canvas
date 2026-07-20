@@ -1,0 +1,11 @@
+{
+  "code": 504,
+  "data": {
+    "task_id": "am-1003",
+    "status": "expired"
+  },
+  "error": {
+    "code": "timeout",
+    "message": "APIMart 任务超时"
+  }
+}

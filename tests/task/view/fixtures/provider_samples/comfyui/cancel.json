@@ -1,0 +1,17 @@
+{
+  "prompt-5004": {
+    "status": {
+      "status_str": "cancelled",
+      "completed": true,
+      "messages": [
+        [
+          "execution_interrupted",
+          {
+            "reason": "user cancel"
+          }
+        ]
+      ]
+    },
+    "outputs": {}
+  }
+}

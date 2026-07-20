@@ -1,0 +1,13 @@
+{
+  "code": 429,
+  "data": {
+    "taskId": "rh-abc-006",
+    "status": "rate_limited"
+  },
+  "error": {
+    "code": "rate_limit",
+    "message": "Too many requests"
+  },
+  "requestId": "req-rh-006",
+  "Authorization": "Bearer LEAK-BE-REDACTED"
+}

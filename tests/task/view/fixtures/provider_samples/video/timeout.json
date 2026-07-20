@@ -1,0 +1,8 @@
+{
+  "task_id": "vid-3003",
+  "status": "expired",
+  "error": {
+    "code": "timeout",
+    "message": "视频任务超时"
+  }
+}

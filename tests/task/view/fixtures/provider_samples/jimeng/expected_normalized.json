@@ -1,0 +1,143 @@
+{
+  "success": {
+    "provider_id": "jimeng",
+    "upstream_task_id": "jm-4001",
+    "status": "succeeded",
+    "progress": null,
+    "outputs": [
+      {
+        "kind": "url",
+        "source_url": "https://jimeng.example.com/img/jm-4001-1.jpg",
+        "mime": "image/png",
+        "size_hint": null
+      },
+      {
+        "kind": "url",
+        "source_url": "https://jimeng.example.com/img/jm-4001-2.jpg",
+        "mime": "image/png",
+        "size_hint": null
+      }
+    ],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "success",
+    "raw_excerpt": {
+      "submit_id": "jm-4001",
+      "gen_status": "success",
+      "images": [
+        "https://jimeng.example.com/img/jm-4001-1.jpg",
+        "https://jimeng.example.com/img/jm-4001-2.jpg"
+      ]
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "fail": {
+    "provider_id": "jimeng",
+    "upstream_task_id": "jm-4002",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "fail",
+    "raw_excerpt": {
+      "submit_id": "jm-4002",
+      "gen_status": "fail",
+      "fail_reason": "prompt invalid"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "prompt invalid",
+      "friendly_zh": "prompt invalid",
+      "retryable": false,
+      "provider_code": null,
+      "provider_message": null,
+      "request_id": null
+    }
+  },
+  "timeout": {
+    "provider_id": "jimeng",
+    "upstream_task_id": "jm-4003",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "fail",
+    "raw_excerpt": {
+      "submit_id": "jm-4003",
+      "gen_status": "fail",
+      "fail_reason": "cli timeout after 300s"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "cli timeout after 300s",
+      "friendly_zh": "cli timeout after 300s",
+      "retryable": true,
+      "provider_code": null,
+      "provider_message": null,
+      "request_id": null
+    }
+  },
+  "cancel": {
+    "provider_id": "jimeng",
+    "upstream_task_id": "jm-4004",
+    "status": "cancelled",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "cancelled",
+    "raw_excerpt": {
+      "submit_id": "jm-4004",
+      "gen_status": "cancelled"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "partial": {
+    "provider_id": "jimeng",
+    "upstream_task_id": "jm-4005",
+    "status": "waiting_upstream",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "success",
+    "raw_excerpt": {
+      "submit_id": "jm-4005",
+      "gen_status": "success",
+      "images": []
+    },
+    "partial_success": true,
+    "schema_version": "v1",
+    "error": null
+  },
+  "rate_limit": {
+    "provider_id": "jimeng",
+    "upstream_task_id": "jm-4006",
+    "status": "waiting_upstream",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "jimeng_pending",
+    "raw_excerpt": {
+      "submit_id": "jm-4006",
+      "gen_status": "jimeng_pending",
+      "jimeng_pending": true,
+      "queue_info": {
+        "queue_idx": 12,
+        "queue_length": 50
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  }
+}

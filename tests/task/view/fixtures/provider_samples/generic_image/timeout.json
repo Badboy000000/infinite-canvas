@@ -1,0 +1,8 @@
+{
+  "task_id": "img-2003",
+  "status": "timeout",
+  "error": {
+    "code": "timeout",
+    "message": "生图任务超时"
+  }
+}

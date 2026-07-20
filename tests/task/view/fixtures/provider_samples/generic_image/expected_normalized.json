@@ -1,0 +1,161 @@
+{
+  "success": {
+    "provider_id": "openai-image",
+    "upstream_task_id": "img-2001",
+    "status": "succeeded",
+    "progress": 100.0,
+    "outputs": [
+      {
+        "kind": "url",
+        "source_url": "https://img.example.com/2001.png",
+        "mime": "image/png",
+        "size_hint": null
+      },
+      {
+        "kind": "url",
+        "source_url": "https://img.example.com/2001-alt.png",
+        "mime": "image/png",
+        "size_hint": null
+      }
+    ],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "completed",
+    "raw_excerpt": {
+      "task_id": "img-2001",
+      "status": "completed",
+      "progress": 100,
+      "outputs": [
+        {
+          "url": "https://img.example.com/2001.png"
+        },
+        {
+          "url": "https://img.example.com/2001-alt.png"
+        }
+      ]
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "fail": {
+    "provider_id": "openai-image",
+    "upstream_task_id": "img-2002",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "failed",
+    "raw_excerpt": {
+      "task_id": "img-2002",
+      "status": "failed",
+      "fail_reason": "参数非法",
+      "error": {
+        "code": "invalid_param",
+        "message": "参数非法"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "参数非法",
+      "friendly_zh": "参数非法",
+      "retryable": false,
+      "provider_code": "invalid_param",
+      "provider_message": "参数非法",
+      "request_id": null
+    }
+  },
+  "timeout": {
+    "provider_id": "openai-image",
+    "upstream_task_id": "img-2003",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "timeout",
+    "raw_excerpt": {
+      "task_id": "img-2003",
+      "status": "timeout",
+      "error": {
+        "code": "timeout",
+        "message": "生图任务超时"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "生图任务超时",
+      "friendly_zh": "生图任务超时",
+      "retryable": true,
+      "provider_code": "timeout",
+      "provider_message": "生图任务超时",
+      "request_id": null
+    }
+  },
+  "cancel": {
+    "provider_id": "openai-image",
+    "upstream_task_id": "img-2004",
+    "status": "cancelled",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "cancelled",
+    "raw_excerpt": {
+      "task_id": "img-2004",
+      "status": "cancelled"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "partial": {
+    "provider_id": "openai-image",
+    "upstream_task_id": "img-2005",
+    "status": "waiting_upstream",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "done",
+    "raw_excerpt": {
+      "task_id": "img-2005",
+      "status": "done",
+      "outputs": []
+    },
+    "partial_success": true,
+    "schema_version": "v1",
+    "error": null
+  },
+  "rate_limit": {
+    "provider_id": "openai-image",
+    "upstream_task_id": "img-2006",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "queued",
+    "raw_excerpt": {
+      "task_id": "img-2006",
+      "status": "queued",
+      "error": {
+        "code": "rate_limited",
+        "message": "限流触发"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "限流触发",
+      "friendly_zh": "限流触发",
+      "retryable": true,
+      "provider_code": "rate_limited",
+      "provider_message": "限流触发",
+      "request_id": null
+    }
+  }
+}

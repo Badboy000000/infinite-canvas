@@ -1,0 +1,17 @@
+{
+  "prompt-5002": {
+    "status": {
+      "status_str": "error",
+      "completed": true,
+      "messages": [
+        [
+          "execution_error",
+          {
+            "exception_message": "KSampler failed: OOM"
+          }
+        ]
+      ]
+    },
+    "outputs": {}
+  }
+}

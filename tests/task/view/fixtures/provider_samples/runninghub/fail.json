@@ -1,0 +1,15 @@
+{
+  "code": 502,
+  "data": {
+    "taskId": "rh-abc-002",
+    "status": "FAILED",
+    "task_status": "FAILED"
+  },
+  "message": "workflow execution failed",
+  "error": {
+    "code": "RH_WORKFLOW_ERROR",
+    "message": "workflow execution failed"
+  },
+  "requestId": "req-rh-002",
+  "api_key": "sk-should-be-redacted"
+}

@@ -1,0 +1,10 @@
+{
+  "task_id": "vid-3001",
+  "status": "completed",
+  "progress_percent": 100,
+  "videos": [
+    {
+      "url": "https://vid.example.com/3001.mp4"
+    }
+  ]
+}

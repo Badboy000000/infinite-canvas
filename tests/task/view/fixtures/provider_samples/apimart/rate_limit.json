@@ -1,0 +1,11 @@
+{
+  "code": 429,
+  "data": {
+    "task_id": "am-1006",
+    "status": "queued"
+  },
+  "error": {
+    "code": "rate_limit_exceeded",
+    "message": "APIMart 触发限流"
+  }
+}

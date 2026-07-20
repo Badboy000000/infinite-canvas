@@ -1,0 +1,18 @@
+{
+  "code": 0,
+  "msg": "ok",
+  "data": {
+    "taskId": "rh-abc-001",
+    "status": "SUCCESS",
+    "progress": 100,
+    "results": [
+      {
+        "url": "https://rh.example.com/out/rh-abc-001.png"
+      },
+      {
+        "url": "https://rh.example.com/out/rh-abc-001-2.png"
+      }
+    ]
+  },
+  "requestId": "req-rh-001"
+}

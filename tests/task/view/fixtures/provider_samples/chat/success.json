@@ -1,0 +1,15 @@
+{
+  "id": "chatcmpl-6001",
+  "object": "chat.completion",
+  "status": "completed",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello world."
+      },
+      "finish_reason": "stop"
+    }
+  ]
+}

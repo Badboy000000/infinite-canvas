@@ -1,0 +1,12 @@
+{
+  "code": 504,
+  "data": {
+    "taskId": "rh-abc-003",
+    "status": "TIMEOUT"
+  },
+  "error": {
+    "code": "TIMEOUT",
+    "message": "task exceeded 600s"
+  },
+  "requestId": "req-rh-003"
+}

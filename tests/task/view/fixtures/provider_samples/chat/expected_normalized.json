@@ -1,0 +1,160 @@
+{
+  "success": {
+    "provider_id": "chat",
+    "upstream_task_id": "chatcmpl-6001",
+    "status": "succeeded",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "completed",
+    "raw_excerpt": {
+      "id": "chatcmpl-6001",
+      "object": "chat.completion",
+      "status": "completed",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Hello world."
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "fail": {
+    "provider_id": "chat",
+    "upstream_task_id": "chatcmpl-6002",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "failed",
+    "raw_excerpt": {
+      "id": "chatcmpl-6002",
+      "status": "failed",
+      "error": {
+        "code": "invalid_request_error",
+        "message": "unsupported model"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "unsupported model",
+      "friendly_zh": "unsupported model",
+      "retryable": false,
+      "provider_code": "invalid_request_error",
+      "provider_message": "unsupported model",
+      "request_id": null
+    }
+  },
+  "timeout": {
+    "provider_id": "chat",
+    "upstream_task_id": "chatcmpl-6003",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "failed",
+    "raw_excerpt": {
+      "id": "chatcmpl-6003",
+      "status": "failed",
+      "error": {
+        "code": "timeout",
+        "message": "chat completion timeout"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "chat completion timeout",
+      "friendly_zh": "chat completion timeout",
+      "retryable": true,
+      "provider_code": "timeout",
+      "provider_message": "chat completion timeout",
+      "request_id": null
+    }
+  },
+  "cancel": {
+    "provider_id": "chat",
+    "upstream_task_id": "chatcmpl-6004",
+    "status": "cancelled",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "cancelled",
+    "raw_excerpt": {
+      "id": "chatcmpl-6004",
+      "status": "cancelled"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "partial": {
+    "provider_id": "chat",
+    "upstream_task_id": "chatcmpl-6005",
+    "status": "succeeded",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "completed",
+    "raw_excerpt": {
+      "id": "chatcmpl-6005",
+      "status": "completed",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "truncated..."
+          },
+          "finish_reason": "length"
+        }
+      ]
+    },
+    "partial_success": true,
+    "schema_version": "v1",
+    "error": null
+  },
+  "rate_limit": {
+    "provider_id": "chat",
+    "upstream_task_id": "chatcmpl-6006",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "failed",
+    "raw_excerpt": {
+      "id": "chatcmpl-6006",
+      "status": "failed",
+      "error": {
+        "code": "rate_limit_exceeded",
+        "message": "You are being rate limited. Please retry."
+      },
+      "authorization": "[REDACTED]",
+      "request_id": "req-6006"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "You are being rate limited. Please retry.",
+      "friendly_zh": "You are being rate limited. Please retry.",
+      "retryable": true,
+      "provider_code": "rate_limit_exceeded",
+      "provider_message": "You are being rate limited. Please retry.",
+      "request_id": "req-6006"
+    }
+  }
+}

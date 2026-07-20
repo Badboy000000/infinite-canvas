@@ -1,0 +1,13 @@
+{
+  "task_id": "img-2001",
+  "status": "completed",
+  "progress": 100,
+  "outputs": [
+    {
+      "url": "https://img.example.com/2001.png"
+    },
+    {
+      "url": "https://img.example.com/2001-alt.png"
+    }
+  ]
+}

@@ -416,6 +416,57 @@ asyncio.run(r())"`
 
 ---
 
+## 38. ProviderTaskView 映射层运维手册（任务 PR-5，Wave 3-I §38）
+
+**定位**：本段是**运维手册**，不是烟测通过条件。任务 PR-5 只交付 `ProviderTaskView` 数据契约 + 7 map 函数 + 42 fixture 样本包；**不接入任何调用点**（前端读端点响应 shape 保持不变；`ProviderTaskView` 仅供内部诊断视图与下游 PR-6 消费）。error 字段暂缺 `TaskErrorCategory` 枚举（PR-6 承接）。
+
+- 命令：
+  - `python -m pytest tests/task/view/ -v`
+  - `python -c "from app.task.view import ProviderTaskView, KNOWN_VIEW_STATUSES; print(sorted(KNOWN_VIEW_STATUSES))"`
+  - `python -c "from main import app; print('routes=', len(app.routes))"`
+  - `python tools/openapi_diff.py --baseline tools/openapi_baseline.json`
+- 期望：`tests/task/view/` 至少 **9 项 STRONG 全绿**（7 provider aggregation + canonical status set + 字段契约合规）+ 18 项分支 / 密钥 / 遗留字面量断言全绿；`KNOWN_VIEW_STATUSES` 严格 `{queued, running, succeeded, failed, cancelled, waiting_upstream}`；`routes=167` 保持；`openapi_diff` exit=0；主 pytest ~635 passed / 35 skipped。
+
+### 契约与消费依赖
+
+1. `ProviderTaskView` 字段清单严格对齐 [[30 治理方案/Provider 适配体系治理方案]] §"ProviderTaskView"（`provider_id / upstream_task_id / status / progress / outputs / error / next_poll_after_ms / recoverable / remote_status / raw_excerpt`）+ 本 PR 追加 `partial_success` + `schema_version`（增量演进，**不减不改**）。
+2. `status` 值域**严格限定** `KNOWN_VIEW_STATUSES` 6 canonical；漏网字面量归 `failed` + `recoverable=True`（worker 层再决策 `unknown_recoverable`）。
+3. `error` 分支：**必须**给出 `raw` + `friendly_zh` 兜底；`retryable` 布尔值由 mapper 决策；**不含** `category`（任务 PR-6 承接 `TaskErrorCategory` 枚举 —— 增量新增，不删已有字段）。
+4. **P0 密钥抗回归**：所有 mapper 输出都过 `sanitize_raw_excerpt`；`api_key / access_token / secret / bearer / authorization / password / credential / session_token / refresh_token` 键**必**替换为 `[REDACTED]`；value 以 `Bearer / sk- / AKI` 起头的也**必**替换。fixture 中人为注入 sentinel（`sk-should-be-redacted / LEAK-BE-REDACTED / Bearer LEAKED_TOKEN` 等）供跨 domain 抗回归护栏。
+5. **PR-3 遗留字面量收编**：`jimeng_pending / apimart_wait / apimart_pending / runninghub_wait / runninghub_pending` 在 view 层归 `waiting_upstream` + `recoverable=True`；`_CANVAS_TO_TASK_STATUS`（`app/task/shadow/register.py`）保持不动（那是 Task 状态机边界，view 是诊断视图边界）。
+
+### 样本包路径
+
+- `tests/task/view/fixtures/provider_samples/{runninghub, apimart, generic_image, video, jimeng, comfyui, chat}/{success, fail, timeout, cancel, partial, rate_limit}.json`：42 样本。
+- 每 provider 目录同级 `expected_normalized.json`：view 标准化输出 golden 快照；`python tests/task/view/fixtures/build_fixtures.py` 是构建工具（人工审阅后一次性生成，运行时不再调用）。
+
+### 回滚开关
+
+- **无 env feature flag**：本 PR 是纯内部映射函数，无路由挂载、无 Store 副作用；回滚方式 = 不接入调用点（后续 PR 若引入接入点，独立评审）。
+- **紧急下线**：删除 `app/task/view/` 目录 + 移除测试 = 完整回滚，零数据 / 零路由影响。
+
+### Provider 专题依赖关系
+
+- 与 [[70 开发过程跟踪/PR 状态总账/PR - Provider 适配体系]] Provider PR-01 Adapter 契约同步演进：`describe_task_capabilities()` 声明的能力矩阵与 `query_task()` 输出的 `ProviderTaskView` 由本 PR 提供的字段清单锁定。
+- 未来 Provider PR-A（`describe_task_capabilities / query_task`）实现时，Adapter 内部**必须**用本 PR 提供的 map 函数产出 `ProviderTaskView`，不许自造字段布局。
+
+### 未来 category 抽取承接节奏
+
+- 任务 PR-6 承接 `TaskErrorCategory` 枚举（14 值：`AUTH / QUOTA / RATE_LIMIT / VALIDATION / CONTENT_POLICY / MODEL_NOT_FOUND / UPSTREAM_5XX / TIMEOUT / DOWNLOAD_FAILED / COST_EXCEEDED / CANCELLED / UPSTREAM_UNAVAILABLE / RECOVERABLE_UNKNOWN / INTERNAL`）。
+- PR-6 消费本 PR error 字段的方式：`ViewError.raw` + `provider_code` + `retryable` → 抽取 `category`；**不删**已有字段，仅新增 `category: TaskErrorCategory` 字段。本 PR 42 fixture 已按类别（success / fail / timeout / cancel / partial / rate_limit）分档，PR-6 可直接复用 fixture 做 category 抽取测试。
+
+### 关联事实
+
+- 新增模块：`app/task/view/__init__.py`（re-export） + `app/task/view/provider_view.py`（`ProviderTaskView` dataclass + `ViewError` dataclass + `sanitize_raw_excerpt` + 7 map 函数 + `KNOWN_VIEW_STATUSES` 常量）；纯函数，无 I/O，无全局状态，无 Store 依赖。
+- 新增测试：`tests/task/view/test_provider_task_view.py`（9 STRONG：7 aggregation + canonical + 字段契约）+ `tests/task/view/test_provider_task_view_error_categories.py`（TaskErrorCategory 允许缺失 + failed 视图兜底 + P0 sentinel 零泄漏 + sanitize 直接测 + canonical 违反抛错）。
+- 新增 fixture：42 样本 + 7 expected_normalized 聚合 = 49 JSON 文件；构建工具 `tests/task/view/fixtures/build_fixtures.py`（可复用于 PR-6 category 抽取快照）。
+- 冻结区 AST 3/3（`class StorageSettings` / `def apply_storage_settings` / `def storage_settings_snapshot`）byte-equivalent vs baseline `ba4b87e` 跨 11 PR 保持。5 save byte-identical vs baseline `ae50b28`（5/5）跨 11 PR 保持。`routes=167` 保持；OpenAPI diff exit=0。
+- `main.py` 净改动 = **0 行**（本 PR 只挂载新模块 + 测试；不触碰任何既有路由 / 常量 / 函数体）。
+
+归属：任务 PR-5（[[70 开发过程跟踪/PR 状态总账/PR - 任务模型#任务 PR-5]]）。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：

@@ -1,0 +1,8 @@
+{
+  "id": "chatcmpl-6003",
+  "status": "failed",
+  "error": {
+    "code": "timeout",
+    "message": "chat completion timeout"
+  }
+}

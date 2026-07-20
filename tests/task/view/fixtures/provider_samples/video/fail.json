@@ -1,0 +1,8 @@
+{
+  "task_id": "vid-3002",
+  "status": "failed",
+  "error": {
+    "code": "generation_error",
+    "message": "视频生成失败"
+  }
+}

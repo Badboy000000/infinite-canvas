@@ -1,0 +1,9 @@
+{
+  "task_id": "img-2002",
+  "status": "failed",
+  "fail_reason": "参数非法",
+  "error": {
+    "code": "invalid_param",
+    "message": "参数非法"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl-6005",
+  "status": "completed",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "truncated..."
+      },
+      "finish_reason": "length"
+    }
+  ]
+}

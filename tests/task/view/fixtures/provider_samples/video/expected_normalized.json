@@ -1,0 +1,151 @@
+{
+  "success": {
+    "provider_id": "openai-video",
+    "upstream_task_id": "vid-3001",
+    "status": "succeeded",
+    "progress": 100.0,
+    "outputs": [
+      {
+        "kind": "url",
+        "source_url": "https://vid.example.com/3001.mp4",
+        "mime": "video/mp4",
+        "size_hint": null
+      }
+    ],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "completed",
+    "raw_excerpt": {
+      "task_id": "vid-3001",
+      "status": "completed",
+      "progress_percent": 100,
+      "videos": [
+        {
+          "url": "https://vid.example.com/3001.mp4"
+        }
+      ]
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "fail": {
+    "provider_id": "openai-video",
+    "upstream_task_id": "vid-3002",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "failed",
+    "raw_excerpt": {
+      "task_id": "vid-3002",
+      "status": "failed",
+      "error": {
+        "code": "generation_error",
+        "message": "视频生成失败"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "视频生成失败",
+      "friendly_zh": "视频生成失败",
+      "retryable": false,
+      "provider_code": "generation_error",
+      "provider_message": "视频生成失败",
+      "request_id": null
+    }
+  },
+  "timeout": {
+    "provider_id": "openai-video",
+    "upstream_task_id": "vid-3003",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "expired",
+    "raw_excerpt": {
+      "task_id": "vid-3003",
+      "status": "expired",
+      "error": {
+        "code": "timeout",
+        "message": "视频任务超时"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "视频任务超时",
+      "friendly_zh": "视频任务超时",
+      "retryable": true,
+      "provider_code": "timeout",
+      "provider_message": "视频任务超时",
+      "request_id": null
+    }
+  },
+  "cancel": {
+    "provider_id": "openai-video",
+    "upstream_task_id": "vid-3004",
+    "status": "cancelled",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "cancelled",
+    "raw_excerpt": {
+      "task_id": "vid-3004",
+      "status": "cancelled"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "partial": {
+    "provider_id": "openai-video",
+    "upstream_task_id": "vid-3005",
+    "status": "waiting_upstream",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "SUCCEED",
+    "raw_excerpt": {
+      "task_id": "vid-3005",
+      "status": "SUCCEED",
+      "videos": []
+    },
+    "partial_success": true,
+    "schema_version": "v1",
+    "error": null
+  },
+  "rate_limit": {
+    "provider_id": "openai-video",
+    "upstream_task_id": "vid-3006",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "queued",
+    "raw_excerpt": {
+      "task_id": "vid-3006",
+      "status": "queued",
+      "error": {
+        "code": "rate_limit",
+        "message": "上游限流"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "上游限流",
+      "friendly_zh": "上游限流",
+      "retryable": true,
+      "provider_code": "rate_limit",
+      "provider_message": "上游限流",
+      "request_id": null
+    }
+  }
+}

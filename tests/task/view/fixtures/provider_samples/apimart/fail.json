@@ -1,0 +1,13 @@
+{
+  "code": 500,
+  "data": {
+    "task_id": "am-1002",
+    "status": "FAILED",
+    "fail_reason": "内容审查失败"
+  },
+  "error": {
+    "code": "APIMART_CONTENT_REJECTED",
+    "message": "内容审查失败"
+  },
+  "access_token": "should-be-redacted-token"
+}

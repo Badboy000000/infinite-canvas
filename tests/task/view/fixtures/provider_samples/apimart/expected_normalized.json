@@ -1,0 +1,170 @@
+{
+  "success": {
+    "provider_id": "apimart",
+    "upstream_task_id": "am-1001",
+    "status": "succeeded",
+    "progress": null,
+    "outputs": [
+      {
+        "kind": "url",
+        "source_url": "https://am.example.com/img/am-1001.png",
+        "mime": "image/png",
+        "size_hint": null
+      }
+    ],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "SUCCEEDED",
+    "raw_excerpt": {
+      "code": 200,
+      "data": {
+        "task_id": "am-1001",
+        "status": "SUCCEEDED",
+        "results": [
+          {
+            "url": "https://am.example.com/img/am-1001.png"
+          }
+        ]
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "fail": {
+    "provider_id": "apimart",
+    "upstream_task_id": "am-1002",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "FAILED",
+    "raw_excerpt": {
+      "code": 500,
+      "data": {
+        "task_id": "am-1002",
+        "status": "FAILED",
+        "fail_reason": "内容审查失败"
+      },
+      "error": {
+        "code": "APIMART_CONTENT_REJECTED",
+        "message": "内容审查失败"
+      },
+      "access_token": "[REDACTED]"
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "内容审查失败",
+      "friendly_zh": "内容审查失败",
+      "retryable": false,
+      "provider_code": "APIMART_CONTENT_REJECTED",
+      "provider_message": "内容审查失败",
+      "request_id": null
+    }
+  },
+  "timeout": {
+    "provider_id": "apimart",
+    "upstream_task_id": "am-1003",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "expired",
+    "raw_excerpt": {
+      "code": 504,
+      "data": {
+        "task_id": "am-1003",
+        "status": "expired"
+      },
+      "error": {
+        "code": "timeout",
+        "message": "APIMart 任务超时"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "APIMart 任务超时",
+      "friendly_zh": "APIMart 任务超时",
+      "retryable": true,
+      "provider_code": "timeout",
+      "provider_message": "APIMart 任务超时",
+      "request_id": null
+    }
+  },
+  "cancel": {
+    "provider_id": "apimart",
+    "upstream_task_id": "am-1004",
+    "status": "cancelled",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": false,
+    "remote_status": "cancelled",
+    "raw_excerpt": {
+      "code": 200,
+      "data": {
+        "task_id": "am-1004",
+        "status": "cancelled"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": null
+  },
+  "partial": {
+    "provider_id": "apimart",
+    "upstream_task_id": "am-1005",
+    "status": "waiting_upstream",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "SUCCEEDED",
+    "raw_excerpt": {
+      "code": 200,
+      "data": {
+        "task_id": "am-1005",
+        "status": "SUCCEEDED",
+        "results": []
+      }
+    },
+    "partial_success": true,
+    "schema_version": "v1",
+    "error": null
+  },
+  "rate_limit": {
+    "provider_id": "apimart",
+    "upstream_task_id": "am-1006",
+    "status": "failed",
+    "progress": null,
+    "outputs": [],
+    "next_poll_after_ms": null,
+    "recoverable": true,
+    "remote_status": "queued",
+    "raw_excerpt": {
+      "code": 429,
+      "data": {
+        "task_id": "am-1006",
+        "status": "queued"
+      },
+      "error": {
+        "code": "rate_limit_exceeded",
+        "message": "APIMart 触发限流"
+      }
+    },
+    "partial_success": false,
+    "schema_version": "v1",
+    "error": {
+      "raw": "APIMart 触发限流",
+      "friendly_zh": "APIMart 触发限流",
+      "retryable": true,
+      "provider_code": "rate_limit_exceeded",
+      "provider_message": "APIMart 触发限流",
+      "request_id": null
+    }
+  }
+}

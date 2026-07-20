@@ -1,0 +1,8 @@
+{
+  "code": 0,
+  "data": {
+    "taskId": "rh-abc-004",
+    "status": "CANCELLED"
+  },
+  "requestId": "req-rh-004"
+}

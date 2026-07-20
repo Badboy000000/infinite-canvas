@@ -1,0 +1,12 @@
+{
+  "code": 200,
+  "data": {
+    "task_id": "am-1001",
+    "status": "SUCCEEDED",
+    "results": [
+      {
+        "url": "https://am.example.com/img/am-1001.png"
+      }
+    ]
+  }
+}
