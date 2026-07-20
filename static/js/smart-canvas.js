@@ -7201,6 +7201,12 @@ function nodeBodyHtml(node, layout){
     if(node.type === 'smart-group') return smartGroupBodyHtml(node);
     if(node.type === 'smart-prompt') return promptNodeBodyHtml(node);
     if(node.type === 'smart-loop') return smartLoopBodyHtml(node);
+    // Wave 3-I 前端 PR-7: 未知类型 fallback 占位符 DOM(不白屏、不 throw)
+    const _knownSmartTypes = ['smart-image','smart-prompt','smart-loop','smart-group'];
+    if(node.type && !_knownSmartTypes.includes(node.type) && node.type !== 'smart-container'){
+        const label = `未知类型: ${node.type}`;
+        return `<div class="smart-node-unknown" data-node-type="${escapeAttr(node.type)}" style="background:#f5f5f5;color:#666;border:1px dashed #ccc;padding:8px;width:${layout.width}px;height:${layout.height}px;">${escapeHtml(label)}</div>`;
+    }
     const imgs = (node.images || []).map(imageForDisplay);
     if(node.jimengPending && node.jimengPending.submitId && imgs.length === 0){
         return jimengPendingBodyHtml(node, layout);
@@ -17151,3 +17157,9 @@ window.openInpaintDialog = function openInpaintDialog(nodeId, options = {}) {
     if (typeof setImageEditMode === 'function') setImageEditMode('brush', true);
     return Promise.resolve({ ok: true, mode: 'inpaint', canvasKind: 'smart', fallback: true });
 };
+
+// Wave 3-I 前端 PR-7: expose smart-canvas nodeBodyHtml for registry tests / future adapters.
+if (typeof window !== 'undefined') {
+    if (typeof nodeBodyHtml === 'function') window.smartNodeBodyHtml = nodeBodyHtml;
+}
+

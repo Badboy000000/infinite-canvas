@@ -6045,6 +6045,40 @@ function isNodeDragSurface(target){
 function renderNode(node){
     normalizeApiNodeLayout(node);
     if(node.type === 'rh' && Number(node.h) === 560) delete node.h;
+    // Wave 3-I 前端 PR-7:legacy alias(smart-container -> smart-image)在渲染层做映射
+    // 未知类型 fallback 到占位符 DOM,不白屏、不 throw
+    const _knownClassicTypes = ['image','prompt','loop','llm','generator','msgen','video','rh','comfy','ltxDirector','output','group','promptGroup'];
+    if(typeof window !== 'undefined' && window.NodeConfigRegistry && typeof window.NodeConfigRegistry.normalizeAlias === 'function'){
+        const canonical = window.NodeConfigRegistry.normalizeAlias(node.type);
+        if(canonical && canonical !== node.type && _knownClassicTypes.includes(canonical)){
+            node.type = canonical;
+        }
+    }
+    if(node.type && !_knownClassicTypes.includes(node.type)){
+        if(typeof window !== 'undefined' && window.NodeRenderRegistry && typeof window.NodeRenderRegistry.renderFallback === 'function'){
+            const placeholder = window.NodeRenderRegistry.renderFallback(node);
+            if(placeholder && typeof placeholder === 'object' && placeholder.nodeType === 1){
+                placeholder.style.left = `${node.x || 0}px`;
+                placeholder.style.top = `${node.y || 0}px`;
+                if(node.w) placeholder.style.width = `${node.w}px`;
+                if(node.h) placeholder.style.height = `${node.h}px`;
+                return placeholder;
+            }
+        }
+        // no registry / no window -> minimal inline placeholder (never throw, never white screen)
+        const fallback = document.createElement('div');
+        fallback.className = 'node node-unknown';
+        fallback.dataset.id = node.id || '';
+        fallback.dataset.nodeType = node.type || '';
+        fallback.style.left = `${node.x || 0}px`;
+        fallback.style.top = `${node.y || 0}px`;
+        fallback.style.background = '#f5f5f5';
+        fallback.style.color = '#666';
+        fallback.style.border = '1px dashed #ccc';
+        fallback.style.padding = '8px';
+        fallback.textContent = `未知类型: ${node.type}`;
+        return fallback;
+    }
     const el = document.createElement('div');
     const size = defaultNodeSize(node.type);
     const hasFixedSize = Boolean(node.h || size.h);
@@ -6077,7 +6111,7 @@ function renderNode(node){
         const label = { queued:'排队中', running:'运行中', done:'完成', failed:'失败' }[node.runStatus] || '';
         return `<span class="node-run-status ${node.runStatus}"><span class="dot"></span>${escapeHtml(label)}${node._cascadeIdx?' '+node._cascadeIdx:''}</span>`;
     })() : '';
-    el.innerHTML = `<div class="node-head"><span class="node-title">${displayTitle}</span><div style="display:flex;align-items:center;gap:8px">${statusHtml}<button onclick="deleteNodeFromButton('${node.id}', event)" class="text-gray-300 hover:text-red-500"><i data-lucide="x" class="w-4 h-4"></i></button></div></div>`;
+    el.innerHTML = `<div class="node-head"><span class="node-title">${displayTitle}</span><div style="display:flex;align-items:center;gap:8px">${statusHtml}<button onclick="deleteNodeFromButton('${escapeAttr(node.id)}', event)" class="text-gray-300 hover:text-red-500"><i data-lucide="x" class="w-4 h-4"></i></button></div></div>`;
     const body = document.createElement('div');
     body.className = 'node-body';
     if(node.type === 'image') {
@@ -14795,6 +14829,20 @@ function hasImageDropData(dataTransfer){
 function hasOutputImageDrag(dataTransfer){ return [...(dataTransfer?.types || [])].includes('application/x-canvas-output-image'); }
 function escapeHtml(str){ return String(str == null ? '' : str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 function escapeAttr(str){ return escapeHtml(str); }
+
+// Wave 3-I 前端 PR-7: 认领模式（不重写）—— 把三类 legacy body renderer +
+// 其 grid 助手 wrapper 挂到 window，供 modules/node/components/{output,
+// ltxDirector, rh}.js 的 registry 注册项直接调用（byte-equivalent 行为）。
+// canvas.js 载入顺序: 经典 <script src="/static/js/canvas.js"> 先执行；
+// bootstrap.js 后加载做 dynamic import 注册。以下 window 挂载在 canvas.js
+// 定义完这些 function 后立即生效（其位置在函数声明后、window.onload 之前）。
+if (typeof window !== 'undefined') {
+    if (typeof renderOutputGrid === 'function') window.renderOutputGrid = renderOutputGrid;
+    if (typeof renderLTXDirectorBody === 'function') window.renderLTXDirectorBody = renderLTXDirectorBody;
+    if (typeof renderRhBody === 'function') window.renderRhBody = renderRhBody;
+    if (typeof renderPendingOutput === 'function') window.renderPendingOutput = renderPendingOutput;
+    if (typeof renderNode === 'function') window.renderNode = renderNode;
+}
 
 window.onload = async () => {
     applyTheme(localStorage.getItem('studio_theme') || localStorage.getItem(CANVAS_THEME_KEY) || 'light');

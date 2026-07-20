@@ -757,7 +757,7 @@
 | `_dom` | `smart-canvas.js:782` | DOM 引用（严禁落盘） |
 | `_inlineVideoActive` | `smart-canvas.js:521`、`:529`、`:696` | 内联视频状态 |
 | `_pending` | 大量出现于 `canvas.js:1381/3026/3079/3089/6227` 等处；Wave 3-H 前端 PR-6 承接补丁登记 §13.1/§13.2 清理 | 已进入 `serializableCanvasNode` / `canvasForStorage` 清理链 |
-| `_renderPatchToken` | 前端 PR-6 引入，渲染层脏检查 token；Wave 3-H 承接补丁把它写进 `serializableCanvasNode()` / `canvasForStorage()` 两条清理链 | 由前端 PR-6 首次登记，任何后续 PR 在两画布内注入该字段时必须同步进入清理链，CI 抗回归见 `tests/frontend/test_canvas_renderer_seam.py::test_render_patch_token_not_written_to_save_payload` |
+| `_renderPatchToken` | 前端 PR-6 引入，渲染层脏检查 token；Wave 3-H 承接补丁把它写进 `serializableCanvasNode()` / `canvasForStorage()` 两条清理链；**Wave 3-I 前端 PR-7 补丁**：`NodeRenderRegistry.renderFallback` 分支在未知类型占位符 DOM 中 **不产生** `_pending` / `_renderPatchToken`（fallback 路径独立于运行时脏检查链，天然满足清理契约） | 由前端 PR-6 首次登记，任何后续 PR 在两画布内注入该字段时必须同步进入清理链，CI 抗回归见 `tests/frontend/test_canvas_renderer_seam.py::test_render_patch_token_not_written_to_save_payload`；前端 PR-7 fallback 分支的 DOM shape 由 `tests/frontend/test_node_registry_seam.py::test_render_registry_fallback_unknown_type_placeholder` 冻结 |
 
 ### 13.5 冻结要点
 
@@ -813,6 +813,33 @@ PR-1（保活烟测清单 22 项 + 人工烟测模板）应按下列方式引用
 4. **CI 守护种子**：PR-7 落地 CI “禁字段名”正则时，应把本文 §13.4 中标注 `未在源码中直接命中` 的字段名（`_pending` / `_renderPatchToken`）加入“预留字段名”名单，PR-6 引入后再从守护清单剔除。
 5. **后续变更登记**：任何 PR 若新增 iframe message type / BC 消息 / WS 事件 / localStorage key / URL 参数 / 全局函数 / fetch URL / node class / 中文文案，必须在同 PR 内追加到本文对应段落；否则 review 拒绝合入。
 
+### 16.1 前端 PR-7 消费本清单情况（Wave 3-I）
+
+Wave 3-I 前端 PR-7（`NodeRenderRegistry` + `NodeConfigRegistry` seam + `escapeAttr` XSS 兜底）交付情况：
+
+- **§9.1 节点根元素 class 契约**：`.node ${type}-node` 冻结未动；`renderNode` 内 `el.className = \`node ${node.type}-node ...\`` 与 baseline 逐字节等价，`el.dataset.id = node.id` 保持。测试 `tests/frontend/test_node_registry_seam.py::test_render_shell_contract_preserves_data_id_and_node_class` 冻结。
+- **§9 未知类型 fallback 契约**：`NodeRenderRegistry.renderFallback(node)` 输出 `.node.node-unknown[data-id][data-node-type]` 骨架 + 灰底 "未知类型: &lt;type&gt;" 中文标签；不白屏、不 throw。测试 `test_render_registry_fallback_unknown_type_placeholder`。
+- **§8 HTML 内联 onclick 计数基线（260 条 / 147 unique handler）**：本 PR 第一层迁移完成 —— `static/canvas.html` 从 73 → 48 条 onclick（工具栏 12 + createMenu 11 + toolbar-log 1 = 24 条迁至 `data-action=`；`toggleQuickToolbar` × 1 也迁），`static/smart-canvas.html` 从 59 → 56 条（顶栏 3 条：`backToCanvasList` / `openSmartCanvasShortcuts` / `openSmartCanvasLog` 迁至 `data-action=`）。**第二层节点内联 onclick 不动**（M7 承接）。
+- **§13.4 `_renderPatchToken` 收敛补丁**：`NodeRenderRegistry.renderFallback` 分支产出的占位符 DOM **天然不含** `_pending` / `_renderPatchToken`（fallback 路径独立于运行时脏检查链），落盘清理契约自动满足；本节表格中该字段行已追加 PR-7 补丁说明。
+- **legacy alias**：`smart-container -> smart-image` 内置在 `NodeConfigRegistry.registerLegacyAlias`；两画布消费在 `renderNode` / `normalizeLegacySmartNode` 层。测试 `test_config_registry_legacy_alias_smart_container`。
+- **零后端改动**：`main.py` / `app/**` / `backend/**` / `docs/backend-smoke/**` diff 均为空；OpenAPI baseline exit=0 · routes=167 跨 11 PR 保持。
+
+新增文件树：
+
+- `static/js/modules/node/registry/NodeRenderRegistry.js` —— render 注册表 + 未知类型 fallback 占位符 DOM
+- `static/js/modules/node/registry/NodeConfigRegistry.js` —— 静态配置注册表 + legacy alias
+- `static/js/modules/node/components/output.js` —— `output` 类型 registry 注册项（直接调用 `window.renderOutputGrid`，认领模式）
+- `static/js/modules/node/components/ltxDirector.js` —— `ltxDirector` 类型 registry 注册项（直接调用 `window.renderLTXDirectorBody`）
+- `static/js/modules/node/components/rh.js` —— `rh` 类型 registry 注册项（直接调用 `window.renderRhBody`）
+- `static/js/modules/node/bootstrap.js` —— 非模块脚本，`canvas.html` / `smart-canvas.html` 引入；`Promise.all(import(...))` 动态装配 registry + action-bus
+- `static/js/shared/interaction/action-bus.js` —— 顶层 `data-action` delegation + `autoBindLegacyGlobals`
+
+修改文件：
+
+- `static/js/canvas.js`：`renderNode` 头部追加 legacy alias normalize + 未知类型 fallback（占位符 DOM 从 registry 取，registry 缺失时走 inline 兜底）；`onclick="deleteNodeFromButton('${node.id}'` 补 `escapeAttr` 包裹；文件尾部把 `renderOutputGrid` / `renderLTXDirectorBody` / `renderRhBody` / `renderPendingOutput` / `renderNode` 挂到 `window`
+- `static/js/smart-canvas.js`：`nodeBodyHtml` 头部追加未知 smart 类型 fallback（不含 smart-container 因它被 `normalizeLegacySmartNode` 抢先处理）；`nodeBodyHtml` 挂到 `window.smartNodeBodyHtml`
+- `static/canvas.html` / `static/smart-canvas.html`：24 + 3 = 27 条 `onclick=` 迁至 `data-action=`；追加 `<script src="/static/js/modules/node/bootstrap.js">` 引入
+
 ---
 
 ## 相关文档
@@ -828,3 +855,4 @@ PR-1（保活烟测清单 22 项 + 人工烟测模板）应按下列方式引用
 ## 变更记录
 
 - 2026-07-16：初版落地（前端 PR-0）。
+- 2026-07-20：Wave 3-I 前端 PR-7 消费本清单 —— §13.4 追加 `_renderPatchToken` fallback 分支收敛补丁；§16.1 追加"前端 PR-7 消费本清单情况"节，登记 `.node[data-id]` 未知类型 fallback 契约 + HTML 静态骨架 `onclick=` 第一层迁移计数。
