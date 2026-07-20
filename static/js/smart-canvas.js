@@ -722,6 +722,12 @@ function canvasForStorage(){
     (clean.nodes || []).forEach(node => {
         if(Array.isArray(node.images)) node.images = node.images.map(mediaItemForStorage);
         if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
+        // Wave 3-H 前端 PR-6 承接补丁：与 canvas.js:serializableCanvasNode 对齐,
+        // `_pending` 是运行时生成占位队列、`_renderPatchToken` 是渲染 patch 幂等序号;
+        // 见 docs/frontend-freeze/compat-contract.md §13.4。JSON.parse(JSON.stringify(...))
+        // 已经浅剥离出普通对象副本, 这里 delete 只作用于 clean 一侧, 不影响原 canvas.
+        delete node._pending;
+        delete node._renderPatchToken;
     });
     return clean;
 }

@@ -572,8 +572,10 @@ def test_render_patch_token_not_written_to_save_payload():
     canvas_src = CANVAS_JS.read_text(encoding='utf-8')
     smart_src = SMART_CANVAS_JS.read_text(encoding='utf-8')
 
-    # `_renderPatchToken` 目前不会在 canvas.js / smart-canvas.js 中出现（PR-6
-    # 引入清理清单条目，但字段本身可能只出现在 renderer 侧）
+    # `_renderPatchToken` 在 canvas.js / smart-canvas.js 中只允许出现在
+    # `serializableCanvasNode()` / `canvasForStorage()` 清理链里
+    # （Wave 3-H 前端 PR-6 承接补丁）。任何 saveCanvas body 内的直接引用都
+    # 属于回归。
     canvas_token = canvas_src.count('_renderPatchToken')
     smart_token = smart_src.count('_renderPatchToken')
 
@@ -601,10 +603,166 @@ def test_render_patch_token_not_written_to_save_payload():
     assert '_renderPatchToken' not in smart_save_body, \
         "smart-canvas.js saveCanvas body 出现 _renderPatchToken（应走 canvasForStorage 清理）"
 
-    # 记录当前 _renderPatchToken 使用量（PR-6 引入后可能在 renderer 里出现）
-    # 本 PR 尚未真正在两画布中注入 token → 期望仍为 0
-    assert canvas_token == 0, f"canvas.js _renderPatchToken 意外出现 {canvas_token} 处"
-    assert smart_token == 0, f"smart-canvas.js _renderPatchToken 意外出现 {smart_token} 处"
+    # canvas.js: `delete copy._renderPatchToken` 只允许在 `serializableCanvasNode`
+    # 清理链内（Wave 3-H 承接补丁）
+    serializable_pattern = re.search(
+        r'function serializableCanvasNode\(node\)\s*\{.*?\n\}',
+        canvas_src,
+        flags=re.DOTALL,
+    )
+    assert serializable_pattern, "canvas.js: serializableCanvasNode 函数未找到"
+    serializable_body = serializable_pattern.group(0)
+    assert 'delete copy._renderPatchToken' in serializable_body, \
+        "canvas.js serializableCanvasNode 缺 `delete copy._renderPatchToken`（Wave 3-H 承接补丁）"
+    assert 'delete copy._pending' in serializable_body, \
+        "canvas.js serializableCanvasNode 缺 `delete copy._pending`（Wave 3-H 承接补丁）"
+    # canvas.js 中 `_renderPatchToken` 只允许在 serializableCanvasNode 函数体里出现
+    # （delete 语句 + 可选注释），不允许出现在其他源码位置。
+    canvas_outside = canvas_src.replace(serializable_body, '')
+    assert '_renderPatchToken' not in canvas_outside, (
+        "canvas.js 中 `_renderPatchToken` 只允许出现在 serializableCanvasNode 清理链里；"
+        "其他位置发现了这个字段，请把它挪回清理链"
+    )
+
+    # smart-canvas.js: `delete node._renderPatchToken` 只允许在 `canvasForStorage`
+    # 清理链内
+    for_storage_pattern = re.search(
+        r'function canvasForStorage\(\)\s*\{.*?\n\}',
+        smart_src,
+        flags=re.DOTALL,
+    )
+    assert for_storage_pattern, "smart-canvas.js: canvasForStorage 函数未找到"
+    for_storage_body = for_storage_pattern.group(0)
+    assert 'delete node._renderPatchToken' in for_storage_body, \
+        "smart-canvas.js canvasForStorage 缺 `delete node._renderPatchToken`（Wave 3-H 承接补丁）"
+    assert 'delete node._pending' in for_storage_body, \
+        "smart-canvas.js canvasForStorage 缺 `delete node._pending`（Wave 3-H 承接补丁）"
+    smart_outside = smart_src.replace(for_storage_body, '')
+    assert '_renderPatchToken' not in smart_outside, (
+        "smart-canvas.js 中 `_renderPatchToken` 只允许出现在 canvasForStorage 清理链里；"
+        "其他位置发现了这个字段，请把它挪回清理链"
+    )
+
+
+# -------------------------------------------------------------------------
+# T13b. 清理清单运行时防线：构造节点走清理链 → 断言 _pending / _renderPatchToken 剥离
+# -------------------------------------------------------------------------
+
+def test_serializable_canvas_node_strips_pending_and_render_patch_token():
+    """
+    Wave 3-H 前端 PR-6 承接补丁 运行时防线（T14b）：
+    - 从 canvas.js 提取 `serializableCanvasNode` 函数源代码并 eval
+    - 构造带 `_pending` / `_renderPatchToken` 的节点
+    - 断言清理后两个字段都被剥离，但 id / type / x / y / images 保留
+    """
+    canvas_src = CANVAS_JS.read_text(encoding='utf-8')
+    serializable_pattern = re.search(
+        r'function serializableCanvasNode\(node\)\s*\{.*?\n\}',
+        canvas_src,
+        flags=re.DOTALL,
+    )
+    assert serializable_pattern, "canvas.js: serializableCanvasNode 函数未找到"
+    fn_src = serializable_pattern.group(0)
+
+    # 用 Node.js eval 加载函数体并调用
+    result = run_node(
+        f"""
+        {fn_src}
+        const node = {{
+          id: 'n1', type: 'output', x: 10, y: 20,
+          images: [{{ url: 'a.png' }}],
+          _pending: [{{ id: 'p1', progress: 0.5 }}, {{ id: 'p2' }}],
+          _renderPatchToken: 42,
+          running: true,
+          runStatus: 'busy',
+          runError: {{ message: 'err' }},
+          _cascadeIdx: 3,
+          _cascadeFailed: true,
+          _activeLoopCtx: {{ foo: 'bar' }},
+          _ltxEditor: {{ open: true }},
+        }};
+        const cleaned = serializableCanvasNode(node);
+        console.log(JSON.stringify({{
+          cleaned,
+          keys: Object.keys(cleaned).sort(),
+          originalKeys: Object.keys(node).sort(),
+        }}));
+        """
+    )
+    # 运行时防线：_pending / _renderPatchToken 都不在清理后的对象上
+    assert '_pending' not in result['cleaned']
+    assert '_renderPatchToken' not in result['cleaned']
+    # 其它临时字段也被剥离
+    for temp in ('running', 'runStatus', 'runError', '_cascadeIdx',
+                 '_cascadeFailed', '_activeLoopCtx', '_ltxEditor'):
+        assert temp not in result['cleaned'], f"清理链遗漏 {temp}"
+    # 落盘字段保留
+    assert result['cleaned']['id'] == 'n1'
+    assert result['cleaned']['type'] == 'output'
+    assert result['cleaned']['x'] == 10
+    assert result['cleaned']['y'] == 20
+    assert result['cleaned']['images'] == [{'url': 'a.png'}]
+    # 原始对象未被 mutate
+    assert '_pending' in result['originalKeys']
+    assert '_renderPatchToken' in result['originalKeys']
+
+
+def test_smart_canvas_for_storage_strips_pending_and_render_patch_token():
+    """
+    Wave 3-H 前端 PR-6 承接补丁 运行时防线（T14b smart 侧）：
+    - 从 smart-canvas.js 提取 `canvasForStorage` 里的 per-node 清理片段
+    - 用 Node 直接跑 clone + delete 逻辑
+    - 断言 `_pending` / `_renderPatchToken` 剥离，落盘字段保留
+    """
+    smart_src = SMART_CANVAS_JS.read_text(encoding='utf-8')
+    # 确认清理片段确实包含 `delete node._pending;` 与 `delete node._renderPatchToken;`
+    for_storage_pattern = re.search(
+        r'function canvasForStorage\(\)\s*\{.*?\n\}',
+        smart_src,
+        flags=re.DOTALL,
+    )
+    assert for_storage_pattern, "smart-canvas.js: canvasForStorage 函数未找到"
+    body = for_storage_pattern.group(0)
+    assert 'delete node._pending' in body
+    assert 'delete node._renderPatchToken' in body
+
+    # 独立复现清理循环：以最小闭包重放
+    result = run_node(
+        """
+        const canvas = {
+          id: 'sc1',
+          nodes: [
+            {
+              id: 'n1', type: 'output', x: 0, y: 0,
+              images: [{ url: 'a.png' }],
+              _pending: [{ id: 'p1' }],
+              _renderPatchToken: 7,
+            },
+            {
+              id: 'n2', type: 'prompt', x: 100, y: 100,
+              _pending: [],
+              _renderPatchToken: 9,
+            },
+          ],
+        };
+        const clean = JSON.parse(JSON.stringify(canvas));
+        (clean.nodes || []).forEach(node => {
+          delete node._pending;
+          delete node._renderPatchToken;
+        });
+        console.log(JSON.stringify({
+          nodes: clean.nodes,
+          originalHasPending: canvas.nodes[0]._pending !== undefined,
+        }));
+        """
+    )
+    for cleaned_node in result['nodes']:
+        assert '_pending' not in cleaned_node
+        assert '_renderPatchToken' not in cleaned_node
+    assert result['nodes'][0]['id'] == 'n1'
+    assert result['nodes'][0]['images'] == [{'url': 'a.png'}]
+    # 原始对象未受影响
+    assert result['originalHasPending'] is True
 
 
 # -------------------------------------------------------------------------
@@ -639,6 +797,137 @@ def test_should_skip_module_matches_touch_mouse_bridge_snapshot():
     # 事实核对：touch-mouse.js 中的 selector 字面量与本模块一致
     tm_src = TOUCH_MOUSE.read_text(encoding='utf-8')
     assert expected_selector in tm_src, "touch-mouse.js 的 selector 已漂移，请同步 should-skip.js"
+
+
+def test_should_skip_dom_driven_matrix():
+    """
+    Wave 3-H 承接补丁 T15 强化：DOM 驱动 STRONG 化 shouldSkip。
+
+    在 Node.js 里安装最小 mock DOM（Element 类 + document + getComputedStyle），
+    覆盖以下 skip 决策路径：
+      1) 非 Element → skip=true
+      2) target=<input> → skip=true（selector 早期返回）
+      3) <span> 在 <textarea> 子孙 → skip=true（closest 链）
+      4) target=<div>（无输入、无滚动） → skip=false
+      5) target=<div>，父级 overflow-y=auto 且 scrollHeight > clientHeight+1 → skip=true
+      6) target=<div>，父级 overflow-x=scroll 且 scrollWidth > clientWidth+1 → skip=true
+      7) target=<div>，父级 overflow-y=hidden 且内容溢出 → skip=false（regex 不含 hidden）
+      8) 父级溢出但差值 = 1（边界值不触发） → skip=false
+    """
+    result = run_node(
+        f"""
+        import mod from {json.dumps(SHOULD_SKIP)};
+
+        // ---- mock DOM ----
+        class Element {{
+          constructor(opts = {{}}) {{
+            this.tagName = (opts.tagName || 'DIV').toUpperCase();
+            this.parentElement = opts.parentElement || null;
+            this._attrs = opts.attrs || {{}};
+            this._style = opts.style || {{ overflowX: 'visible', overflowY: 'visible' }};
+            this.scrollHeight = opts.scrollHeight ?? 0;
+            this.clientHeight = opts.clientHeight ?? 0;
+            this.scrollWidth = opts.scrollWidth ?? 0;
+            this.clientWidth = opts.clientWidth ?? 0;
+          }}
+          getAttribute(name) {{
+            return Object.prototype.hasOwnProperty.call(this._attrs, name)
+              ? this._attrs[name]
+              : null;
+          }}
+          matches(sel) {{
+            const parts = sel.split(',').map(s => s.trim()).filter(Boolean);
+            return parts.some(part => {{
+              const m = part.match(/^\\[([a-zA-Z-]+)="([^"]*)"\\]$/);
+              if (m) {{
+                const actual = this.getAttribute(m[1]);
+                if (actual === null) return false;
+                return String(actual) === m[2];
+              }}
+              return this.tagName === part.toUpperCase();
+            }});
+          }}
+          closest(sel) {{
+            let cur = this;
+            while (cur) {{
+              if (cur.matches && cur.matches(sel)) return cur;
+              cur = cur.parentElement;
+            }}
+            return null;
+          }}
+        }}
+        globalThis.Element = Element;
+        const body = new Element({{ tagName: 'body' }});
+        const html = new Element({{ tagName: 'html' }});
+        globalThis.document = {{ body, documentElement: html }};
+        globalThis.getComputedStyle = (node) => node._style || null;
+
+        // 1) 非 Element
+        const r1 = mod.shouldSkip('not-an-element');
+
+        // 2) target=<input>
+        const inputEl = new Element({{ tagName: 'input' }});
+        const r2 = mod.shouldSkip(inputEl);
+
+        // 3) <span> 在 <textarea> 子孙
+        const textareaEl = new Element({{ tagName: 'textarea' }});
+        const spanEl = new Element({{ tagName: 'span', parentElement: textareaEl }});
+        const r3 = mod.shouldSkip(spanEl);
+
+        // 4) 普通 <div>，无输入、无滚动
+        const plainDiv = new Element({{ tagName: 'div' }});
+        const r4 = mod.shouldSkip(plainDiv);
+
+        // 5) 父级 overflow-y=auto + 内容溢出
+        const scrollYParent = new Element({{
+          tagName: 'div',
+          style: {{ overflowY: 'auto', overflowX: 'visible' }},
+          scrollHeight: 500, clientHeight: 100,
+        }});
+        const targetInScrollY = new Element({{ tagName: 'div', parentElement: scrollYParent }});
+        const r5 = mod.shouldSkip(targetInScrollY);
+
+        // 6) 父级 overflow-x=scroll + 横向溢出
+        const scrollXParent = new Element({{
+          tagName: 'div',
+          style: {{ overflowY: 'visible', overflowX: 'scroll' }},
+          scrollWidth: 500, clientWidth: 100,
+        }});
+        const targetInScrollX = new Element({{ tagName: 'div', parentElement: scrollXParent }});
+        const r6 = mod.shouldSkip(targetInScrollX);
+
+        // 7) 父级 overflow-y=hidden + 内容溢出（hidden 不算 skip）
+        const hiddenParent = new Element({{
+          tagName: 'div',
+          style: {{ overflowY: 'hidden', overflowX: 'visible' }},
+          scrollHeight: 500, clientHeight: 100,
+        }});
+        const targetInHidden = new Element({{ tagName: 'div', parentElement: hiddenParent }});
+        const r7 = mod.shouldSkip(targetInHidden);
+
+        // 8) 父级 overflow-y=auto + 差值 = 1（边界不触发，需 > +1）
+        const boundaryParent = new Element({{
+          tagName: 'div',
+          style: {{ overflowY: 'auto', overflowX: 'visible' }},
+          scrollHeight: 101, clientHeight: 100,
+        }});
+        const targetBoundary = new Element({{ tagName: 'div', parentElement: boundaryParent }});
+        const r8 = mod.shouldSkip(targetBoundary);
+
+        delete globalThis.Element;
+        delete globalThis.document;
+        delete globalThis.getComputedStyle;
+        console.log(JSON.stringify({{ r1, r2, r3, r4, r5, r6, r7, r8 }}));
+        """
+    )
+    assert result["r1"] is True, "非 Element 应 skip=true"
+    assert result["r2"] is True, "<input> 应 skip=true"
+    assert result["r3"] is True, "<span> 在 <textarea> 子孙应 skip=true"
+    assert result["r4"] is False, "普通 <div> 应 skip=false"
+    assert result["r5"] is True, "父级 overflow-y=auto + 溢出应 skip=true"
+    assert result["r6"] is True, "父级 overflow-x=scroll + 溢出应 skip=true"
+    assert result["r7"] is False, "父级 overflow-y=hidden 不应 skip（正则不匹配 hidden）"
+    assert result["r8"] is False, "差值 = 1 应 skip=false（阈值是 > +1，严格大于）"
 
 
 # -------------------------------------------------------------------------
@@ -790,6 +1079,113 @@ def test_focus_module_suppress_hotkey_selector():
     assert 'contenteditable' in result["selector"]
 
 
+def test_focus_module_dom_driven_suppress_hotkey_matrix():
+    """
+    Wave 3-H 承接补丁 T20 强化：DOM 驱动 STRONG 化 focus.shouldSuppressHotkey。
+
+    构造 mock DOM 节点，手工实现 `closest`，覆盖：
+      1) target 为 <input> → suppress
+      2) target 在 <input> 子孙 → suppress（closest 链）
+      3) target 为 <button> → NOT suppress
+      4) target 为 [contenteditable="true"] → suppress
+      5) target 为 [contenteditable="false"] → NOT suppress
+      6) event.target 非 input 但 document.activeElement 是 input → suppress
+      7) event 缺失 target → 走 activeElement fallback
+    """
+    result = run_node(
+        f"""
+        import mod from {json.dumps(FOCUS)};
+
+        // ---- mock DOM ----
+        function makeNode({{ tagName, parent = null, attrs = {{}} }}) {{
+          const node = {{
+            tagName: tagName.toUpperCase(),
+            parentNode: parent,
+            _attrs: attrs,
+            getAttribute(name) {{
+              return Object.prototype.hasOwnProperty.call(this._attrs, name)
+                ? this._attrs[name]
+                : null;
+            }},
+          }};
+          node.matches = (sel) => matchesSelector(node, sel);
+          node.closest = (sel) => {{
+            let cur = node;
+            while (cur) {{
+              if (cur.matches && cur.matches(sel)) return cur;
+              cur = cur.parentNode;
+            }}
+            return null;
+          }};
+          return node;
+        }}
+
+        // 支持 `tag`、`[attr="v"]`、`[attr=""]`
+        function matchesSelector(node, sel) {{
+          const parts = sel.split(',').map(s => s.trim()).filter(Boolean);
+          return parts.some(part => {{
+            const attrM = part.match(/^\\[([a-zA-Z-]+)="([^"]*)"\\]$/);
+            if (attrM) {{
+              const [_, name, val] = attrM;
+              const actual = node.getAttribute(name);
+              if (actual === null) return false;  // 未设置属性 → 不匹配任何值
+              return String(actual) === val;
+            }}
+            return node.tagName === part.toUpperCase();
+          }});
+        }}
+
+        // 1) target = <input>
+        const inputNode = makeNode({{ tagName: 'input' }});
+        const r1 = mod.shouldSuppressHotkey({{ target: inputNode }});
+
+        // 2) target 是 <span>，但父链有 <textarea>
+        const textarea = makeNode({{ tagName: 'textarea' }});
+        const spanInTextarea = makeNode({{ tagName: 'span', parent: textarea }});
+        const r2 = mod.shouldSuppressHotkey({{ target: spanInTextarea }});
+
+        // 3) target = <button>
+        const button = makeNode({{ tagName: 'button' }});
+        const r3 = mod.shouldSuppressHotkey({{ target: button }});
+
+        // 4) target = [contenteditable="true"] div
+        const editableDiv = makeNode({{ tagName: 'div', attrs: {{ contenteditable: 'true' }} }});
+        const r4 = mod.shouldSuppressHotkey({{ target: editableDiv }});
+
+        // 5) target = [contenteditable="false"] div
+        const nonEditableDiv = makeNode({{ tagName: 'div', attrs: {{ contenteditable: 'false' }} }});
+        const r5 = mod.shouldSuppressHotkey({{ target: nonEditableDiv }});
+
+        // 6) event.target 是 button，但 document.activeElement 是 input
+        globalThis.document = {{ activeElement: makeNode({{ tagName: 'input' }}) }};
+        const r6 = mod.shouldSuppressHotkey({{ target: button }});
+        delete globalThis.document;
+
+        // 7) event 缺失 target，activeElement 是 textarea
+        globalThis.document = {{ activeElement: makeNode({{ tagName: 'textarea' }}) }};
+        const r7 = mod.shouldSuppressHotkey({{}});
+        delete globalThis.document;
+
+        // 8) 完全没 target 也没 document
+        const r8 = mod.shouldSuppressHotkey({{}});
+
+        // 9) event 为 null
+        const r9 = mod.shouldSuppressHotkey(null);
+
+        console.log(JSON.stringify({{ r1, r2, r3, r4, r5, r6, r7, r8, r9 }}));
+        """
+    )
+    assert result["r1"] is True, "target=<input> should suppress"
+    assert result["r2"] is True, "target 在 <textarea> 子孙应 suppress（closest 链）"
+    assert result["r3"] is False, "target=<button> should NOT suppress"
+    assert result["r4"] is True, '[contenteditable="true"] should suppress'
+    assert result["r5"] is False, '[contenteditable="false"] should NOT suppress'
+    assert result["r6"] is True, "activeElement=input 时应走 fallback suppress"
+    assert result["r7"] is True, "缺 target 但 activeElement=textarea 应 suppress"
+    assert result["r8"] is False, "全空场景应 NOT suppress"
+    assert result["r9"] is False, "event=null 应 NOT suppress"
+
+
 # -------------------------------------------------------------------------
 # T20. canvasEditStore save() applyingRemoteCanvas 入口守卫
 # -------------------------------------------------------------------------
@@ -905,3 +1301,110 @@ def test_compat_contract_lists_render_patch_token():
     # PR-6 明确注解
     assert re.search(r'_renderPatchToken.*(PR-6|前端 PR-6)', contract), \
         "compat-contract 未把 _renderPatchToken 归到 PR-6"
+
+
+# -------------------------------------------------------------------------
+# T25. seam 覆盖率矩阵：register 侧 24/24 = 100%，consumer 侧 0/24（等 PR-7 承接）
+# -------------------------------------------------------------------------
+
+# 24 个契约域 = (seam 文件路径, 契约标识符)。每一项都在 seam 侧被显式 export；
+# 消费侧（canvas.js / smart-canvas.js）目前还未 import — 等前端 PR-7 才连消费面。
+SEAM_CONTRACT_DOMAINS = (
+    ("static/js/modules/canvas/renderer/viewport.js", "CANVAS_KINDS"),
+    ("static/js/modules/canvas/renderer/viewport.js", "VIEWPORT_STORAGE_FIELDS"),
+    ("static/js/modules/canvas/renderer/viewport.js", "pickViewportForStorage"),
+    ("static/js/modules/canvas/renderer/connections.js", "LAYER_KINDS"),
+    ("static/js/modules/canvas/renderer/connections.js", "CLASSIC_CONNECTION_FIELDS"),
+    ("static/js/modules/canvas/renderer/connections.js", "SMART_CONNECTION_FIELDS"),
+    ("static/js/modules/canvas/renderer/connections.js", "validateConnectionShape"),
+    ("static/js/modules/canvas/renderer/hitTest.js", "HIT_TARGETS"),
+    ("static/js/modules/canvas/renderer/hitTest.js", "rectsIntersect"),
+    ("static/js/modules/canvas/renderer/hitTest.js", "pointInRect"),
+    ("static/js/modules/canvas/renderer/nodesLayer.js", "NODE_CLASS_NAMES"),
+    ("static/js/modules/canvas/renderer/nodesLayer.js", "NODE_ID_ATTR"),
+    ("static/js/modules/canvas/renderer/render-loop.js", "PAUSE_SOURCES"),
+    ("static/js/modules/canvas/renderer/render-loop.js", "renderLoop"),
+    ("static/js/modules/canvas/interactions/drag.js", "DRAG_SESSION_KINDS"),
+    ("static/js/modules/canvas/interactions/drag.js", "MUTEX_RULES"),
+    ("static/js/modules/canvas/interactions/drag.js", "dragSessions"),
+    ("static/js/modules/canvas/interactions/pointer.js", "POINTER_INPUT_KINDS"),
+    ("static/js/modules/canvas/interactions/wheel-zoom.js", "ZOOM_STRATEGIES"),
+    ("static/js/modules/canvas/interactions/hotkey.js", "HOTKEY_MODIFIERS"),
+    ("static/js/modules/canvas/interactions/focus.js", "shouldSuppressHotkey"),
+    ("static/js/modules/canvas/interactions/marquee.js", "normalizeMarqueeRect"),
+    ("static/js/shared/interaction/pointer/should-skip.js", "skipRuleSnapshot"),
+    ("static/js/modules/canvas/store/canvasEditStore.js", "CANVAS_EDIT_CONFLICT_FIELDS"),
+)
+
+# Consumer files that will eventually import from these seam modules.
+# 前端 PR-6 seam 抽出阶段仅登记契约、不做 consumer 迁移；PR-7 才把
+# canvas.js / smart-canvas.js 内的等价符号切换到 import。
+SEAM_CONSUMER_FILES = (
+    "static/js/canvas.js",
+    "static/js/smart-canvas.js",
+)
+
+
+def test_seam_coverage_matrix_register_side_full_and_consumer_side_pending():
+    """
+    Wave 3-H 前端 PR-6 承接补丁 seam 覆盖率矩阵（RC-PR-6 P1-6 闭合）：
+
+    - **register 侧（seam 模块）**：24/24 契约域全部通过 `export` 暴露 → 100%。
+      任一契约域丢失都是回归（削 seam 契约）。
+    - **consumer 侧（canvas.js / smart-canvas.js）**：24/24 契约域**尚未** import
+      → 目前理应 0%。当前 PR-6 只做 seam 抽出、不动 consumer；PR-7 承接
+      "让两画布 import seam" 时该期望要显式翻转到 24/24 或渐进解锁。
+
+    这里断言的是"契约域覆盖率"而不是物理 wc -l 下降 — 后者交 PR-14/PR-15
+    真正 SPA 化时再做。
+    """
+    assert len(SEAM_CONTRACT_DOMAINS) == 24, (
+        f"契约域应有 24 项，实际 {len(SEAM_CONTRACT_DOMAINS)}；"
+        "调整时必须同步更新 test 期望"
+    )
+
+    # register 侧覆盖率：每个契约域在源码里必须能 grep 到 `export ... <ident>`
+    register_hits = 0
+    missing_registers: list[tuple[str, str]] = []
+    for seam_path, ident in SEAM_CONTRACT_DOMAINS:
+        src = (ROOT / seam_path).read_text(encoding='utf-8')
+        # 匹配 `export const IDENT` / `export function IDENT(` / `export default {…IDENT…}` 中的显式命名
+        # 我们只关心第一二种（named export）
+        pattern = re.compile(
+            rf'export\s+(?:const|let|function|class)\s+{re.escape(ident)}\b'
+        )
+        if pattern.search(src):
+            register_hits += 1
+        else:
+            missing_registers.append((seam_path, ident))
+
+    register_rate = register_hits / len(SEAM_CONTRACT_DOMAINS)
+    assert register_rate == 1.0, (
+        f"seam register 侧覆盖率 {register_rate:.2%}（{register_hits}/{len(SEAM_CONTRACT_DOMAINS)}），"
+        f"缺失 {missing_registers}"
+    )
+
+    # consumer 侧覆盖率：每个契约域在 canvas.js / smart-canvas.js 中检查
+    # 是否有 `import { IDENT }` 或 `import ... from '.../seam-path'` 引用
+    consumer_hits = 0
+    consumer_refs: list[tuple[str, str, str]] = []  # (consumer, seam_path, ident)
+    for consumer in SEAM_CONSUMER_FILES:
+        src = (ROOT / consumer).read_text(encoding='utf-8')
+        for seam_path, ident in SEAM_CONTRACT_DOMAINS:
+            # 消费面证据 = 从 seam 路径 import 该 ident；`import {…IDENT…} from '.../<basename>'`
+            base = Path(seam_path).name
+            pattern = re.compile(
+                rf'import\s*(?:\{{[^}}]*\b{re.escape(ident)}\b[^}}]*\}}|[^\'"\n]*?)\s*from\s*["\'][^"\']*{re.escape(base)}["\']'
+            )
+            if pattern.search(src):
+                consumer_hits += 1
+                consumer_refs.append((consumer, seam_path, ident))
+
+    # PR-6 seam 抽出阶段：consumer 侧 0/24 是**预期**状态。任何非零命中说明
+    # 有人开始悄悄接线了 — 强制该 PR 更新 SEAM_COVERAGE_PLAN 说明是不是 PR-7。
+    max_expected_consumer_hits = 0
+    assert consumer_hits <= max_expected_consumer_hits, (
+        f"consumer 侧 seam 覆盖率意外上升到 {consumer_hits}/{len(SEAM_CONTRACT_DOMAINS)}；"
+        f"命中项 {consumer_refs}；PR-6 只抽 seam、不动 consumer — 若是 PR-7 承接，"
+        "请同时把这里的 max_expected_consumer_hits 抬到当前值并更新注释"
+    )

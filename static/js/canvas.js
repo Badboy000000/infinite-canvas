@@ -1410,6 +1410,11 @@ function serializableCanvasNode(node){
     delete copy._cascadeIdx;
     delete copy._cascadeFailed;
     delete copy._activeLoopCtx;
+    // Wave 3-H 前端 PR-6 承接补丁：`_pending` 是运行时挂在 output 节点上的
+    // 生成占位队列；`_renderPatchToken` 是渲染 patch 幂等序号。两者都是
+    // 纯运行时字段，不应落进 canvas.json；见 docs/frontend-freeze/compat-contract.md §13.4。
+    delete copy._pending;
+    delete copy._renderPatchToken;
     return copy;
 }
 function serializableCanvasNodes(list=nodes){

@@ -709,7 +709,7 @@
 
 ## 13. `serializableCanvasNode()` / `canvasForStorage()` 字段清单
 
-### 13.1 `serializableCanvasNode`（`static/js/canvas.js:1387-1396`）
+### 13.1 `serializableCanvasNode`（`static/js/canvas.js:1404-1420`）
 
 剥离的临时字段（不落盘）：
 
@@ -722,16 +722,19 @@
 | `_cascadeIdx` | 级联索引 |
 | `_cascadeFailed` | 级联失败标志 |
 | `_activeLoopCtx` | 活动循环上下文 |
+| `_pending` | Output 节点运行时生成占位队列（Wave 3-H 前端 PR-6 承接补丁登记，配套抗回归测试 `test_pending_not_written_to_save_payload`） |
+| `_renderPatchToken` | 渲染层脏检查 token（Wave 3-H 前端 PR-6 承接补丁登记，配套抗回归测试 `test_render_patch_token_not_written_to_save_payload`） |
 
-调用点：`saveCanvas`（`canvas.js:1417`）、`serializableCanvasNodes`（`canvas.js:1398`）、`pushUndo`（`canvas.js:13455`）、`cloneNode`（`canvas.js:13468`）、`copySelectedNodes`（`canvas.js:13524`）、`selectedWorkflowPayload`（`canvas.js:13570`）、`importNodesFromWorkflow`（`canvas.js:13750`）。
+调用点：`saveCanvas`（`canvas.js:1418`）、`serializableCanvasNodes`（`canvas.js:1415`）、`pushUndo`（`canvas.js:13455`）、`cloneNode`（`canvas.js:13468`）、`copySelectedNodes`（`canvas.js:13524`）、`selectedWorkflowPayload`（`canvas.js:13570`）、`importNodesFromWorkflow`（`canvas.js:13750`）。
 
-### 13.2 `canvasForStorage`（`static/js/smart-canvas.js:699-708`）
+### 13.2 `canvasForStorage`（`static/js/smart-canvas.js:717-733`）
 
 流程：
 1. `JSON.parse(JSON.stringify(canvas || {}))` 深克隆；
 2. `clean.settings = settingsForStorage(...)`（settings 序列化）；
 3. 过滤 `SMART_LOG_PREVIEW_NODE_ID` 临时节点；
-4. 每个 node 的 `images` 走 `mediaItemForStorage`；`runSettings` 走 `settingsForStorage`。
+4. 每个 node 的 `images` 走 `mediaItemForStorage`；`runSettings` 走 `settingsForStorage`；
+5. 每个 node 剥离 `_pending` / `_renderPatchToken`（Wave 3-H 前端 PR-6 承接补丁；与 canvas.js:serializableCanvasNode 对齐）。
 
 ### 13.3 `mediaItemForStorage`（`static/js/smart-canvas.js:689-698`）
 
@@ -753,8 +756,8 @@
 | `_runMetaTargetId` | `smart-canvas.js:767` | 运行元数据目标 id |
 | `_dom` | `smart-canvas.js:782` | DOM 引用（严禁落盘） |
 | `_inlineVideoActive` | `smart-canvas.js:521`、`:529`、`:696` | 内联视频状态 |
-| `_pending` | **未在源码中直接命中该字面量**（协调纲要点名） | 详见 §14 |
-| `_renderPatchToken` | 前端 PR-6 引入，渲染层脏检查 token；`serializableCanvasNode()` / `canvasForStorage()` 清理清单已覆盖 | 由前端 PR-6 首次登记，任何后续 PR 在两画布内注入该字段时必须同步进入清理链，CI 抗回归见 `tests/frontend/test_canvas_renderer_seam.py::test_render_patch_token_not_written_to_save_payload` |
+| `_pending` | 大量出现于 `canvas.js:1381/3026/3079/3089/6227` 等处；Wave 3-H 前端 PR-6 承接补丁登记 §13.1/§13.2 清理 | 已进入 `serializableCanvasNode` / `canvasForStorage` 清理链 |
+| `_renderPatchToken` | 前端 PR-6 引入，渲染层脏检查 token；Wave 3-H 承接补丁把它写进 `serializableCanvasNode()` / `canvasForStorage()` 两条清理链 | 由前端 PR-6 首次登记，任何后续 PR 在两画布内注入该字段时必须同步进入清理链，CI 抗回归见 `tests/frontend/test_canvas_renderer_seam.py::test_render_patch_token_not_written_to_save_payload` |
 
 ### 13.5 冻结要点
 
@@ -775,8 +778,8 @@
 | U3 | iframe message type `storage-settings-changed` | `asset-manager.js` 附近 | 未命中；`/api/storage-settings` PATCH 存在（`asset-manager.js:206`）但无广播 | 若需要多 tab 同步存储设置，待文件 PR-0 落地后追加广播；本 PR 先记录“未广播” |
 | U4 | `loadWorkflows` 独立全局函数 | 各 JS 顶层 | 只有 `loadList` (`comfyui-settings.js:259`) 与 `loadConfig` 内部 fetch `/api/workflows` | 定义补：在 PR-2 `shared/api-client/domains/workflowApi.js` 内提供命名函数；旧代码保留原调用 |
 | U5 | `revision` 字段（画布相关） | Canvas save/response | 后端与前端均未使用 `revision`；只用 `base_updated_at` + `updated_at` | 后端不新增前，本合同不列 `revision`；数据 PR 若引入需同步治理方案 |
-| U6 | 临时字段 `_pending` | `serializableCanvasNode` 附近 | 源码中未见字面量 `_pending`（有 `pending` / `pendingTasks` 等其他语义） | 若指的是渲染层 pending，请后续 PR-6 定义命名；本 PR 先登记不存在 |
-| U7 | 临时字段 `_renderPatchToken` | 渲染层 | 源码中未见字面量 | 同 U6，PR-6 引入 `updatePatch` 时正式定义 |
+| U6 | 临时字段 `_pending` | `serializableCanvasNode` 附近 | **Wave 3-H 已闭合**：canvas.js 内多处运行时使用（`canvas.js:1381/3026/3079/3089/6227` 等），并已进入 `serializableCanvasNode` / `canvasForStorage` 清理清单 | 关闭（保留登记以备回溯） |
+| U7 | 临时字段 `_renderPatchToken` | 渲染层 | **Wave 3-H 已闭合**：前端 PR-6 引入并进入两画布清理清单 | 关闭（保留登记以备回溯） |
 | U8 | 文案 `未登录` | Provider / Chat / Session 相关 | 未 grep 到字面量 | PR-9 sessionStore 落地时补齐 |
 | U9 | 文案 `已保存` / `删除失败` | 通用 toast | 未 grep 到字面量（现状用英文 `Saved` / `Save failed` 或不同措辞） | PR-2 / PR-8 Toast 组件收敛时统一 |
 | U10 | `event.origin` 白名单 | iframe message 处理 | 现状**无 origin 白名单**（同源 iframe） | PR-3 建 bus 时保留同源接受策略；不加入新校验前不视为漏洞 |
