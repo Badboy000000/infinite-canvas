@@ -25,6 +25,28 @@
 5. **未识别 error** → `unknown_recoverable` 若 `view_error.retryable=True`
    否则 `unknown_terminal`（14 类别底线兜底）。
 
+**KNOWN LIMITATION**(Wave 3-J TRA-A + RC-A 独立发现,承接补丁记录 · 未修复)
+==========================================================================
+
+数字子串 `"500" / "502" / "503" / "401" / "403" / "429" / "400" / "404" /
+"402" / "504"` 走**纯子串匹配**,前后**无词边界断言**(`\\b...\\b`)。
+非 HTTP status 数字上下文会**误命中**:
+
+- `"generated 5000 tokens"` → 命中 `"500"` → `upstream_5xx`(应为 unknown)
+- `"port 4010 declined"` → 命中 `"401"` → `invalid_credential`(应为 unknown)
+- `"id 12429 aborted"` → 命中 `"429"` → `rate_limit`(应为 unknown)
+- `"user 401k balance"` → 命中 `"401"` → `invalid_credential`(应为 unknown)
+
+**当前实现选择维持子串语义**,原因:
+1. 修复需引入 `re` 正则匹配(替代 `in` 子串),性能与语义改动都超出 PR-6 范围
+2. 42 fixture 无一命中此 latent 面(HTTP status 码在实际 provider raw 里总是
+   位于短字段或标准位置,不会被无关数字上下文淹没)
+3. 修复方案候选:tools/security 独立 PR 承接词边界匹配 + fixture 抗回归扩展
+
+**已被 pin 到测试**:`tests/task/view/test_error_category.py::test_T50_digit_
+substring_collision_documented` 显式记录 6 个 latent case;若未来实现改词边界,
+该测试**全部 FAIL**,提示 KNOWN LIMITATION 已消除。
+
 字面量白名单
 ============
 

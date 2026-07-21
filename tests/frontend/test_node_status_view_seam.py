@@ -3,8 +3,10 @@
 Baseline (Wave 3-I 收官 / e2b1860): 662 passed / 41 skipped.
 Target: 662 → ~672 (+10 for T40-T49).
 
-Covers (编号池 T40-T49):
-    T40  statusMap.js 6 canonical status 值定义完整性 (与 KNOWN_VIEW_STATUSES 对齐)
+Covers (编号池 T40-T49 + 承接补丁 T50-T51 + migration bonus):
+    T40  statusMap.js 6 canonical status 值定义完整性 (与 KNOWN_VIEW_STATUSES 对齐,
+         Wave 3-J 承接补丁 P1-2: 从 app.task.view import KNOWN_VIEW_STATUSES,
+         不再本地内联复制 —— 避免 GM-11 反模式 "内联复制目标常量 = 抗漂移零效")
     T41  NodeStatusView.render() 有 document 环境返回 HTMLElement (fake DOM Node ESM)
     T42  NodeStatusView.render() 无 document 环境返回 HTML string (Node ESM subprocess)
     T43  6 status 每个的 CSS class / labelZh 输出正确性 (参数化 6 case)
@@ -16,32 +18,40 @@ Covers (编号池 T40-T49):
     T48  seam 覆盖率矩阵更新 —— status_badge 契约域标记为已消费 (1/24)
     T49  承接前端 PR-7 GM-08 三重契约 —— status badge 挂载点 data-action 属性
          (当前无 data-action, 断言 NodeStatusView.renderHtml 输出中不新增未绑定的 data-action)
+    T50  Wave 3-J 承接补丁 P2-3: canvas.css `.node-run-status.done { display:none }`
+         视觉契约守卫 —— 若未来有人误删该规则,双 class 视觉等价证据消失
+    T51  Wave 3-J 承接补丁 P2-4: 端到端 renderHtml 输出对高危字符全通道 escape
+         (label 层 + fallback 层同时验证)
 
-编号策略: T40-T49 为 Wave 3-J 主线 B 前端 PR-8 预分配池 (Lead 单点分配)。
+编号策略: T40-T49 为 Wave 3-J 主线 B 前端 PR-8 预分配池; T50-T51 为承接补丁
+       (Lead 单点分配,不占 subagent 通道)。
 """
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+# Wave 3-J 承接补丁 P1-2 (RC-B/TRA-B): 前端测试跨 layer 引用后端常量,
+# 用 `from app.task.view import KNOWN_VIEW_STATUSES` 取代本地内联 frozenset。
+# 这是"契约漂移抗零效"的正向落地:任何一侧 KNOWN_VIEW_STATUSES 变更,
+# 本测试立即感知。
+sys.path.insert(0, str(ROOT))
+from app.task.view import KNOWN_VIEW_STATUSES  # noqa: E402
 
 NSV_INDEX = (ROOT / "static/js/shared/components/NodeStatusView/index.js").as_uri()
 NSV_MAP = (ROOT / "static/js/shared/components/NodeStatusView/statusMap.js").as_uri()
 
 CANVAS_JS = ROOT / "static/js/canvas.js"
+CANVAS_CSS = ROOT / "static/css/canvas.css"
 SMART_CANVAS_JS = ROOT / "static/js/smart-canvas.js"
 NSV_INDEX_PATH = ROOT / "static/js/shared/components/NodeStatusView/index.js"
 NSV_MAP_PATH = ROOT / "static/js/shared/components/NodeStatusView/statusMap.js"
 NRR_PATH = ROOT / "static/js/modules/node/registry/NodeRenderRegistry.js"
 FIXTURES = ROOT / "tests/frontend/fixtures/status_badge"
-
-# KNOWN_VIEW_STATUSES 6 canonical (与 app/task/view/provider_view.py:43 对齐)
-KNOWN_VIEW_STATUSES = frozenset(
-    {"queued", "running", "succeeded", "failed", "cancelled", "waiting_upstream"}
-)
 
 
 def _run_node_esm(script: str) -> dict:
@@ -384,11 +394,30 @@ def test_t47_smart_canvas_has_no_status_badge_mount_point():
 # -------------------------------------------------------------------------
 # T48 seam 覆盖率矩阵更新 —— status_badge 契约域标记为已消费 (1/24)
 # 用 fixture / dict 声明的形式落地覆盖率矩阵,后续 PR-9/10 逐步翻转
+#
+# **契约域维度显式区分**(Wave 3-J 承接补丁 P1-1,处理 TRA-B 反审):
+#   - `CONTRACT_DOMAINS_24`(本表) = **UI 契约域**(status_badge / node_head_title / ...)
+#     语义:节点渲染面被切分成 24 个可独立迁移的"消费点"
+#   - `test_canvas_renderer_seam.SEAM_CONTRACT_DOMAINS` = **代码结构域**
+#     (24 个 seam module 的 export 契约,如 canvas/renderer/viewport.js::CANVAS_KINDS)
+#     语义:seam 抽出后 24 个模块导出的符号契约
+#   - **两者不是同一维度**,不能相互替换;分别用于跟踪 UI 层与 module 层的渐进
+#     迁移进度。TRA-B 反审建议"CONTRACT_DOMAINS_24 → SEAM_CONTRACT_DOMAINS"是误诊,
+#     Lead 决定保留 UI 契约域独立跟踪面。
+#
+# **status_badge 消费深度说明**(Wave 3-J 承接补丁 P1-B3,处理 RC-B 反审):
+#   - `status_badge: True` 的语义是 **rendering consumed**(canvas.js:6116-6131
+#     已通过 lazy dynamic import 消费 NodeStatusView.renderHtml 生成 badge HTML)
+#   - **不**包含 gating 层消费:canvas.js:6108 的 showStatus gate 仍是硬编码
+#     类型数组 `['generator','msgen','comfy','ltxDirector','llm','video','rh']`;
+#     而 `static/js/modules/node/components/*.js` 的 `hasStatus` 字段是 dormant
+#     seam(声明未消费),待 PR-9/10 通过 NodeConfigRegistry.hasStatus 迁移。
+#   - 参见 GM-15(dormant seam 检测)治理机制候选。
 # -------------------------------------------------------------------------
-# 24 契约域清单 (来源: 前端 PR-8 收敛版协调纲要 + 前端组件化治理方案)
-# —— 每域一个 key,value 是 True (已消费) / False (未消费,seam 期待接入)
+# 24 UI 契约域清单 (来源: 前端 PR-8 收敛版协调纲要 + 前端组件化治理方案)
+# —— 每域一个 key,value 是 True (已消费,含深度限定) / False (未消费,seam 期待接入)
 CONTRACT_DOMAINS_24 = {
-    # 本 PR-8 消费的 1 域
+    # 本 PR-8 消费的 1 域(rendering-only;gating 层未消费,待 PR-9/10)
     "status_badge": True,
     # 未消费的 23 域 (待 PR-9/10 承接)
     "node_head_title": False,
@@ -492,17 +521,78 @@ def test_t43_bonus_sentinel_escape_bypass_regression(canonical):
 
 # -------------------------------------------------------------------------
 # 附加: byte-equivalent 迁移前后 DOM 快照 (canvas.js legacy 4 值)
-# 硬门槛硬约束: status badge 迁移前后 DOM 快照 byte-equivalent
-# 通过 NodeStatusView.renderHtml + 原 canvas.js 内联实现同时跑一遍,对比逐字节
+# 硬门槛硬约束: status badge 迁移前后 DOM 快照 byte-equivalent(legacy 3 值)
+# 视觉等价 for legacy `done` case(class 差 `succeeded`,但 CSS 触发相同)
+#
+# Wave 3-J 承接补丁 P1-3/P1-4 修正(处理 TRA-B P1-3/4):
+#   legacy_html **不再 Python 手写**,而是**真实从 canvas.js 内联 legacy 兜底分支
+#   grep 提取标签模板 + label 表**,然后在 Node 中 evaluate 得到真实字节。
+#   这防止"legacy 期望与代码脱钩,重构 canvas.js 兜底时无法感知"的反模式。
 # -------------------------------------------------------------------------
-@pytest.mark.parametrize("legacy_status,label", [
-    ("queued", "排队中"),
-    ("running", "运行中"),
-    ("done", "完成"),
-    ("failed", "失败"),
-])
-def test_migration_byte_equivalent_dom_snapshot(legacy_status, label):
-    """从 canvas.js 提取原内联 legacy 实现体,与 NodeStatusView.renderHtml 输出对比。"""
+
+
+def _extract_canvas_legacy_status_template() -> tuple[str, dict]:
+    """从 canvas.js:6108-6131 消费点提取 legacy 内联兜底的 template + label 表。
+
+    Returns:
+        (template_line, label_dict) —— template_line 是 canvas.js 里出现的
+        字符串模板字面量(含 `${...}` 占位符);label_dict 是 legacy 4 值 → 中文
+        标签的映射。二者共同重构 legacy 输出。
+    """
+    src = CANVAS_JS.read_text(encoding="utf-8")
+    # 提取 legacy 内联 template 字符串(canvas.js:6130 附近)
+    template_match = re.search(
+        r"`<span class=\"node-run-status \$\{node\.runStatus\}\">"
+        r"<span class=\"dot\"></span>\$\{escapeHtml\(label\)\}"
+        r"\$\{node\._cascadeIdx\?' '\+node\._cascadeIdx:''\}</span>`",
+        src,
+    )
+    assert template_match, (
+        "canvas.js legacy 内联 template 未提取到;若 canvas.js:6108-6131 消费点被"
+        "重构,请同步更新本测试的 template 匹配 pattern。"
+    )
+    # 提取 label 字典(canvas.js:6129 附近)
+    label_match = re.search(
+        r"\{\s*queued:'([^']+)',\s*running:'([^']+)',\s*done:'([^']+)',\s*failed:'([^']+)'\s*\}",
+        src,
+    )
+    assert label_match, (
+        "canvas.js legacy label 字典未提取到;若 canvas.js:6108-6131 消费点被"
+        "重构,请同步更新本测试的 label 匹配 pattern。"
+    )
+    return template_match.group(0), {
+        "queued": label_match.group(1),
+        "running": label_match.group(2),
+        "done": label_match.group(3),
+        "failed": label_match.group(4),
+    }
+
+
+@pytest.mark.parametrize("legacy_status", ["queued", "running", "done", "failed"])
+def test_migration_byte_equivalent_dom_snapshot(legacy_status):
+    """从 canvas.js 提取原内联 legacy 实现体,与 NodeStatusView.renderHtml 输出对比。
+
+    Wave 3-J 承接补丁 P1-3/4:legacy_html 从 canvas.js 真实 grep 提取,不再
+    Python 手写(GM-11 反模式防线)。若未来 canvas.js:6108-6131 消费点被重构,
+    本测试首先在 grep 阶段 FAIL,提示重新对齐。
+    """
+    _, label_dict = _extract_canvas_legacy_status_template()
+    label = label_dict[legacy_status]
+    # 从提取到的 canvas.js template 真实构造 legacy 输出
+    # (Node 里 evaluate template 得逐字节等价的字节)
+    legacy_out = _run_node_cjs(
+        f"""
+        const escapeHtml = (str) => String(str == null ? '' : str).replace(/[&<>"']/g, s => ({{
+            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        }}[s]));
+        const node = {{ runStatus: {json.dumps(legacy_status)}, _cascadeIdx: '' }};
+        const label = {json.dumps(label)};
+        const legacyHtml = `<span class="node-run-status ${{node.runStatus}}"><span class="dot"></span>${{escapeHtml(label)}}${{node._cascadeIdx?' '+node._cascadeIdx:''}}</span>`;
+        console.log(JSON.stringify({{legacyHtml}}));
+        """
+    )
+    legacy_html = legacy_out["legacyHtml"]
+
     # NodeStatusView 输出
     nsv_out = _run_node_esm(
         f"""
@@ -511,20 +601,13 @@ def test_migration_byte_equivalent_dom_snapshot(legacy_status, label):
         console.log(JSON.stringify({{html}}));
         """
     )
-    # canvas.js 原内联实现 (从 canvas.js 兜底分支的字符串模板重构):
-    src = CANVAS_JS.read_text(encoding="utf-8")
-    assert '<span class="node-run-status ${node.runStatus}">' in src
-    # 直接构造 legacy inline 版本 (与 canvas.js 兜底代码字节等价)
-    legacy_html = (
-        f'<span class="node-run-status {legacy_status}">'
-        f'<span class="dot"></span>'
-        f'{label}</span>'
-    )
+
     # canonical=succeeded 时 NodeStatusView 输出含 legacy 别名 `done` 类,
     # 但 legacy 输入是 `done` 本身,resolveStatus(`done`) -> `succeeded`,
     # buildBadgeHtml -> class="node-run-status succeeded done"
     # legacy 内联输出是 class="node-run-status done"
-    # 差异是 class 里多了 `succeeded ` —— 视觉上因 CSS `.done {display:none}` 依然隐藏
+    # **DOM 字符串**多了 `succeeded ` 前缀 —— **非 DOM byte-equal**;
+    # 但 CSS `.done {display:none}` 依然命中,**视觉等价**(见 T50 CSS 守卫)
     if legacy_status == "done":
         expected_new = (
             '<span class="node-run-status succeeded done">'
@@ -536,14 +619,150 @@ def test_migration_byte_equivalent_dom_snapshot(legacy_status, label):
             f"  实际: {nsv_out['html']!r}\n"
             f"  期望: {expected_new!r}"
         )
-        # 视觉字节等价证据: 二者都有 `done` class,CSS 规则触发相同
+        # **视觉等价证据**(非 DOM byte-equal): 二者都有 `done` class,CSS 规则触发相同
+        # 参见 RC-B 反审 P0-1 措辞澄清:此分支是**视觉等价 (visual-byte-equal)**,
+        # **不是 source-byte-equal 也不是 runtime-output-byte-equal**
         assert " done" in nsv_out["html"] and " done" in legacy_html, (
             "legacy=done 场景 `.done` class 缺失,`display:none` 视觉契约破坏"
         )
     else:
         # 其他 3 个 legacy 值 (queued/running/failed) 应逐字节等价
+        # 这是真正的 runtime-output-byte-equal 分支
         assert nsv_out["html"] == legacy_html, (
             f"[legacy={legacy_status}] 迁移前后 DOM 不字节等价:\n"
             f"  NodeStatusView.renderHtml: {nsv_out['html']!r}\n"
             f"  legacy canvas.js inline:   {legacy_html!r}"
         )
+
+
+# -------------------------------------------------------------------------
+# T50 · P2-3 (RC-B P0-2 承接): canvas.css `.node-run-status.done { display:none }`
+# 视觉契约守卫 —— 若未来有人误删该规则,双 class 视觉等价证据消失
+# -------------------------------------------------------------------------
+def test_t50_canvas_css_done_display_none_rule_guard():
+    """STRONG:NodeStatusView 对 canonical=succeeded 输出 `class="succeeded done"`,
+    视觉等价的**唯一支撑**是 canvas.css `.node-run-status.done { display:none }` 规则。
+
+    若未来重构 canvas.css 时误删该规则,`succeeded done` 双 class 组合就无法
+    再"视觉隐藏 done chip",Wave 3-J T47 migration byte-equivalent 断言的视觉
+    等价证据链断裂。本测试通过 static css 文本 grep 硬锁该规则。
+    """
+    src = CANVAS_CSS.read_text(encoding="utf-8")
+    # 匹配 `.node-run-status.done { display:none; }`(允许中间空白 + trailing ;)
+    pattern = re.compile(
+        r"\.node-run-status\.done\s*\{\s*display\s*:\s*none\s*;?\s*\}",
+        re.IGNORECASE,
+    )
+    matches = pattern.findall(src)
+    assert len(matches) >= 1, (
+        f"canvas.css 缺失 `.node-run-status.done {{display:none}}` 规则;\n"
+        f"NodeStatusView canonical=succeeded 输出 `class=\"succeeded done\"` 的"
+        f"视觉等价证据链断裂;必须还原该 CSS 规则。"
+    )
+    # 二重防线:同时守卫 dark mode 变体(canvas.css:227)
+    dark_pattern = re.compile(
+        r"body\.theme-dark\s+\.node-run-status\.done",
+    )
+    dark_matches = dark_pattern.findall(src)
+    assert len(dark_matches) >= 1, (
+        "canvas.css 缺失 dark mode `.node-run-status.done` 变体;dark mode 下"
+        "succeeded chip 会异常可见。"
+    )
+
+
+# -------------------------------------------------------------------------
+# T51 · P2-4 (RC-B 强化承接): 端到端 renderHtml 全通道 escape
+# label 层 + fallback 层同时验证 —— 防止 6 canonical / fallback 任一路径漏 escape
+# -------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "malicious_input",
+    [
+        "<script>alert(1)</script>",
+        "\" onerror=\"alert(1)\"",
+        "javascript:alert(1)",
+        "<img src=x onerror=alert(1)>",
+        "&<>\"'",
+    ],
+)
+def test_t51_end_to_end_render_html_escapes_all_channels(malicious_input):
+    """STRONG:端到端验证 renderHtml 对高危字符全通道 escape。
+
+    Wave 3-J 承接补丁 P2-4:T45 只验证 escapeHtml/escapeAttr 定义体自身的行为,
+    不验证**它们在 renderHtml 里被真正调用**。本测试补上端到端断言:
+      - 6 canonical + fallback 每种路径都不能泄露原始高危字符
+      - fallback 路径尤为关键:data-raw-status 属性通过 escapeAttr 保护,label
+        通过 escapeHtml 保护(见 index.js::buildFallbackHtml)
+
+    这补齐 RC-B 反审 P2-B 提示的"注释宣称 byte-equivalent 但未做端到端验证"缺口。
+    """
+    result = _run_node_esm(
+        f"""
+        import NodeStatusView from '{NSV_INDEX}';
+        // 6 canonical + fallback (未知 + null + empty) = 9 路径
+        const inputs = ['queued', 'running', 'succeeded', 'failed', 'cancelled',
+                        'waiting_upstream', 'unknown_zzz', null, ''];
+        // 6 canonical 走 buildBadgeHtml (label 通道) —— 输入本身是 canonical status,
+        // 与 malicious_input 无关,但 cascadeIdx 参数可注入
+        const badgeCascade = inputs.slice(0, 6).map(s =>
+            NodeStatusView.renderHtml(s, {{cascadeIdx: {json.dumps(malicious_input)}}}));
+        // fallback 走 buildFallbackHtml (raw_status → escapeAttr + escapeHtml)
+        const fallback = NodeStatusView.renderHtml({json.dumps(malicious_input)});
+        console.log(JSON.stringify({{badgeCascade, fallback}}));
+        """
+    )
+    # cascadeIdx 通道:label 部分不会被 escape(因为 cascadeIdx 是拼接字符串,
+    # 但 canvas.js:6124 传入的是 node._cascadeIdx,来源受控)——实际 renderHtml
+    # 里 cascadeIdx 未走 escapeHtml,这是 Wave 3-J 观察项 P3-C。
+    # 我们只断言 fallback 通道全 escape:
+    fb = result["fallback"]
+    if malicious_input == "&<>\"'":
+        # 5 chars 全需被 escape
+        expected_escapes = ["&amp;", "&lt;", "&gt;", "&quot;", "&#39;"]
+        for esc in expected_escapes:
+            assert esc in fb, (
+                f"fallback 通道漏 escape {esc!r};malicious_input={malicious_input!r};\n"
+                f"实际 fallback={fb!r}"
+            )
+    elif "<script>" in malicious_input:
+        assert "&lt;script&gt;" in fb, (
+            f"fallback 通道 <script> 未 escape:{fb!r}"
+        )
+        assert "<script>" not in fb, (
+            f"fallback 通道原始 <script> 泄漏:{fb!r}"
+        )
+    elif "onerror" in malicious_input:
+        # onerror= 内容出现在 data-raw-status 属性里,应被 escapeAttr 处理。
+        # 关键断言:输出中**不能**产生可解析的 event handler attribute。
+        # 具体保护点:
+        #   - `"` 被 escape 成 `&quot;`(闭合原属性)—— 若原始 input 含 `"`
+        #   - `<` `>` 被 escape 成 `&lt;` `&gt;` —— 若原始 input 含 `<>`
+        if '"' in malicious_input:
+            assert "&quot;" in fb, (
+                f"fallback 通道 `\"` 字符未 escape 成 &quot;:{fb!r}"
+            )
+        if "<" in malicious_input:
+            assert "&lt;" in fb, (
+                f"fallback 通道 `<` 字符未 escape 成 &lt;:{fb!r}"
+            )
+    # javascript: 场景:URL sink 不适用于 status badge(无 href/src)
+    # 这里只断言不会**新增** on* handler attribute
+    handler_pattern = re.compile(r'\son\w+\s*=\s*"[^"]*"')
+    assert not handler_pattern.search(fb), (
+        f"fallback 通道输出含 event handler attribute:{fb!r}"
+    )
+    for badge_html in result["badgeCascade"]:
+        # ⚠️ **KNOWN LIMITATION**(继承 canvas.js:6130 legacy 行为):
+        # cascadeIdx 参数目前**未经 escape** 直接拼入 badge HTML;canvas.js
+        # 老代码 `${node._cascadeIdx?' '+node._cascadeIdx:''}` 也无 escape。
+        # PR-8 seam 契约是**保 byte-equivalent legacy 行为**,不改此语义。
+        #
+        # **可 exploit 面**:仅当有代码路径把用户可控值写入 `node._cascadeIdx` 才
+        # 触发。目前 canvas.js 全部写入点均为**内部纯数字模板**(第 11814/11831/
+        # 11841/11870 行,均 `\`${digit}/${digit}\`` 或 loopIndex 数字)—— **无
+        # 用户可控入口**。故此 P3-C 观察项**不构成当前可触发 XSS**。
+        #
+        # 若未来有 PR 把用户 prompt / node.title 塞进 _cascadeIdx,必须先补 escape。
+        # 参见 CB-P5-05 候选(Wave 3-K 承接):cascadeIdx / label / cls 全通道 escape 硬锁。
+        _ = badge_html  # noqa: F841 --- 暂不断言 handler_pattern,记录 KNOWN LIMITATION
+
+

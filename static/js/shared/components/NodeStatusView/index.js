@@ -8,41 +8,58 @@
 //     * 有 `document` 环境（浏览器）→ 返回 HTMLElement
 //     * 返回值语义与 PR-7 `NodeRenderRegistry.renderFallback` 一致
 //   - 6 canonical status → CSS class + labelZh 严格对齐 `statusMap.js`
-//   - **视觉字节等价**（canvas.js 迁移前后不产生 DOM diff）：
+//   - **等价性三轴**（Wave 3-J 承接补丁 RC-B P1-B1 + GM-13 治理机制）：
 //       原 canvas.js:6110-6113 输出：
 //         `<span class="node-run-status ${runStatus}">
 //            <span class="dot"></span>${escapeHtml(label)}${cascadeIdx}
 //          </span>`
 //       其中 `runStatus` legacy 词面 `queued|running|done|failed`；
-//       `done` CSS 规则是 `display:none`。为保视觉字节等价，我们输出的
-//       `class` 属性同时含 canonical + legacy alias（当 legacy alias 存在时）：
-//         canonical=succeeded → `class="node-run-status succeeded done"`
-//                              （`done` 触发 `display:none` CSS，视觉等价）
-//         canonical=queued → `class="node-run-status queued"`
-//                            （无 legacy alias，纯 canonical class）
+//       `done` CSS 规则是 `display:none`。
+//
+//       * legacy `queued / running / failed` 三值：**runtime-output-byte-equal**
+//         —— NodeStatusView.renderHtml(status) 与原 canvas.js 内联 template
+//         evaluate 结果**逐字节相等**（见 T47 migration_byte_equivalent 断言 3 值）
+//       * legacy `done` 值：**视觉等价（visual-byte-equal）**，**非 DOM byte-equal**
+//         —— 输出 `class="node-run-status succeeded done"`（多 `succeeded ` 前缀），
+//         但 CSS `.node-run-status.done { display:none }` 命中相同，视觉上 chip
+//         被隐藏，视觉不可分（见 T50 canvas.css `.done` display:none 规则守卫）
+//       **不要**在注释里笼统称 "byte-equivalent"，必须显式指定哪一轴：
+//         source-byte-equal / runtime-output-byte-equal / visual-byte-equal
 //   - **零构建 / 零依赖 / 原生 ES module**
-//   - `escapeHtml` byte-equivalent 于 `NodeRenderRegistry.js` / `canvas.js`
-//     （通过 import 复用 NodeRenderRegistry 内部 escapeHtml 不可行——它未
-//     导出——故本文件内嵌 byte-equivalent copy，参见下方定义）
+//   - `escapeHtml` **运行时输出 byte-equivalent** 于 `NodeRenderRegistry.js` /
+//     `canvas.js`（源码文本不等：canvas.js 单行 158 bytes vs 本文件多行 221 bytes，
+//     但对同一输入返回**逐字节相等**的字符串，T45 通过 Node subprocess 独立
+//     执行三处定义体真实验证）
 //
 // **不做**：
 //   - 不动 data-action 契约（status badge 挂载点当前无 data-action，不新增）
 //   - 不接管 CSS（.node-run-status 规则仍在 canvas.css）
 //   - 不做 i18n runtime 切换（当前只有 zh；en 由 PR-9/10 承接）
+//   - **不动 cascadeIdx 通道 escape 语义**（KNOWN LIMITATION 继承 canvas.js:6130
+//     legacy 行为；当前 `node._cascadeIdx` 全部写入点为内部纯数字模板，无用户
+//     可控入口；PR-9 或 CB-P5-05 承接 cascadeIdx 全通道 escape 硬锁）
 
 import { statusEntry, resolveStatus, CANONICAL_STATUSES, STATUS_MAP, LEGACY_STATUS_ALIASES } from './statusMap.js';
 
 /**
- * escapeHtml 内嵌副本 —— byte-equivalent 于:
+ * escapeHtml 内嵌副本 —— **运行时输出 byte-equivalent** 于:
  *   - `static/js/canvas.js::escapeHtml`（14830 行）
  *   - `static/js/smart-canvas.js::escapeHtml`（464 行）
  *   - `static/js/modules/node/registry/NodeRenderRegistry.js::escapeHtml`（61 行）
  *
- * 三处均为同一定义体。此处内嵌是**有意为之**：
- *   1. NodeRenderRegistry.js 未 export `escapeHtml`（PR-7 已 freeze 内部实现）
- *   2. seam 期硬约束为"零依赖"，不允许引入 escape 工具库
+ * **源码文本 NOT byte-equal**:canvas.js/smart-canvas.js 单行式(158 bytes)vs
+ * 本文件 + NodeRenderRegistry 多行式(221 bytes),文本长度和结构均不等。但对
+ * 同一输入,四处实现返回**逐字节相等的字符串**——这是 T45 通过 Node subprocess
+ * 独立执行四处定义体并逐字节对比得到的**运行时输出等价**证据。
+ *
+ * Wave 3-J RC-B 反审 P0-7 澄清:请勿在注释里笼统称"byte-equivalent",必须显式
+ * 指定"**runtime-output-byte-equal**"(参见 GM-13 治理机制候选)。
+ *
+ * 此处内嵌是**有意为之**:
+ *   1. NodeRenderRegistry.js 未 export `escapeHtml`(PR-7 已 freeze 内部实现)
+ *   2. seam 期硬约束为"零依赖",不允许引入 escape 工具库
  *   3. `test_node_status_view_seam.py::T45` 通过 Node subprocess 真实执行
- *      三处定义体并逐字节对比，保证不漂移
+ *      四处定义体并逐字节对比运行时输出,保证不漂移
  */
 function escapeHtml(str) {
     return String(str == null ? '' : str).replace(/[&<>"']/g, (s) => ({
@@ -55,10 +72,13 @@ function escapeHtml(str) {
 }
 
 /**
- * escapeAttr 内嵌副本 —— byte-equivalent 于:
+ * escapeAttr 内嵌副本 —— **运行时输出 byte-equivalent** 于:
  *   - `static/js/canvas.js::escapeAttr`（14831 行）
  *   - `static/js/smart-canvas.js::escapeAttr = escapeHtml`（465 行别名）
  * canvas.js 定义：`function escapeAttr(str){ return escapeHtml(str); }`
+ *
+ * 参见上方 escapeHtml 关于**源码文本 NOT byte-equal + 运行时输出 byte-equal**
+ * 的完整说明(GM-13 治理机制候选:等价性三轴显式标注)。
  */
 function escapeAttr(str) {
     return escapeHtml(str);

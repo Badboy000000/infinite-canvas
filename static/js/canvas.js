@@ -6110,8 +6110,15 @@ function renderNode(node){
     // Wave 3-J 前端 PR-8 (收敛版):status badge 契约域 seam consumer 接入。
     //   - 首次调用时 lazy dynamic import `NodeStatusView` 并挂到 window
     //     (只 kick off 一次;后续渲染共享 window.NodeStatusView)
-    //   - 首帧渲染时 ESM 尚未 resolve → 走内联 legacy 分支,输出 **byte-equivalent**
-    //     DOM,避免视觉回归(与 buildBadgeHtml 对 legacy 4 值输出逐字节等价)
+    //   - 首帧渲染时 ESM 尚未 resolve → 走内联 legacy 分支
+    //   - **等价性三轴显式标注**(GM-13 治理机制候选):
+    //       * legacy `queued/running/failed` 三值:内联兜底与 NodeStatusView.renderHtml
+    //         **runtime-output-byte-equal**(T47 migration_byte_equivalent 断言 3 值)
+    //       * legacy `done` 值:内联兜底 `class="node-run-status done"` vs
+    //         NodeStatusView 输出 `class="node-run-status succeeded done"`,
+    //         **DOM 字符串 NOT byte-equal**(多 `succeeded ` 前缀),但 CSS
+    //         `.node-run-status.done { display:none }` 命中相同,**visual-byte-equal**
+    //       修改此块必须同步 NodeStatusView/index.js::buildBadgeHtml 并跑 T47。
     //   - 严格锁定改动范围到 status badge 消费点,不动 bootstrap.js autoBind 列表
     const statusHtml = showStatus ? (() => {
         if (typeof window !== 'undefined' && !window.__nodeStatusViewPromise) {
@@ -6123,8 +6130,9 @@ function renderNode(node){
         if (nsv && typeof nsv.renderHtml === 'function') {
             return nsv.renderHtml(node.runStatus, { cascadeIdx: node._cascadeIdx || '' });
         }
-        // Legacy 内联兜底(seam import 竞态) —— **byte-equivalent** 于
-        // NodeStatusView.renderHtml 对 legacy 4 值 `queued/running/done/failed` 的输出。
+        // Legacy 内联兜底(seam import 竞态) —— 对 legacy `queued/running/failed`
+        // 三值与 NodeStatusView.renderHtml **runtime-output-byte-equal**;对 legacy
+        // `done` 值仅**visual-byte-equal**(见上方注释三轴说明)。
         // 修改此块必须同步 NodeStatusView/index.js::buildBadgeHtml 并跑 T47。
         const label = { queued:'排队中', running:'运行中', done:'完成', failed:'失败' }[node.runStatus] || '';
         return `<span class="node-run-status ${node.runStatus}"><span class="dot"></span>${escapeHtml(label)}${node._cascadeIdx?' '+node._cascadeIdx:''}</span>`;

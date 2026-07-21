@@ -221,6 +221,10 @@ def test_T32_pr3_legacy_literals_have_none_category(
         ("video", map_video_task),
         ("jimeng", map_jimeng_task),
         ("comfyui", map_comfy_task),
+        ("chat", map_chat_task),  # Wave 3-J 承接补丁 P1-D:RC-A + TRA-A 独立复核
+                                   # chat/partial.json 与其他 6 provider 一致
+                                   # (partial_success=True + category=partial_success),
+                                   # 原 docstring 排除理由已过期,拉入 7/7 参数化。
     ],
 )
 def test_T33_partial_fixture_yields_partial_success_category(
@@ -229,8 +233,9 @@ def test_T33_partial_fixture_yields_partial_success_category(
     """STRONG:partial fixture 满足 `partial_success=True` 且
     `category == partial_success`;error 依然为 None(partial 不是 error)。
 
-    chat/partial.json 不满足 partial_success=True(chat mapper 用不同语义),
-    故排除该 provider(见 test_provider_task_view aggregation 现状快照)。
+    覆盖 7/7 provider(runninghub / apimart / generic_image / video / jimeng /
+    comfyui / chat)—— Wave 3-J 承接补丁 P1-D 修正:此前 chat 被错误排除,
+    实际 map_chat_task(chat/partial.json) 也返回 partial_success=True。
     """
 
     with open(os.path.join(PROVIDER_SAMPLES, provider, "partial.json"), encoding="utf-8") as fh:
@@ -451,3 +456,291 @@ def test_T39_to_dict_serializes_category_as_string_or_none() -> None:
     assert payload["category"] == "partial_success", (
         f"partial fixture should serialize category='partial_success', got {payload['category']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Wave 3-J 承接补丁编号:T50-T57(RC-A + TRA-A + RC-B 反审必处理)
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# T50 · P1-A · 数字子串误命中 latent bug 覆盖(STRONG)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw_text,provider_code,expected_category,scenario",
+    [
+        # 5000 tokens 无关文案 —— 会命中 upstream_5xx `500` 子串(latent)
+        (
+            "generated 5000 tokens successfully but downstream parse failed",
+            "downstream_parse_error",
+            TaskErrorCategory.upstream_5xx,
+            "5000_hits_500_KNOWN_LATENT",
+        ),
+        # port 4010 —— 会命中 invalid_credential `401` 子串(latent,
+        # 优先级 4 > invalid_input 优先级 7,所以 credential 先胜)
+        (
+            "connection to port 4010 declined by user process",
+            "port_declined",
+            TaskErrorCategory.invalid_credential,
+            "port_4010_hits_401_KNOWN_LATENT",
+        ),
+        # id 5020 —— 会命中 upstream_5xx `502` 子串(latent)
+        (
+            "generation id 5020 aborted",
+            "id_aborted",
+            TaskErrorCategory.upstream_5xx,
+            "id_5020_hits_502_KNOWN_LATENT",
+        ),
+        # id 12429 —— 会命中 rate_limit `429` 子串(latent)
+        (
+            "id 12429 aborted upstream",
+            "id_aborted",
+            TaskErrorCategory.rate_limit,
+            "id_12429_hits_429_KNOWN_LATENT",
+        ),
+        # user 5030 —— 会命中 upstream_5xx `503` 子串(latent)
+        (
+            "user 5030 hit quota barrier",
+            "quota_barrier",
+            TaskErrorCategory.upstream_5xx,
+            "id_5030_hits_503_KNOWN_LATENT",
+        ),
+        # user 401k —— 会命中 invalid_credential `401` 子串(latent)
+        (
+            "user 401k balance exceeded",
+            "balance_exceeded",
+            TaskErrorCategory.invalid_credential,
+            "id_401k_hits_401_KNOWN_LATENT",
+        ),
+    ],
+    ids=[
+        "5000_hits_500_KNOWN_LATENT",
+        "port_4010_hits_401_KNOWN_LATENT",
+        "id_5020_hits_502_KNOWN_LATENT",
+        "id_12429_hits_429_KNOWN_LATENT",
+        "id_5030_hits_503_KNOWN_LATENT",
+        "id_401k_hits_401_KNOWN_LATENT",
+    ],
+)
+def test_T50_digit_substring_collision_documented(
+    raw_text: str, provider_code: str,
+    expected_category: TaskErrorCategory, scenario: str,
+) -> None:
+    """STRONG (documenting KNOWN LIMITATION):数字子串误命中 latent bug.
+
+    Wave 3-J TRA-A 反审 P1-A 发现:mapper 用**纯子串匹配** `"500" / "401" /
+    "429" / ...`,数字前后**无词边界断言**。如 "HTTP 5000" / "port 4010" /
+    "id 12429" 等文本会**误命中** upstream_5xx / rate_limit / invalid_credential /
+    invalid_input。
+
+    Wave 3-J 承接补丁决策:
+    - **不改**当前实现(避免连锁效应打破 42 fixture)
+    - 用本测试**显式记录 6 个 KNOWN LATENT case**,把 latent bug 从"未记录"
+      翻到"已记录且被断言锁定"
+    - 若未来 mapper 改为词边界匹配(如 `r'\\b(429|500|502|503|401|400)\\b'`),
+      本测试将全部 FAIL,提示"latent 已修复,现在期望应翻转到 unknown_terminal"
+
+    这符合 Wave 3-I "documented negative pin" 承接模式(参考 CB-P5-03)。
+    Wave 3-K 若有 tools/security 独立 PR,可把本测试翻正。
+    """
+
+    err = ViewError(
+        raw=raw_text,
+        friendly_zh="documented latent bug scenario",
+        retryable=False,
+        provider_code=provider_code,
+        provider_message=raw_text,
+    )
+    got = ErrorCategoryMapper.categorize(
+        err, remote_status="failed", provider_id="test-latent"
+    )
+    assert got == expected_category, (
+        f"[{scenario}] latent bug case:期望 {expected_category.value},实际 {got.value};"
+        f"若本测试 FAIL,说明数字子串误命中行为发生变化,需评估是否修复 mapper 加词边界。"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T51 · P1-B · cancelled_by_user / cancelled_by_upstream 硬锁(STRONG)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "remote_status,raw_text,expected_category,scenario",
+    [
+        # cancelled_by_user:remote_status 命中 cancel token,text 无 upstream hint
+        ("cancelled", "user_requested_cancel", TaskErrorCategory.cancelled_by_user, "cancelled_user"),
+        ("canceled", "user_stop", TaskErrorCategory.cancelled_by_user, "canceled_user_variant"),
+        ("cancelled", "", TaskErrorCategory.cancelled_by_user, "cancelled_empty_text"),
+        # cancelled_by_upstream:remote_status cancel token + text 命中 upstream hint
+        ("cancelled", "upstream forced cancel", TaskErrorCategory.cancelled_by_upstream, "upstream_cancel"),
+        ("cancelled", "system_cancel by scheduler", TaskErrorCategory.cancelled_by_upstream, "system_cancel_hint"),
+        ("canceled", "server_cancel due to scheduler policy", TaskErrorCategory.cancelled_by_upstream, "server_cancel_variant"),
+    ],
+    ids=[
+        "cancelled_user",
+        "canceled_user_variant",
+        "cancelled_empty_text",
+        "upstream_cancel",
+        "system_cancel_hint",
+        "server_cancel_variant",
+    ],
+)
+def test_T51_cancelled_variants_classify(
+    remote_status: str, raw_text: str,
+    expected_category: TaskErrorCategory, scenario: str,
+) -> None:
+    """STRONG:remote_status ∈ {cancelled, canceled} 触发取消分支;
+    text 含 upstream/system_cancel/server_cancel → cancelled_by_upstream,
+    否则 → cancelled_by_user。
+    """
+
+    err = ViewError(
+        raw=raw_text,
+        friendly_zh="任务取消",
+        retryable=False,
+        provider_code=None,
+        provider_message=raw_text,
+    )
+    got = ErrorCategoryMapper.categorize(
+        err, remote_status=remote_status, provider_id="test-cancel"
+    )
+    assert got == expected_category, (
+        f"[{scenario}] remote_status={remote_status!r} text={raw_text!r} → "
+        f"expected {expected_category.value},got {got.value}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T52 · P1-C · 优先级顺序抗回归(STRONG)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected_category,winning_marker,losing_markers",
+    [
+        # network_error > timeout:connect_timeout 应归 network(优先级 1)
+        (
+            "connect_timeout after 3s expired",
+            TaskErrorCategory.network_error,
+            "connect_timeout",
+            ["timeout", "expired"],
+        ),
+        # rate_limit > quota_exceeded:同时命中时优先 rate_limit(优先级 2)
+        (
+            "rate_limit exceeded due to quota_exceeded on tier",
+            TaskErrorCategory.rate_limit,
+            "rate_limit",
+            ["quota_exceeded"],
+        ),
+        # invalid_credential > content_moderation:同时命中时优先 credential(优先级 4)
+        (
+            "authentication_error and policy_violation blocked",
+            TaskErrorCategory.invalid_credential,
+            "authentication_error",
+            ["policy_violation"],
+        ),
+        # content_moderation > resource_not_found:同时命中时优先 moderation(优先级 5)
+        (
+            "content_moderation blocked but resource_not_found downstream",
+            TaskErrorCategory.content_moderation,
+            "content_moderation",
+            ["resource_not_found"],
+        ),
+        # invalid_input > timeout:400 vs timeout 同时命中,优先 invalid_input(优先级 7)
+        (
+            "bad_request and request timeout",
+            TaskErrorCategory.invalid_input,
+            "bad_request",
+            ["timeout"],
+        ),
+    ],
+    ids=[
+        "network_over_timeout",
+        "rate_limit_over_quota",
+        "credential_over_moderation",
+        "moderation_over_res_not_found",
+        "invalid_input_over_timeout",
+    ],
+)
+def test_T52_priority_order_antiregression(
+    text: str,
+    expected_category: TaskErrorCategory,
+    winning_marker: str,
+    losing_markers: list,
+) -> None:
+    """STRONG:模块 docstring 明列 9 层优先级顺序,同一 text 同时命中多类 marker
+    时,**只允许前面优先级胜出**;若某天有人错改了 `if any(...)` 顺序,本测试立即
+    FAIL,拉回优先级约束。"""
+
+    err = ViewError(
+        raw=text,
+        friendly_zh="priority test",
+        retryable=False,
+        provider_code=None,
+        provider_message=text,
+    )
+    got = ErrorCategoryMapper.categorize(
+        err, remote_status="failed", provider_id="test-priority"
+    )
+    assert got == expected_category, (
+        f"priority regression: text={text!r} "
+        f"应归 {expected_category.value}({winning_marker} 胜出),"
+        f"实际 {got.value};losing markers = {losing_markers}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T53 · P2-D · 大小写不敏感硬锁(STRONG)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw_text,expected_category",
+    [
+        # 全大写变体
+        ("RATE_LIMIT EXCEEDED", TaskErrorCategory.rate_limit),
+        ("TOO_MANY_REQUESTS", TaskErrorCategory.rate_limit),
+        ("Unauthorized Access", TaskErrorCategory.invalid_credential),
+        ("AUTHENTICATION_ERROR", TaskErrorCategory.invalid_credential),
+        ("POLICY_VIOLATION FLAGGED", TaskErrorCategory.content_moderation),
+        ("NSFW_DETECTED", TaskErrorCategory.content_moderation),
+        # 混合大小写
+        ("Rate_Limit reached", TaskErrorCategory.rate_limit),
+        ("Content_Rejected By Review", TaskErrorCategory.content_moderation),
+    ],
+    ids=[
+        "upper_rate_limit",
+        "upper_too_many_requests",
+        "mixed_unauthorized",
+        "upper_authentication_error",
+        "upper_policy_violation",
+        "upper_nsfw_detected",
+        "mixed_rate_limit",
+        "mixed_content_rejected",
+    ],
+)
+def test_T53_case_insensitive_matching(
+    raw_text: str, expected_category: TaskErrorCategory,
+) -> None:
+    """STRONG:mapper docstring 承诺"子串匹配 / 大小写不敏感"(module docstring
+    §字面量白名单)。实现方式是 `text = " ".join(str(p).lower() for p in parts)`,
+    marker 已经全小写。本测试锁定该行为,防止未来把 `.lower()` 移除。"""
+
+    err = ViewError(
+        raw=raw_text,
+        friendly_zh="case sensitivity test",
+        retryable=False,
+        provider_code=None,
+        provider_message=raw_text,
+    )
+    got = ErrorCategoryMapper.categorize(
+        err, remote_status="failed", provider_id="test-case"
+    )
+    assert got == expected_category, (
+        f"case sensitivity regression: text={raw_text!r} "
+        f"应归 {expected_category.value}(大小写不敏感),实际 {got.value}"
+    )
+
