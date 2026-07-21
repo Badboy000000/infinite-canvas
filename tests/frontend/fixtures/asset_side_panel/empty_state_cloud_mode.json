@@ -1,0 +1,7 @@
+{
+  "case": "empty_state_cloud_mode",
+  "template": "renderEmptyState",
+  "input": {"localMode": false},
+  "expected_html": "<div class=\"canvas-asset-empty\">当前分组还没有资产</div>",
+  "expected_contains": ["canvas-asset-empty", "当前分组还没有资产"]
+}

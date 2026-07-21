@@ -1,0 +1,11 @@
+{
+  "case": "video_variant_three_providers",
+  "variant": "video",
+  "providers": [
+    {"id": "runway", "name": "Runway"},
+    {"id": "kling", "name": "Kling"},
+    {"id": "comfly", "name": "Comfly Video"}
+  ],
+  "selectedId": "kling",
+  "expected_html": "<option value=\"runway\" >Runway</option><option value=\"kling\" selected>Kling</option><option value=\"comfly\" >Comfly Video</option>"
+}

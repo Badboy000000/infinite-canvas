@@ -1,0 +1,8 @@
+{
+  "case": "provider_name_missing_uses_id_fallback",
+  "variant": "chat",
+  "providers": [{"id": "only-id"}],
+  "selectedId": "only-id",
+  "expected_html": "<option value=\"only-id\" selected>only-id</option>",
+  "expected_contains": ["only-id"]
+}

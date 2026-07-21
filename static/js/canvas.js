@@ -668,7 +668,28 @@ function resolveChatProviderId(id){
 }
 function chatProviderOptions(selectedId){
     const selected = resolveChatProviderId(selectedId);
-    return chatApiProviders().map(provider => `<option value="${escapeHtml(provider.id)}" ${provider.id === selected ? 'selected' : ''}>${escapeHtml(provider.name || provider.id)}</option>`).join('');
+    const providers = chatApiProviders();
+    // Wave 3-K 前端 PR-9 (保守渲染层): ProviderSelector seam consumer 接入.
+    //   - lazy dynamic import ProviderSelector, 挂到 window (只 kick off 一次)
+    //   - 首帧 ESM 未 resolve → 走内联 legacy 分支
+    //   - **等价性三轴显式标注**(GM-13):
+    //       * seam 分支输出 vs legacy 分支输出:**runtime-output-byte-equal**
+    //         (T66 通过 subprocess 独立执行 5 case + 逐字节比对验证)
+    //       * 源码文本 NOT byte-equal (providerOptions.js 多行式 vs canvas.js 单行 map/join)
+    //   - **GM-15 dormant seam**: onchange 事件绑定 / providers 数据源仍在本文件,
+    //     provider 选择器 state 层 dormant seam 待 PR-11+ 承接
+    //   - 修改此块必须同步 ProviderSelector/providerOptions.js::renderOption 并跑 T66
+    if (typeof window !== 'undefined' && !window.__providerSelectorPromise) {
+        window.__providerSelectorPromise = import('/static/js/shared/components/ProviderSelector/index.js')
+            .then(mod => { window.ProviderSelector = mod && mod.default ? mod.default : mod; })
+            .catch(err => { if (typeof console !== 'undefined' && console.error) console.error('[ProviderSelector] load failed', err); });
+    }
+    const ps = (typeof window !== 'undefined') ? window.ProviderSelector : null;
+    if (ps && typeof ps.renderHtml === 'function') {
+        return ps.renderHtml('chat', providers, selected);
+    }
+    // Legacy 内联兜底 (seam import 竞态) —— runtime-output-byte-equal 于 seam 分支.
+    return providers.map(provider => `<option value="${escapeHtml(provider.id)}" ${provider.id === selected ? 'selected' : ''}>${escapeHtml(provider.name || provider.id)}</option>`).join('');
 }
 function providerChatModels(providerId){
     const provider = apiProviders.find(p => p.id === providerId);
@@ -681,7 +702,21 @@ function resolveImageProviderId(id){
 function providerOptions(selectedId){
     const selected = resolveImageProviderId(selectedId);
     const providers = imageApiProviders();
-    if(!providers.length) return `<option value="" disabled selected>${tr('canvas.noApiProviders') || '暂无 API 平台'}</option>`;
+    // Wave 3-K 前端 PR-9 (保守渲染层): ProviderSelector image 变体 seam consumer 接入.
+    // 三轴等价性 + dormant seam 说明见 chatProviderOptions 顶注 (canvas.js:669).
+    // image 变体特有:providers 为空时输出 disabled 占位 option (has_empty_placeholder=true).
+    if (typeof window !== 'undefined' && !window.__providerSelectorPromise) {
+        window.__providerSelectorPromise = import('/static/js/shared/components/ProviderSelector/index.js')
+            .then(mod => { window.ProviderSelector = mod && mod.default ? mod.default : mod; })
+            .catch(err => { if (typeof console !== 'undefined' && console.error) console.error('[ProviderSelector] load failed', err); });
+    }
+    const ps = (typeof window !== 'undefined') ? window.ProviderSelector : null;
+    const emptyLabel = tr('canvas.noApiProviders') || '暂无 API 平台';
+    if (ps && typeof ps.renderHtml === 'function') {
+        return ps.renderHtml('image', providers, selected, { emptyLabel });
+    }
+    // Legacy 内联兜底 (seam import 竞态) —— runtime-output-byte-equal 于 seam 分支.
+    if(!providers.length) return `<option value="" disabled selected>${emptyLabel}</option>`;
     return providers.map(provider => `<option value="${escapeHtml(provider.id)}" ${provider.id === selected ? 'selected' : ''}>${escapeHtml(provider.name || provider.id)}</option>`).join('');
 }
 function providerImageModels(providerId){
@@ -707,7 +742,20 @@ function resolveVideoProviderId(id){
 }
 function videoProviderOptions(selectedId){
     const selected = resolveVideoProviderId(selectedId);
-    return videoApiProviders().map(provider => `<option value="${escapeHtml(provider.id)}" ${provider.id === selected ? 'selected' : ''}>${escapeHtml(provider.name || provider.id)}</option>`).join('');
+    const providers = videoApiProviders();
+    // Wave 3-K 前端 PR-9 (保守渲染层): ProviderSelector video 变体 seam consumer 接入.
+    // 三轴等价性 + dormant seam 说明见 chatProviderOptions 顶注 (canvas.js:669).
+    if (typeof window !== 'undefined' && !window.__providerSelectorPromise) {
+        window.__providerSelectorPromise = import('/static/js/shared/components/ProviderSelector/index.js')
+            .then(mod => { window.ProviderSelector = mod && mod.default ? mod.default : mod; })
+            .catch(err => { if (typeof console !== 'undefined' && console.error) console.error('[ProviderSelector] load failed', err); });
+    }
+    const ps = (typeof window !== 'undefined') ? window.ProviderSelector : null;
+    if (ps && typeof ps.renderHtml === 'function') {
+        return ps.renderHtml('video', providers, selected);
+    }
+    // Legacy 内联兜底 (seam import 竞态) —— runtime-output-byte-equal 于 seam 分支.
+    return providers.map(provider => `<option value="${escapeHtml(provider.id)}" ${provider.id === selected ? 'selected' : ''}>${escapeHtml(provider.name || provider.id)}</option>`).join('');
 }
 function providerVideoModels(providerId){
     // 不走 providerById（会 fallback 到第一个 provider，造成串台），直接查精确匹配
@@ -6891,19 +6939,42 @@ async function loadCanvasAssetLibrary({renderPanel=true}={}){
 function renderCanvasAssetLibrary(){
     if(!canvasAssetPanel || !canvasAssetGrid) return;
     hideCanvasAssetHoverPreview();
+    // Wave 3-K 前端 PR-9 (保守渲染层): AssetSidePanel seam consumer 接入.
+    //   - lazy dynamic import AssetSidePanel, 挂到 window (只 kick off 一次)
+    //   - 首帧 ESM 未 resolve → 走内联 legacy 分支
+    //   - **等价性三轴显式标注**(GM-13):
+    //       * seam 分支输出 vs legacy 分支输出:**runtime-output-byte-equal**
+    //         (T60 通过 subprocess 独立执行 + 逐字节比对验证)
+    //       * 源码文本 NOT byte-equal (domTemplates.js 多行式 vs canvas.js 单行 map/join)
+    //   - **保守渲染层硬约束**:只剥离 <option>/item card/empty state HTML 模板,
+    //     不动 fetch/upload/drag/rename/delete endpoint 契约 (96 处 state 代码保持)
+    //   - **GM-15 dormant seam**: AssetSidePanel state 层(activeCanvasAssetLibraryId /
+    //     canvasAssetLibrary 状态)是 rendering consumed only; state 层 dormant seam
+    //     待 PR-11+ / CB-P5-09 承接
+    //   - 修改此块必须同步 AssetSidePanel/domTemplates.js 并跑 T60
+    if (typeof window !== 'undefined' && !window.__assetSidePanelPromise) {
+        window.__assetSidePanelPromise = import('/static/js/shared/components/AssetSidePanel/index.js')
+            .then(mod => { window.AssetSidePanel = mod && mod.default ? mod.default : mod; })
+            .catch(err => { if (typeof console !== 'undefined' && console.error) console.error('[AssetSidePanel] load failed', err); });
+    }
+    const asp = (typeof window !== 'undefined') ? window.AssetSidePanel : null;
     const libs = canvasAssetSourceLibraries();
     if(!activeCanvasAssetLibraryId || !libs.some(lib => lib.id === activeCanvasAssetLibraryId)) activeCanvasAssetLibraryId = canvasAssetLibrary.active_library_id || canvasAssetLibraries()[0]?.id || LOCAL_CANVAS_ASSET_LIBRARY_ID;
     if(canvasAssetLibrarySelect){
-        canvasAssetLibrarySelect.innerHTML = libs.map(lib => `<option value="${escapeAttr(lib.id)}" ${lib.id === activeCanvasAssetLibraryId ? 'selected' : ''}>${escapeHtml(lib.name || '资产库')}</option>`).join('');
+        canvasAssetLibrarySelect.innerHTML = (asp && typeof asp.renderLibraryOption === 'function')
+            ? libs.map(lib => asp.renderLibraryOption(lib, activeCanvasAssetLibraryId)).join('')
+            : libs.map(lib => `<option value="${escapeAttr(lib.id)}" ${lib.id === activeCanvasAssetLibraryId ? 'selected' : ''}>${escapeHtml(lib.name || '资产库')}</option>`).join('');
     }
     const cats = canvasAssetCategories();
     if(!cats.some(cat => cat.id === activeCanvasAssetCategoryId)) activeCanvasAssetCategoryId = cats[0]?.id || '';
     if(canvasAssetCategorySelect){
-        canvasAssetCategorySelect.innerHTML = cats.map(cat => {
-            const type = String(cat.type || 'image').toLowerCase();
-            const prefix = type === 'workflow' ? '工作流 / ' : '';
-            return `<option value="${escapeAttr(cat.id)}" ${cat.id === activeCanvasAssetCategoryId ? 'selected' : ''}>${escapeHtml(prefix + (cat.name || '默认分组'))}</option>`;
-        }).join('');
+        canvasAssetCategorySelect.innerHTML = (asp && typeof asp.renderCategoryOption === 'function')
+            ? cats.map(cat => asp.renderCategoryOption(cat, activeCanvasAssetCategoryId)).join('')
+            : cats.map(cat => {
+                const type = String(cat.type || 'image').toLowerCase();
+                const prefix = type === 'workflow' ? '工作流 / ' : '';
+                return `<option value="${escapeAttr(cat.id)}" ${cat.id === activeCanvasAssetCategoryId ? 'selected' : ''}>${escapeHtml(prefix + (cat.name || '默认分组'))}</option>`;
+            }).join('');
     }
     const cat = activeCanvasAssetCategory();
     const catType = String(cat?.type || 'image').toLowerCase();
@@ -6914,7 +6985,9 @@ function renderCanvasAssetLibrary(){
         canvasAssetDropZone.textContent = catType === 'workflow' ? '工作流分组支持上传/导出工作流，双击卡片导入画布' : '拖入图片或输出保存到当前分组';
     }
     const items = cat?.items || [];
-    canvasAssetGrid.innerHTML = items.length ? items.map(item => `
+    canvasAssetGrid.innerHTML = (asp && typeof asp.renderAssetGrid === 'function')
+        ? asp.renderAssetGrid(items.map(item => ({item, ctx: {thumbHtml: canvasAssetThumbHtml(item), kind: canvasAssetItemKind(item), localMode}})), localMode)
+        : (items.length ? items.map(item => `
         <div class="canvas-asset-item" draggable="true" data-asset-id="${escapeAttr(item.id || '')}" data-url="${escapeAttr(item.url)}" data-name="${escapeAttr(item.name || 'asset')}" data-kind="${escapeAttr(canvasAssetItemKind(item))}">
             ${canvasAssetThumbHtml(item)}
             <div class="canvas-asset-meta">
@@ -6925,7 +6998,7 @@ function renderCanvasAssetLibrary(){
                        <button class="canvas-asset-action danger" type="button" data-canvas-asset-delete="${escapeAttr(item.id || '')}" title="删除" aria-label="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`}
             </div>
         </div>
-    `).join('') : `<div class="canvas-asset-empty">${escapeHtml(localMode ? '暂无本地素材，请在素材库管理中上传' : '当前分组还没有资产')}</div>`;
+    `).join('') : `<div class="canvas-asset-empty">${escapeHtml(localMode ? '暂无本地素材，请在素材库管理中上传' : '当前分组还没有资产')}</div>`);
     bindCanvasPreviewImageFallbacks(canvasAssetGrid);
     canvasAssetGrid.querySelectorAll('.canvas-asset-item').forEach(card => {
         card.addEventListener('dragstart', event => {

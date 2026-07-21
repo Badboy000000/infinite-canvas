@@ -1,0 +1,10 @@
+{
+  "case": "library_option_default_selected",
+  "template": "renderLibraryOption",
+  "input": {
+    "lib": {"id": "default", "name": "默认资产库"},
+    "activeLibraryId": "default"
+  },
+  "expected_html": "<option value=\"default\" selected>默认资产库</option>",
+  "expected_contains": ["value=\"default\"", "selected", "默认资产库"]
+}

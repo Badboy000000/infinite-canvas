@@ -1,0 +1,11 @@
+{
+  "case": "xss_sink_sentinel",
+  "template": "renderLibraryOption",
+  "input": {
+    "lib": {"id": "lib-xss", "name": "<script>alert(1)</script>"},
+    "activeLibraryId": "lib-xss"
+  },
+  "sentinel": "<script>alert(1)</script>",
+  "must_contain_escaped": ["&lt;script&gt;", "&lt;/script&gt;"],
+  "must_not_contain": ["<script>alert(1)</script>"]
+}

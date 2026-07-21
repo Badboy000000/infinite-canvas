@@ -1,0 +1,9 @@
+{
+  "case": "image_variant_empty_providers_uses_placeholder",
+  "variant": "image",
+  "providers": [],
+  "selectedId": "",
+  "emptyLabel": "暂无 API 平台",
+  "expected_html": "<option value=\"\" disabled selected>暂无 API 平台</option>",
+  "expected_contains": ["disabled selected", "暂无 API 平台"]
+}

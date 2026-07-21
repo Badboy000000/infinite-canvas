@@ -1,0 +1,11 @@
+{
+  "case": "library_option_unselected",
+  "template": "renderLibraryOption",
+  "input": {
+    "lib": {"id": "lib-2", "name": "工作库"},
+    "activeLibraryId": "default"
+  },
+  "expected_html": "<option value=\"lib-2\" >工作库</option>",
+  "expected_contains": ["value=\"lib-2\"", "工作库"],
+  "expected_not_contains": ["selected"]
+}

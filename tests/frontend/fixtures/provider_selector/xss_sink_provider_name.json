@@ -1,0 +1,8 @@
+{
+  "case": "xss_sink_provider_name",
+  "variant": "chat",
+  "providers": [{"id": "p-xss", "name": "<img src=x onerror=alert(1)>"}],
+  "selectedId": "p-xss",
+  "must_contain_escaped": ["&lt;img", "onerror=alert(1)&gt;"],
+  "must_not_contain": ["<img src=x onerror=alert(1)>"]
+}

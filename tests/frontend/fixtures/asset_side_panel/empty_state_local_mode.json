@@ -1,0 +1,7 @@
+{
+  "case": "empty_state_local_mode",
+  "template": "renderEmptyState",
+  "input": {"localMode": true},
+  "expected_html": "<div class=\"canvas-asset-empty\">暂无本地素材，请在素材库管理中上传</div>",
+  "expected_contains": ["canvas-asset-empty", "暂无本地素材"]
+}

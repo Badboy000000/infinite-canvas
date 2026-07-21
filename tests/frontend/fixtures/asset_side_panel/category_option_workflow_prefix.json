@@ -1,0 +1,10 @@
+{
+  "case": "category_option_workflow_prefix",
+  "template": "renderCategoryOption",
+  "input": {
+    "cat": {"id": "cat-wf", "name": "分组A", "type": "workflow"},
+    "activeCategoryId": "cat-wf"
+  },
+  "expected_html": "<option value=\"cat-wf\" selected>工作流 / 分组A</option>",
+  "expected_contains": ["工作流 / 分组A", "selected"]
+}

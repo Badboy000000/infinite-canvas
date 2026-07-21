@@ -1,0 +1,10 @@
+{
+  "case": "chat_variant_two_providers_selected_first",
+  "variant": "chat",
+  "providers": [
+    {"id": "comfly", "name": "Comfly"},
+    {"id": "openai", "name": "OpenAI"}
+  ],
+  "selectedId": "comfly",
+  "expected_html": "<option value=\"comfly\" selected>Comfly</option><option value=\"openai\" >OpenAI</option>"
+}
