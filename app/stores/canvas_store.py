@@ -1,4 +1,4 @@
-"""Canvas store facade — 数据模型治理 PR-0 / PR-6 / PR-7。
+"""Canvas store facade — 数据模型治理 PR-0 / PR-6 / PR-7 / PR-10。
 
 包裹 `main.py` 中现有的画布 JSON 读写函数 `save_canvas` / `load_canvas`。
 签名与被包裹的原函数一一对应。
@@ -10,8 +10,67 @@
     fallback 文件（P0 硬约束）。
   * `"db"`（显式启用）→ `app.db.canvas_writer.save_canvas_db` DB 主写 +
     JSON 异步回写。DB 主写失败上抛（不 fallback 到 JSON 主写）。
+- 数据 PR-10 起：`db` 模式显式启用步骤 + 回滚步骤 + CB-P5-08a busy_timeout
+  修复承接（见下方使用手册）；`_get_primary_write_mode` 函数体不改。
 
 `_get_primary_write_mode` 是分派入口；未知值 fail-fast（`ValueError`）。
+
+数据 PR-10 · `CANVAS_PRIMARY_WRITE=db` 显式启用手册
+========================================================
+
+**启用前置条件**（缺一不可，Lead 复核）：
+
+1. 目标环境 `data/app.db` 已 `alembic upgrade head`，`canvases` 表存在
+   （否则 `save_canvas_db` 会在首次 upsert 时抛 `OperationalError`；
+    对应测试 T77）。
+2. 至少一次冷启动通过 `python -m tools.synth_shadow_read_probe --scale=50
+   --seed=1337` 输出 `readiness_verdict == "GREEN"`（承接 Wave 3-J
+   合成压测报告 · CB-P5-08a 已修复到 busy_timeout=400ms · 场景 D
+   `per_iter_latency_ms` P99 ≤ 500ms · saves_bubbled_exception=0）。
+3. `data/canvas/*.json` 快照与 DB 完成一次数据对账（
+   `python -m tools.check_data_alignment` 或等价 shadow_read 命中率 ≥ 0.99）。
+   **⚠️ 承接补丁 P1-RC-B-2**:`tools/check_data_alignment` 尚未交付（Wave 3-K
+   记为 CB-P5-11 承接项),当前 Lead 手工用 `python -m tools.synth_shadow_read_probe
+   --scale=50` 的场景 A `hit_rate` 字段 ≥ 0.99 作等价指标。
+
+**⚠️ 强烈建议**（承接补丁 P1-RC-B-3 · 承接 CB-P5-08b）:
+   启用 `CANVAS_PRIMARY_WRITE=db` 时,**同时关闭** `SHADOW_READ_CANVAS`,或将
+   `SHADOW_READ_CANVAS=true` 只在**独立观察窗口**内启用 12-24h。原因:
+   shadow_read canvas normalizer 结构非对称（CB-P5-08b · 单-id load 会触发
+   `missing_in_json = [其它所有 canvas]` O(N) 噪声）· 长期开启会产生大量
+   假 missing 记录污染 shadow_diff 日志。
+
+**启用步骤**：
+
+1. 部署环境写入 `CANVAS_PRIMARY_WRITE=db`（进程重启生效；本 facade 现读，
+   不缓存）。
+2. **可选** 保留 `SHADOW_READ_CANVAS=true` 12-24h 观察窗口（**不建议长期开**,
+   见上"强烈建议"警示）继续把 `data/shadow_diff/canvas/*.jsonl` 作为回退
+   证据链;观察窗口结束后立即 `unset SHADOW_READ_CANVAS`。
+3. 观察 `canvas_store: load_canvas fallback_hit=true` warning 日志频率；
+   `fallback_reason=db_empty` 意味着 canvas 尚未导入 DB，需要重新触发一次
+   `import_domain("canvas", …)`。
+
+**回滚步骤**（生产可见异常时执行）：
+
+1. 立即 `unset CANVAS_PRIMARY_WRITE`（或改成 `json`）→ 进程重启后 `save_canvas`
+   立即回到 PR-6 语义（老 JSON 主写 + shadow write hook）。回滚不需要
+   数据迁移，因为 `db` 模式全过程都异步回写 JSON 文件（`_async_write_json_fallback`）。
+2. 校验 `data/canvas/*.json` 与 DB 是否同步（同前对账工具）；如 JSON 落后于 DB
+   （例如异步回写线程未跑完），从 DB `content_json` 反导 JSON:
+   **⚠️ 承接补丁 P1-RC-B-2**:`tools/export_db_to_json` 尚未交付（Wave 3-K
+   记为 CB-P5-11 承接项 · 未交付时需 Lead 手工用 `sqlite3` CLI 直接
+   `SELECT content_json FROM canvases WHERE legacy_id = ? ` 并落 JSON 文件）。
+3. 保留 `CANVAS_PRIMARY_WRITE=json` + `SHADOW_READ_CANVAS=true` 至少 1 个
+   观察窗口，确认 `shadow_diff` 无 `missing_in_json` 尾部记录，再关闭
+   shadow_read。
+
+**验收命令**（Wave 3-K 硬门槛，等价 subagent 交付）：
+
+- `pytest tests/db/test_canvas_primary_write_db_mode.py -v` → 10/10 passed
+- `python -m tools.synth_shadow_read_probe --scale=50 --seed=1337
+    --output=probe.json` → `readiness_verdict == "GREEN"`
+- `python -m tools.check_delivery_closure.py`（PR 合并前）
 """
 from __future__ import annotations
 

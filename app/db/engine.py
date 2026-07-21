@@ -15,7 +15,7 @@
   {"check_same_thread": False}` 允许跨线程共享连接对象（配合 session-scope
   单线程使用契约）。
 - **PRAGMA**：`journal_mode=WAL` / `synchronous=NORMAL` / `foreign_keys=ON`
-  / `busy_timeout=5000` 在 `connect` 事件监听器上统一注入。
+  / `busy_timeout=400` 在 `connect` 事件监听器上统一注入（PR-10 · CB-P5-08a）。
 - **进程内单例**：`get_engine()` 返回本进程内首次构造后的同一 Engine。
   `reset_engine()` 供测试代码显式拆除。
 - **签名冻结**：`create_engine(url=None, *, echo=False) -> Engine`；
@@ -99,7 +99,8 @@ def _apply_sqlite_pragmas(engine: Engine) -> None:
     - `journal_mode=WAL`：并发读友好。
     - `synchronous=NORMAL`：治理期性能 / 一致性折中（Canvas PR-6/7 依赖此值）。
     - `foreign_keys=ON`：SQLite 默认关闭外键，需显式启用。
-    - `busy_timeout=5000`：单进程 web + 后台任务并发时缓解 `SQLITE_BUSY`。
+    - `busy_timeout=400`：单进程 web + 后台任务并发时缓解 `SQLITE_BUSY`
+      （PR-10 · CB-P5-08a：从 5000ms 下调，防止用户可见 API stall 5s+）。
     """
     # 仅对 sqlite dialect 生效；PostgreSQL 迁移时本函数直接跳过。
     if engine.url.get_backend_name() != "sqlite":
@@ -112,7 +113,7 @@ def _apply_sqlite_pragmas(engine: Engine) -> None:
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA busy_timeout=400")
         finally:
             cursor.close()
 
