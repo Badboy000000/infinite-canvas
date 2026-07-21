@@ -1,0 +1,12 @@
+{
+  "input_status": "cancelled",
+  "expected_css_class": "cancelled",
+  "expected_label_zh": "已取消",
+  "expected_html_contains": ["node-run-status cancelled", "已取消"],
+  "note": "canvas.css has no rule for .node-run-status.cancelled; visual defaults to inherited font/color (queued-like grey fallback)",
+  "expected_no_escape_bypass": {
+    "sentinel_input": "cancelled'; alert(1); //",
+    "must_contain_escaped": ["&#39;"],
+    "must_not_contain": ["cancelled'; alert(1)"]
+  }
+}

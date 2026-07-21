@@ -1,0 +1,11 @@
+{
+  "input_status": "running",
+  "expected_css_class": "running",
+  "expected_label_zh": "运行中",
+  "expected_html_contains": ["node-run-status running", "运行中"],
+  "expected_no_escape_bypass": {
+    "sentinel_input": "running<img src=x onerror='alert(1)'>",
+    "must_contain_escaped": ["&lt;img"],
+    "must_not_contain": ["<img src=x onerror='alert(1)'>"]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "input_status": "succeeded",
+  "expected_css_class": "succeeded done",
+  "expected_label_zh": "完成",
+  "expected_html_contains": ["node-run-status succeeded done", "完成"],
+  "legacy_alias_note": "canonical=succeeded MUST include legacy `done` class to preserve `.node-run-status.done { display:none }` visual contract from canvas.css:223",
+  "expected_no_escape_bypass": {
+    "sentinel_input": "succeeded\" onload=\"alert(1)",
+    "must_contain_escaped": ["&quot;"],
+    "must_not_contain": ["\" onload=\""]
+  }
+}

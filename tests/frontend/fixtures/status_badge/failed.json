@@ -1,0 +1,11 @@
+{
+  "input_status": "failed",
+  "expected_css_class": "failed",
+  "expected_label_zh": "失败",
+  "expected_html_contains": ["node-run-status failed", "失败"],
+  "expected_no_escape_bypass": {
+    "sentinel_input": "failed&<test>",
+    "must_contain_escaped": ["&amp;", "&lt;test&gt;"],
+    "must_not_contain": ["&<test>"]
+  }
+}

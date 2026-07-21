@@ -6107,7 +6107,25 @@ function renderNode(node){
     // 失败徽章只在一键运行模式中显示，单节点失败已通过 alert 提示
     const showStatus = ['generator','msgen','comfy','ltxDirector','llm','video','rh'].includes(node.type) && node.runStatus
         && (node.runStatus !== 'failed' || node._cascadeFailed);
+    // Wave 3-J 前端 PR-8 (收敛版):status badge 契约域 seam consumer 接入。
+    //   - 首次调用时 lazy dynamic import `NodeStatusView` 并挂到 window
+    //     (只 kick off 一次;后续渲染共享 window.NodeStatusView)
+    //   - 首帧渲染时 ESM 尚未 resolve → 走内联 legacy 分支,输出 **byte-equivalent**
+    //     DOM,避免视觉回归(与 buildBadgeHtml 对 legacy 4 值输出逐字节等价)
+    //   - 严格锁定改动范围到 status badge 消费点,不动 bootstrap.js autoBind 列表
     const statusHtml = showStatus ? (() => {
+        if (typeof window !== 'undefined' && !window.__nodeStatusViewPromise) {
+            window.__nodeStatusViewPromise = import('/static/js/shared/components/NodeStatusView/index.js')
+                .then(mod => { window.NodeStatusView = mod && mod.default ? mod.default : mod; })
+                .catch(err => { if (typeof console !== 'undefined' && console.error) console.error('[NodeStatusView] load failed', err); });
+        }
+        const nsv = (typeof window !== 'undefined') ? window.NodeStatusView : null;
+        if (nsv && typeof nsv.renderHtml === 'function') {
+            return nsv.renderHtml(node.runStatus, { cascadeIdx: node._cascadeIdx || '' });
+        }
+        // Legacy 内联兜底(seam import 竞态) —— **byte-equivalent** 于
+        // NodeStatusView.renderHtml 对 legacy 4 值 `queued/running/done/failed` 的输出。
+        // 修改此块必须同步 NodeStatusView/index.js::buildBadgeHtml 并跑 T47。
         const label = { queued:'排队中', running:'运行中', done:'完成', failed:'失败' }[node.runStatus] || '';
         return `<span class="node-run-status ${node.runStatus}"><span class="dot"></span>${escapeHtml(label)}${node._cascadeIdx?' '+node._cascadeIdx:''}</span>`;
     })() : '';

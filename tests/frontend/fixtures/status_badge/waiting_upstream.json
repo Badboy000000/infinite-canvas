@@ -1,0 +1,12 @@
+{
+  "input_status": "waiting_upstream",
+  "expected_css_class": "waiting-upstream",
+  "expected_label_zh": "等待上游",
+  "expected_html_contains": ["node-run-status waiting-upstream", "等待上游"],
+  "note": "canonical `waiting_upstream` (underscore) → CSS class `waiting-upstream` (dash) — canonical-to-CSS class convention",
+  "expected_no_escape_bypass": {
+    "sentinel_input": "waiting_upstream<svg/onload=alert(1)>",
+    "must_contain_escaped": ["&lt;svg"],
+    "must_not_contain": ["<svg/onload=alert(1)>"]
+  }
+}

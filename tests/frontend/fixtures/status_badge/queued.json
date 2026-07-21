@@ -1,0 +1,11 @@
+{
+  "input_status": "queued",
+  "expected_css_class": "queued",
+  "expected_label_zh": "排队中",
+  "expected_html_contains": ["node-run-status queued", "排队中"],
+  "expected_no_escape_bypass": {
+    "sentinel_input": "queued<script>alert(1)</script>",
+    "must_contain_escaped": ["&lt;script&gt;"],
+    "must_not_contain": ["<script>alert(1)</script>"]
+  }
+}
