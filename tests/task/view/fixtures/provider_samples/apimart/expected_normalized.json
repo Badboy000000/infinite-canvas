@@ -29,6 +29,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": null,
     "error": null
   },
   "fail": {
@@ -55,6 +56,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "content_moderation",
     "error": {
       "raw": "内容审查失败",
       "friendly_zh": "内容审查失败",
@@ -86,6 +88,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "timeout",
     "error": {
       "raw": "APIMart 任务超时",
       "friendly_zh": "APIMart 任务超时",
@@ -113,6 +116,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": null,
     "error": null
   },
   "partial": {
@@ -134,6 +138,7 @@
     },
     "partial_success": true,
     "schema_version": "v1",
+    "category": "partial_success",
     "error": null
   },
   "rate_limit": {
@@ -158,6 +163,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "rate_limit",
     "error": {
       "raw": "APIMart 触发限流",
       "friendly_zh": "APIMart 触发限流",

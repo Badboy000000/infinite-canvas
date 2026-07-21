@@ -1,0 +1,13 @@
+{
+  "expected_category": "rate_limit",
+  "mapper": "map_chat_task",
+  "provider_id": "chat",
+  "raw": {
+    "id": "chatcmpl-rl-1",
+    "status": "failed",
+    "error": {
+      "code": "rate_limit_exceeded",
+      "message": "You are being rate limited"
+    }
+  }
+}

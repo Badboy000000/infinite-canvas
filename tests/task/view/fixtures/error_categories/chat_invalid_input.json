@@ -1,0 +1,13 @@
+{
+  "expected_category": "invalid_input",
+  "mapper": "map_chat_task",
+  "provider_id": "chat",
+  "raw": {
+    "id": "chatcmpl-in-1",
+    "status": "failed",
+    "error": {
+      "code": "invalid_request_error",
+      "message": "unsupported model"
+    }
+  }
+}

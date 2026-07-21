@@ -122,6 +122,7 @@ REQUIRED_VIEW_FIELDS = {
     "raw_excerpt",
     "partial_success",
     "schema_version",
+    "category",
 }
 
 
@@ -132,8 +133,9 @@ def test_view_field_contract_matches_governance() -> None:
       provider_id / upstream_task_id / status / progress / outputs / error
       / next_poll_after_ms / recoverable / remote_status / raw_excerpt
 
-    本 PR 追加 `partial_success` + `schema_version` 两字段（不减不改，
-    仅追加）；本测试锁定该字段集合，防止未来 PR 意外删除。
+    - 任务 PR-5 追加 `partial_success` + `schema_version`；
+    - **任务 PR-6 追加 `category`**（14 值 `TaskErrorCategory` 枚举 or None）。
+    - 只加不减：本测试锁定该字段集合，防止未来 PR 意外删除。
     """
 
     sample = _load("runninghub", "success")

@@ -1,0 +1,14 @@
+{
+  "expected_category": "invalid_input",
+  "mapper": "map_generic_image_task",
+  "provider_id": "openai-image",
+  "raw": {
+    "task_id": "gi-in-1",
+    "status": "failed",
+    "fail_reason": "invalid_param",
+    "error": {
+      "code": "invalid_param",
+      "message": "bad_request: invalid dimensions"
+    }
+  }
+}

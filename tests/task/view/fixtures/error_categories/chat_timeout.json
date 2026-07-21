@@ -1,0 +1,13 @@
+{
+  "expected_category": "timeout",
+  "mapper": "map_chat_task",
+  "provider_id": "chat",
+  "raw": {
+    "id": "chatcmpl-to-1",
+    "status": "failed",
+    "error": {
+      "code": "timeout",
+      "message": "chat completion timeout"
+    }
+  }
+}

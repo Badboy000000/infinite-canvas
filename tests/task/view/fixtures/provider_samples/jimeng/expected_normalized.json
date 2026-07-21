@@ -31,6 +31,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": null,
     "error": null
   },
   "fail": {
@@ -49,6 +50,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "unknown_terminal",
     "error": {
       "raw": "prompt invalid",
       "friendly_zh": "prompt invalid",
@@ -74,6 +76,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "timeout",
     "error": {
       "raw": "cli timeout after 300s",
       "friendly_zh": "cli timeout after 300s",
@@ -98,6 +101,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": null,
     "error": null
   },
   "partial": {
@@ -116,6 +120,7 @@
     },
     "partial_success": true,
     "schema_version": "v1",
+    "category": "partial_success",
     "error": null
   },
   "rate_limit": {
@@ -138,6 +143,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": null,
     "error": null
   }
 }

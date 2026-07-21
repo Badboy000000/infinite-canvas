@@ -1,0 +1,22 @@
+{
+  "expected_category": "unknown_terminal",
+  "mapper": "map_comfy_task",
+  "provider_id": "comfyui",
+  "raw": {
+    "prompt-cf-oom-1": {
+      "status": {
+        "status_str": "error",
+        "completed": true,
+        "messages": [
+          [
+            "execution_error",
+            {
+              "exception_message": "KSampler OOM"
+            }
+          ]
+        ]
+      },
+      "outputs": {}
+    }
+  }
+}

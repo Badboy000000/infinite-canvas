@@ -1,0 +1,17 @@
+{
+  "expected_category": "upstream_5xx",
+  "mapper": "map_runninghub_task",
+  "provider_id": "runninghub",
+  "raw": {
+    "code": 502,
+    "data": {
+      "taskId": "rh-5xx-1",
+      "status": "FAILED"
+    },
+    "error": {
+      "code": "RH_WORKFLOW_ERROR",
+      "message": "workflow execution failed"
+    },
+    "requestId": "req-rh-5xx-1"
+  }
+}

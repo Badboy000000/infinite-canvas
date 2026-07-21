@@ -1,0 +1,16 @@
+{
+  "expected_category": "rate_limit",
+  "mapper": "map_apimart_task",
+  "provider_id": "apimart",
+  "raw": {
+    "code": 429,
+    "data": {
+      "task_id": "am-rl-1",
+      "status": "FAILED"
+    },
+    "error": {
+      "code": "rate_limit_exceeded",
+      "message": "APIMart triggered rate limit"
+    }
+  }
+}

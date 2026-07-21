@@ -1,0 +1,13 @@
+{
+  "expected_category": "resource_not_found",
+  "mapper": "map_video_task",
+  "provider_id": "openai-video",
+  "raw": {
+    "task_id": "vd-nf-1",
+    "status": "failed",
+    "error": {
+      "code": "not_found",
+      "message": "task_id_not_found in system"
+    }
+  }
+}

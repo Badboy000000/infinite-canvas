@@ -1,0 +1,13 @@
+{
+  "expected_category": "timeout",
+  "mapper": "map_generic_image_task",
+  "provider_id": "openai-image",
+  "raw": {
+    "task_id": "gi-to-1",
+    "status": "timeout",
+    "error": {
+      "code": "timeout",
+      "message": "task timed_out"
+    }
+  }
+}

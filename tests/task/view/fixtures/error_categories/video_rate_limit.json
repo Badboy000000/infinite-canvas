@@ -1,0 +1,13 @@
+{
+  "expected_category": "rate_limit",
+  "mapper": "map_video_task",
+  "provider_id": "openai-video",
+  "raw": {
+    "task_id": "vd-rl-1",
+    "status": "failed",
+    "error": {
+      "code": "rate_limit",
+      "message": "too_many_requests"
+    }
+  }
+}

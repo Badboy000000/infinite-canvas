@@ -34,6 +34,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
+from app.task.view.error_category import ErrorCategoryMapper, TaskErrorCategory
+
 
 # ---------------------------------------------------------------------------
 # 常量：canonical 状态集
@@ -127,6 +129,12 @@ class ProviderTaskView:
     raw_excerpt: Mapping[str, Any]
     partial_success: bool = False
     schema_version: str = "v1"
+    #: **任务 PR-6 增量新增** —— 错误分类枚举。
+    #: - error 为 None 且非 partial_success → category=None（兼容 PR-5 语义）
+    #: - error 非空 → 由 :class:`ErrorCategoryMapper.categorize` 决定 14 值之一
+    #: - error 为 None 但 partial_success=True → mapper 调用点填
+    #:   :attr:`TaskErrorCategory.partial_success`
+    category: Optional[TaskErrorCategory] = None
 
     def to_dict(self) -> dict:
         """把 view 展平成 dict（供 audit / debug 序列化）。"""
@@ -143,6 +151,7 @@ class ProviderTaskView:
             "raw_excerpt": dict(self.raw_excerpt),
             "partial_success": self.partial_success,
             "schema_version": self.schema_version,
+            "category": self.category.value if self.category is not None else None,
         }
         if self.error is None:
             payload["error"] = None
@@ -485,12 +494,27 @@ def _view(
     raw_excerpt: Mapping[str, Any],
     partial_success: bool = False,
 ) -> ProviderTaskView:
-    """构造 view，同时做 canonical status 断言与 raw_excerpt sanitize。"""
+    """构造 view，同时做 canonical status 断言与 raw_excerpt sanitize。
+
+    **任务 PR-6 增量**：`category` 字段在此处集中派生（零改 7 map 函数体）：
+    - `error` 非 None → 走 :class:`ErrorCategoryMapper.categorize`（14 值之一）
+    - `error` 为 None 但 `partial_success=True` → :attr:`TaskErrorCategory.partial_success`
+    - `error` 为 None 且 `partial_success=False` → ``None``（兼容 PR-5 语义）
+    """
 
     if status not in KNOWN_VIEW_STATUSES:
         raise ValueError(
             f"ProviderTaskView.status must be one of {sorted(KNOWN_VIEW_STATUSES)}, got {status!r}"
         )
+    category: Optional[TaskErrorCategory]
+    if error is not None:
+        category = ErrorCategoryMapper.categorize(
+            error, remote_status=remote_status, provider_id=provider_id
+        )
+    elif partial_success:
+        category = TaskErrorCategory.partial_success
+    else:
+        category = None
     return ProviderTaskView(
         provider_id=provider_id,
         upstream_task_id=upstream_task_id,
@@ -503,6 +527,7 @@ def _view(
         remote_status=remote_status,
         raw_excerpt=sanitize_raw_excerpt(raw_excerpt),
         partial_success=partial_success,
+        category=category,
     )
 
 

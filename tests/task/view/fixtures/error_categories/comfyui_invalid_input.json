@@ -1,0 +1,22 @@
+{
+  "expected_category": "invalid_input",
+  "mapper": "map_comfy_task",
+  "provider_id": "comfyui",
+  "raw": {
+    "prompt-cf-in-1": {
+      "status": {
+        "status_str": "error",
+        "completed": true,
+        "messages": [
+          [
+            "execution_error",
+            {
+              "exception_message": "invalid_input: missing model"
+            }
+          ]
+        ]
+      },
+      "outputs": {}
+    }
+  }
+}

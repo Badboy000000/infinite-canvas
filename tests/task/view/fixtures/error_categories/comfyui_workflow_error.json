@@ -1,0 +1,22 @@
+{
+  "expected_category": "upstream_5xx",
+  "mapper": "map_comfy_task",
+  "provider_id": "comfyui",
+  "raw": {
+    "prompt-cf-wf-1": {
+      "status": {
+        "status_str": "error",
+        "completed": true,
+        "messages": [
+          [
+            "execution_error",
+            {
+              "exception_message": "workflow_error at node 3"
+            }
+          ]
+        ]
+      },
+      "outputs": {}
+    }
+  }
+}

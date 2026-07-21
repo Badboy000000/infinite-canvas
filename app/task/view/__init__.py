@@ -11,6 +11,7 @@
 error 字段允许暂缺 `TaskErrorCategory` 枚举，任务 PR-6 承接 category 抽取。
 """
 
+from app.task.view.error_category import ErrorCategoryMapper, TaskErrorCategory
 from app.task.view.provider_view import (
     KNOWN_VIEW_STATUSES,
     ProviderTaskView,
@@ -29,6 +30,8 @@ __all__ = [
     "ProviderTaskView",
     "ViewError",
     "KNOWN_VIEW_STATUSES",
+    "TaskErrorCategory",
+    "ErrorCategoryMapper",
     "sanitize_raw_excerpt",
     "map_runninghub_task",
     "map_apimart_task",

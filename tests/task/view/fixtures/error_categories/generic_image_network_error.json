@@ -1,0 +1,13 @@
+{
+  "expected_category": "network_error",
+  "mapper": "map_generic_image_task",
+  "provider_id": "openai-image",
+  "raw": {
+    "task_id": "gi-ne-1",
+    "status": "failed",
+    "error": {
+      "code": "network_error",
+      "message": "conn_reset by peer"
+    }
+  }
+}

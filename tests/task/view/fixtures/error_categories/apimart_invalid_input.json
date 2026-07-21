@@ -1,0 +1,16 @@
+{
+  "expected_category": "invalid_input",
+  "mapper": "map_apimart_task",
+  "provider_id": "apimart",
+  "raw": {
+    "code": 400,
+    "data": {
+      "task_id": "am-in-1",
+      "status": "FAILED"
+    },
+    "error": {
+      "code": "invalid_param",
+      "message": "invalid_request: unsupported size"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "expected_category": "timeout",
+  "mapper": "map_video_task",
+  "provider_id": "openai-video",
+  "raw": {
+    "task_id": "vd-to-1",
+    "status": "expired",
+    "error": {
+      "code": "timeout",
+      "message": "video task timeout"
+    }
+  }
+}

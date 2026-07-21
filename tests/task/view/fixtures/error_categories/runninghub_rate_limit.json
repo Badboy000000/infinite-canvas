@@ -1,0 +1,17 @@
+{
+  "expected_category": "rate_limit",
+  "mapper": "map_runninghub_task",
+  "provider_id": "runninghub",
+  "raw": {
+    "code": 429,
+    "data": {
+      "taskId": "rh-rl-1",
+      "status": "rate_limited"
+    },
+    "error": {
+      "code": "rate_limit",
+      "message": "Too many requests"
+    },
+    "requestId": "req-rh-rl-1"
+  }
+}

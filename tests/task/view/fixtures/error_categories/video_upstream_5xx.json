@@ -1,0 +1,13 @@
+{
+  "expected_category": "upstream_5xx",
+  "mapper": "map_video_task",
+  "provider_id": "openai-video",
+  "raw": {
+    "task_id": "vd-5xx-1",
+    "status": "failed",
+    "error": {
+      "code": "internal_server_error",
+      "message": "bad_gateway upstream"
+    }
+  }
+}

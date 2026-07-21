@@ -1,0 +1,16 @@
+{
+  "expected_category": "quota_exceeded",
+  "mapper": "map_apimart_task",
+  "provider_id": "apimart",
+  "raw": {
+    "code": 402,
+    "data": {
+      "task_id": "am-q-1",
+      "status": "FAILED"
+    },
+    "error": {
+      "code": "balance_insufficient",
+      "message": "insufficient balance"
+    }
+  }
+}

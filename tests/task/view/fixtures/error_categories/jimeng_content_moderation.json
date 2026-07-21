@@ -1,0 +1,10 @@
+{
+  "expected_category": "content_moderation",
+  "mapper": "map_jimeng_task",
+  "provider_id": "jimeng",
+  "raw": {
+    "submit_id": "jm-cm-1",
+    "gen_status": "fail",
+    "fail_reason": "content_rejected by moderation"
+  }
+}

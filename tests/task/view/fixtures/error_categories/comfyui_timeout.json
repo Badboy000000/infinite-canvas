@@ -1,0 +1,22 @@
+{
+  "expected_category": "timeout",
+  "mapper": "map_comfy_task",
+  "provider_id": "comfyui",
+  "raw": {
+    "prompt-cf-to-1": {
+      "status": {
+        "status_str": "error",
+        "completed": true,
+        "messages": [
+          [
+            "execution_error",
+            {
+              "exception_message": "workflow timeout"
+            }
+          ]
+        ]
+      },
+      "outputs": {}
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "expected_category": "timeout",
+  "mapper": "map_runninghub_task",
+  "provider_id": "runninghub",
+  "raw": {
+    "code": 504,
+    "data": {
+      "taskId": "rh-to-1",
+      "status": "TIMEOUT"
+    },
+    "error": {
+      "code": "TIMEOUT",
+      "message": "task exceeded 600s"
+    },
+    "requestId": "req-rh-to-1"
+  }
+}

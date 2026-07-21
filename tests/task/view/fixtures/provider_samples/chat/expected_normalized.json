@@ -25,6 +25,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": null,
     "error": null
   },
   "fail": {
@@ -46,6 +47,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "invalid_input",
     "error": {
       "raw": "unsupported model",
       "friendly_zh": "unsupported model",
@@ -74,6 +76,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "timeout",
     "error": {
       "raw": "chat completion timeout",
       "friendly_zh": "chat completion timeout",
@@ -98,6 +101,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": null,
     "error": null
   },
   "partial": {
@@ -125,6 +129,7 @@
     },
     "partial_success": true,
     "schema_version": "v1",
+    "category": "partial_success",
     "error": null
   },
   "rate_limit": {
@@ -148,6 +153,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "rate_limit",
     "error": {
       "raw": "You are being rate limited. Please retry.",
       "friendly_zh": "You are being rate limited. Please retry.",

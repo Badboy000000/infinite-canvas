@@ -36,6 +36,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": null,
     "error": null
   },
   "fail": {
@@ -58,6 +59,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "invalid_input",
     "error": {
       "raw": "参数非法",
       "friendly_zh": "参数非法",
@@ -86,6 +88,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "timeout",
     "error": {
       "raw": "生图任务超时",
       "friendly_zh": "生图任务超时",
@@ -110,6 +113,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": null,
     "error": null
   },
   "partial": {
@@ -128,6 +132,7 @@
     },
     "partial_success": true,
     "schema_version": "v1",
+    "category": "partial_success",
     "error": null
   },
   "rate_limit": {
@@ -149,6 +154,7 @@
     },
     "partial_success": false,
     "schema_version": "v1",
+    "category": "rate_limit",
     "error": {
       "raw": "限流触发",
       "friendly_zh": "限流触发",

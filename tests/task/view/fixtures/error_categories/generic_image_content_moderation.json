@@ -1,0 +1,13 @@
+{
+  "expected_category": "content_moderation",
+  "mapper": "map_generic_image_task",
+  "provider_id": "openai-image",
+  "raw": {
+    "task_id": "gi-cm-1",
+    "status": "failed",
+    "error": {
+      "code": "content_moderation",
+      "message": "unsafe_content flagged"
+    }
+  }
+}

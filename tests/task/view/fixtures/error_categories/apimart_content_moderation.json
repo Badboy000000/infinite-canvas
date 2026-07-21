@@ -1,0 +1,17 @@
+{
+  "expected_category": "content_moderation",
+  "mapper": "map_apimart_task",
+  "provider_id": "apimart",
+  "raw": {
+    "code": 500,
+    "data": {
+      "task_id": "am-cm-1",
+      "status": "FAILED",
+      "fail_reason": "content review failed"
+    },
+    "error": {
+      "code": "APIMART_CONTENT_REJECTED",
+      "message": "policy_violation detected"
+    }
+  }
+}
