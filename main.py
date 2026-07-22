@@ -755,6 +755,13 @@ FILE_INDEX_PATH = os.path.join(DATA_DIR, "file_index.json")
 file_service = FileService(LocalDirAdapter(ASSETS_DIR), FILE_INDEX_PATH)
 _FILE_SHADOW_BACKGROUND_SLOTS = BoundedSemaphore(4)
 
+# 文件 PR-3：生成结果主写路径开关（默认关闭）
+# true  → 新路径走 file_service.create_from_generation + 旧 shadow_register 跳过
+# false → 保持旧 shadow_register 路径 · 新路径不走
+FILE_SERVICE_PRIMARY_WRITE_GENERATION = str(
+    os.environ.get("FILE_SERVICE_PRIMARY_WRITE_GENERATION", "false")
+).strip().lower() in ("1", "true", "yes")
+
 def _shadow_error_code(exc):
     if isinstance(exc, FileNotFoundError):
         return "legacy_file_missing"
@@ -5188,7 +5195,15 @@ async def generate_codex_provider_image_via_gpt_image_2_skill(prompt, size, mode
             processed_path = codex_postprocess_image_to_requested_size(path, size, attempt_provider)
             url = codex_output_url_from_path(processed_path or path)
             if url:
-                shadow_register_existing_in_thread(processed_path or path, url, "ai_output", content_type_for_path(processed_path or path))
+                if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+                    file_service.create_from_generation(
+                        data=open(processed_path or path, 'rb').read(),
+                        mime_type=content_type_for_path(processed_path or path),
+                        legacy_path=processed_path or path,
+                        legacy_url=url,
+                    )
+                else:
+                    shadow_register_existing_in_thread(processed_path or path, url, "ai_output", content_type_for_path(processed_path or path))
                 urls.append(url)
         if not urls:
             status_text = (out_text or err_text or "")[:1200]
@@ -5562,7 +5577,15 @@ async def generate_gemini_cli_provider_image(prompt, size, model, reference_imag
             processed_path = codex_postprocess_image_to_requested_size(path, size, "gemini-cli")
             url = codex_output_url_from_path(processed_path or path)
             if url and url not in urls:
-                shadow_register_existing_in_thread(processed_path or path, url, "ai_output", content_type_for_path(processed_path or path))
+                if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+                    file_service.create_from_generation(
+                        data=open(processed_path or path, 'rb').read(),
+                        mime_type=content_type_for_path(processed_path or path),
+                        legacy_path=processed_path or path,
+                        legacy_url=url,
+                    )
+                else:
+                    shadow_register_existing_in_thread(processed_path or path, url, "ai_output", content_type_for_path(processed_path or path))
                 urls.append(url)
         if not urls:
             text = f"{raw.get('text') or raw.get('_stdout') or ''}\n{raw.get('_stderr') or ''}"
@@ -5572,7 +5595,15 @@ async def generate_gemini_cli_provider_image(prompt, size, model, reference_imag
                 processed_path = codex_postprocess_image_to_requested_size(match_path, size, "gemini-cli")
                 url = codex_output_url_from_path(processed_path or match_path)
                 if url and url not in urls:
-                    shadow_register_existing_in_thread(processed_path or match_path, url, "ai_output", content_type_for_path(processed_path or match_path))
+                    if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+                        file_service.create_from_generation(
+                            data=open(processed_path or match_path, 'rb').read(),
+                            mime_type=content_type_for_path(processed_path or match_path),
+                            legacy_path=processed_path or match_path,
+                            legacy_url=url,
+                        )
+                    else:
+                        shadow_register_existing_in_thread(processed_path or match_path, url, "ai_output", content_type_for_path(processed_path or match_path))
                     urls.append(url)
         if not urls:
             status_text = (raw.get("text") or raw.get("_stdout") or raw.get("_stderr") or "")[:1200]
@@ -6204,7 +6235,15 @@ def jimeng_local_output_url(path, kind="image"):
     dest = output_path_for(filename, "output")
     shutil.copyfile(path, dest)
     local_url = output_url_for(filename, "output")
-    shadow_register_existing_in_thread(dest, local_url, "ai_output", content_type_for_path(dest))
+    if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+        file_service.create_from_generation(
+            data=open(dest, 'rb').read(),
+            mime_type=content_type_for_path(dest),
+            legacy_path=dest,
+            legacy_url=local_url,
+        )
+    else:
+        shadow_register_existing_in_thread(dest, local_url, "ai_output", content_type_for_path(dest))
     return local_url
 
 async def jimeng_store_output_value(value, kind="image"):
@@ -9166,7 +9205,18 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
         with open(path, "wb") as f:
             f.write(base64.b64decode(image_data["value"]))
         local_url = output_url_for(filename, category)
-        await shadow_register_existing_async(path, local_url, "ai_output", mime_type)
+        if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+            with open(path, 'rb') as f:
+                _data = f.read()
+            await asyncio.to_thread(
+                file_service.create_from_generation,
+                _data,
+                mime_type=mime_type,
+                legacy_path=path,
+                legacy_url=local_url,
+            )
+        else:
+            await shadow_register_existing_async(path, local_url, "ai_output", mime_type)
         return local_url
     value = image_data["value"]
     if value.startswith("/output/") or value.startswith("/assets/"):
@@ -9187,7 +9237,18 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
             with open(path, "wb") as f:
                 f.write(response.content)
             local_url = output_url_for(filename, category)
-            await shadow_register_existing_async(path, local_url, "ai_output", content_type)
+            if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+                with open(path, 'rb') as f:
+                    _data = f.read()
+                await asyncio.to_thread(
+                    file_service.create_from_generation,
+                    _data,
+                    mime_type=content_type,
+                    legacy_path=path,
+                    legacy_url=local_url,
+                )
+            else:
+                await shadow_register_existing_async(path, local_url, "ai_output", content_type)
             return local_url
     except Exception as e:
         print(f"保存上游图片失败: {e}; url={value}")
@@ -9270,7 +9331,18 @@ async def save_remote_video_to_output(url, prefix="video_", category="output"):
             if os.path.getsize(path) <= 0:
                 raise RuntimeError("empty video response")
             local_url = output_url_for(filename, category)
-            await shadow_register_existing_async(path, local_url, "ai_output", content_type)
+            if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+                with open(path, 'rb') as f:
+                    _data = f.read()
+                await asyncio.to_thread(
+                    file_service.create_from_generation,
+                    _data,
+                    mime_type=content_type,
+                    legacy_path=path,
+                    legacy_url=local_url,
+                )
+            else:
+                await shadow_register_existing_async(path, local_url, "ai_output", content_type)
             return local_url
     except Exception as e:
         print(f"保存上游视频失败: {e}")
@@ -9837,7 +9909,18 @@ async def runninghub_store_remote_output(client, remote):
     with open(path, "wb") as f:
         f.write(response.content)
     local_url = output_url_for(filename, "output")
-    await shadow_register_existing_async(path, local_url, "ai_output", response.headers.get("content-type", ""))
+    if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+        with open(path, 'rb') as f:
+            _data = f.read()
+        await asyncio.to_thread(
+            file_service.create_from_generation,
+            _data,
+            mime_type=response.headers.get("content-type", ""),
+            legacy_path=path,
+            legacy_url=local_url,
+        )
+    else:
+        await shadow_register_existing_async(path, local_url, "ai_output", response.headers.get("content-type", ""))
     return local_url
 
 def runninghub_fail_reason(raw):
@@ -16877,7 +16960,18 @@ async def poll_angle_cloud(req: CloudPollRequest):
                                 with open(file_path, "wb") as f:
                                     f.write(img_res.content)
                                 local_path = output_url_for(filename, "output")
-                                await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
+                                if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+                                    with open(file_path, 'rb') as f:
+                                        _data = f.read()
+                                    await asyncio.to_thread(
+                                        file_service.create_from_generation,
+                                        _data,
+                                        mime_type=img_res.headers.get("content-type", ""),
+                                        legacy_path=file_path,
+                                        legacy_url=local_path,
+                                    )
+                                else:
+                                    await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
                             else:
                                 local_path = img_url
                     except Exception:
@@ -16968,7 +17062,18 @@ async def generate_angle_cloud(req: CloudGenRequest):
                                 with open(file_path, "wb") as f:
                                     f.write(img_res.content)
                                 local_path = output_url_for(filename, "output")
-                                await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
+                                if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+                                    with open(file_path, 'rb') as f:
+                                        _data = f.read()
+                                    await asyncio.to_thread(
+                                        file_service.create_from_generation,
+                                        _data,
+                                        mime_type=img_res.headers.get("content-type", ""),
+                                        legacy_path=file_path,
+                                        legacy_url=local_path,
+                                    )
+                                else:
+                                    await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
                             else:
                                 local_path = img_url
                     except Exception:
@@ -17067,7 +17172,18 @@ async def generate_cloud(req: CloudGenRequest):
                                 with open(file_path, "wb") as f:
                                     f.write(img_res.content)
                                 local_path = output_url_for(filename, "output")
-                                await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
+                                if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+                                    with open(file_path, 'rb') as f:
+                                        _data = f.read()
+                                    await asyncio.to_thread(
+                                        file_service.create_from_generation,
+                                        _data,
+                                        mime_type=img_res.headers.get("content-type", ""),
+                                        legacy_path=file_path,
+                                        legacy_url=local_path,
+                                    )
+                                else:
+                                    await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
                             else:
                                 local_path = img_url
                     except Exception as dl_e:
@@ -17164,7 +17280,18 @@ async def ms_generate(req: MsGenerateRequest):
                                     with open(file_path, "wb") as f:
                                         f.write(img_res.content)
                                     local_path = output_url_for(filename, "output")
-                                    await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
+                                    if FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+                                        with open(file_path, 'rb') as f:
+                                            _data = f.read()
+                                        await asyncio.to_thread(
+                                            file_service.create_from_generation,
+                                            _data,
+                                            mime_type=img_res.headers.get("content-type", ""),
+                                            legacy_path=file_path,
+                                            legacy_url=local_path,
+                                        )
+                                    else:
+                                        await shadow_register_existing_async(file_path, local_path, "ai_output", img_res.headers.get("content-type", ""))
                                 else:
                                     local_path = img_url
                         except Exception:

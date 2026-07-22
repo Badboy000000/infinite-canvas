@@ -23,13 +23,15 @@
 from __future__ import annotations
 
 from sqlalchemy import (
-    JSON,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    JSON,
+    LargeBinary,
     String,
     Table,
     Text,
@@ -264,6 +266,98 @@ canvases = Table(
 )
 
 
+# ---------------------------------------------------------------------------
+# file_objects —— 文件对象主表（文件 PR-3 · DDL: 0004_file_object_ddl.py）
+# ---------------------------------------------------------------------------
+
+file_objects = Table(
+    "file_objects",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, default=generate_id),
+    Column("sha256", LargeBinary(32), nullable=False),
+    Column("xxh64", LargeBinary(8), nullable=False),
+    Column("size_bytes", BigInteger, nullable=False),
+    Column("mime_type", Text, nullable=True),
+    Column("storage_backend", Text, nullable=False, server_default="local"),
+    Column("bucket", Text, nullable=True),
+    Column("object_key", Text, nullable=False),
+    Column("etag", Text, nullable=True),
+    Column("origin_kind", Text, nullable=False),
+    Column("owner_user_id", Uuid(as_uuid=True), nullable=True),
+    Column("workspace_id", Uuid(as_uuid=True), nullable=True),
+    Column("project_id", Uuid(as_uuid=True), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("deleted_at", DateTime(timezone=True), nullable=True),
+    Column("reference_count", Integer, nullable=False, server_default="0"),
+    Column("last_referenced_at", DateTime(timezone=True), nullable=True),
+    Column("legacy_path", Text, nullable=True),
+    Column("legacy_url", Text, nullable=True),
+    Column("import_batch_id", Uuid(as_uuid=True), nullable=True),
+    Column("raw_meta", Text, nullable=True),
+    Column("origin_metadata_sha", LargeBinary(32), nullable=True),
+    Column("width", Integer, nullable=True),
+    Column("height", Integer, nullable=True),
+    Column("duration_ms", Integer, nullable=True),
+    UniqueConstraint("sha256", name="uq_file_objects_sha256"),
+    UniqueConstraint("legacy_path", name="uq_file_objects_legacy_path"),
+    Index("idx_file_objects_sha256", "sha256"),
+    Index("idx_file_objects_legacy_path", "legacy_path"),
+    Index("idx_file_objects_workspace_project", "workspace_id", "project_id"),
+    Index("idx_file_objects_origin_kind", "origin_kind"),
+    Index("idx_file_objects_created_at", "created_at"),
+)
+
+
+# ---------------------------------------------------------------------------
+# file_refs —— 业务对象引用 FileObject（DDL: 0004_file_object_ddl.py）
+# ---------------------------------------------------------------------------
+
+file_refs = Table(
+    "file_refs",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, default=generate_id),
+    Column(
+        "file_id",
+        Uuid(as_uuid=True),
+        ForeignKey("file_objects.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("subject_table", Text, nullable=False),
+    Column("subject_id", Uuid(as_uuid=True), nullable=False),
+    Column("role", Text, nullable=False, server_default="primary"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "subject_table", "subject_id", "role", "file_id",
+        name="uq_file_refs_subject_role",
+    ),
+    Index("idx_file_refs_file_id", "file_id"),
+    Index("idx_file_refs_subject", "subject_table", "subject_id"),
+)
+
+
+# ---------------------------------------------------------------------------
+# legacy_url_refs —— 旧 URL / 本地路径兼容层（DDL: 0004_file_object_ddl.py）
+# ---------------------------------------------------------------------------
+
+legacy_url_refs = Table(
+    "legacy_url_refs",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, default=generate_id),
+    Column(
+        "file_id",
+        Uuid(as_uuid=True),
+        ForeignKey("file_objects.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("url", Text, nullable=False),
+    Column("migrated_at", DateTime(timezone=True), nullable=False),
+    Column("sha256", LargeBinary(32), nullable=False),
+    UniqueConstraint("url", name="uq_legacy_url_refs_url"),
+    Index("idx_legacy_url_refs_file_id", "file_id"),
+    Index("idx_legacy_url_refs_sha256", "sha256"),
+)
+
+
 BASELINE_TABLE_NAMES = (
     "projects",
     "provider_configs",
@@ -287,5 +381,8 @@ __all__ = [
     "asset_categories",
     "asset_items",
     "canvases",
+    "file_objects",
+    "file_refs",
+    "legacy_url_refs",
     "BASELINE_TABLE_NAMES",
 ]

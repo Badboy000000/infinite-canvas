@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 import os
 import tempfile
 import threading
@@ -45,6 +46,27 @@ ALLOWED_ERROR_CODES = {
     "registration_error",
     "unknown",
 }
+
+
+def _mime_ext(mime_type: str) -> str | None:
+    """Return the file extension (without dot) for a given MIME type.
+
+    Returns ``None`` when the MIME type is unknown.
+    """
+    if not mime_type:
+        return None
+    guessed = mimetypes.guess_extension(mime_type.split(";")[0].strip())
+    if guessed:
+        return guessed.lstrip(".").lower()
+    # Common fallbacks not covered by ``mimetypes``
+    _MIME_EXT_MAP: dict[str, str] = {
+        "image/webp": "webp",
+        "video/x-flv": "flv",
+        "audio/mpeg": "mp3",
+        "audio/wav": "wav",
+        "application/octet-stream": "bin",
+    }
+    return _MIME_EXT_MAP.get(mime_type.split(";")[0].strip())
 
 
 class LegacyPathConflictError(RuntimeError):
@@ -179,6 +201,142 @@ class FileService:
         if not hasattr(stream, "read"):
             raise TypeError("stream must be binary-readable")
         return self._register_existing(legacy_path, legacy_url, origin_kind, mime_type)
+
+    def create_from_generation(
+        self,
+        data: bytes,
+        *,
+        mime_type: str,
+        origin_kind: str = "ai_output",
+        legacy_path: str | None = None,
+        legacy_url: str | None = None,
+        owner_user_id: str | None = None,
+        workspace_id: str | None = None,
+        project_id: str | None = None,
+    ) -> FileRecord:
+        """Persist AI-generated output through the storage adapter and DB.
+
+        Writes content via ``self.adapter.put``, then records the result in the
+        ``file_objects`` / ``file_refs`` / ``legacy_url_refs`` tables.
+
+        Idempotency contract:
+        - Same sha256 → only one ``file_objects`` row; ``reference_count += 1``.
+        - Same ``(subject_table, subject_id, role, file_id)`` → only one ``file_refs`` row.
+        """
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        from app.data_import import tables as t
+        from app.db.engine import get_engine
+        from app.shared.ids import generate_id
+
+        # --- compute hashes ---
+        sha256_digest = hashlib.sha256(data)
+        sha256_bytes = sha256_digest.digest()       # 32 bytes for DB
+        sha256_hex = sha256_digest.hexdigest()       # hex string for key
+        size_bytes = len(data)
+        # xxh64: use first 8 bytes of sha256 as fallback (xxhash not available)
+        xxh64_bytes = sha256_bytes[:8]
+
+        # --- determine extension ---
+        ext = _mime_ext(mime_type) or "png"
+
+        # --- object key ---
+        key = f"output/{sha256_hex[0:2]}/{sha256_hex[2:4]}/{sha256_hex}.{ext}"
+
+        # --- persist via adapter ---
+        meta = self.adapter.put(key, data, mime_type=mime_type)
+
+        # --- DB write ---
+        now = datetime.now(timezone.utc)
+        file_id = generate_id()
+        engine = get_engine()
+        with engine.begin() as conn:
+            # file_objects: upsert on sha256 conflict
+            stmt = sqlite_insert(t.file_objects).values(
+                id=file_id,
+                sha256=sha256_bytes,
+                xxh64=xxh64_bytes,
+                size_bytes=size_bytes,
+                mime_type=mime_type or None,
+                storage_backend=meta.backend,
+                bucket=None,
+                object_key=key,
+                etag=meta.etag,
+                origin_kind=origin_kind,
+                owner_user_id=owner_user_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                created_at=now,
+                deleted_at=None,
+                reference_count=1,
+                last_referenced_at=now,
+                legacy_path=legacy_path,
+                legacy_url=legacy_url,
+                import_batch_id=None,
+                raw_meta=None,
+                origin_metadata_sha=None,
+                width=None,
+                height=None,
+                duration_ms=None,
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["sha256"],
+                set_={
+                    "reference_count": t.file_objects.c.reference_count + 1,
+                    "last_referenced_at": now,
+                },
+            )
+            conn.execute(stmt)
+
+            # Determine actual file_id: we always fetch by sha256 to get the
+            # correct UUID (lastrowid is the SQLite ROWID, not the UUID PK).
+            from sqlalchemy import select
+            existing = conn.execute(
+                select(t.file_objects.c.id).where(
+                    t.file_objects.c.sha256 == sha256_bytes
+                )
+            ).fetchone()
+            actual_id = existing[0] if existing else file_id
+
+            # file_refs: insert subject reference (idempotent via UNIQUE constraint)
+            ref_id = generate_id()
+            conn.execute(
+                sqlite_insert(t.file_refs).values(
+                    id=ref_id,
+                    file_id=actual_id,
+                    subject_table="generation_output",
+                    subject_id=actual_id,
+                    role="primary",
+                    created_at=now,
+                ).on_conflict_do_nothing(
+                    index_elements=["subject_table", "subject_id", "role", "file_id"],
+                )
+            )
+
+            # legacy_url_refs: record legacy URL mapping when present
+            if legacy_url is not None:
+                conn.execute(
+                    sqlite_insert(t.legacy_url_refs).values(
+                        id=generate_id(),
+                        file_id=actual_id,
+                        url=legacy_url,
+                        migrated_at=now,
+                        sha256=sha256_bytes,
+                    ).on_conflict_do_nothing(
+                        index_elements=["url"],
+                    )
+                )
+
+        return FileRecord(
+            id=str(actual_id),
+            sha256=sha256_hex,
+            size_bytes=size_bytes,
+            mime_type=mime_type or None,
+            origin_kind=origin_kind,
+            legacy_path=legacy_path or "",
+            legacy_url=legacy_url,
+            created_at=now.isoformat(),
+        )
 
     def resolve_by_id(self, file_id: str) -> Optional[FileRecord]:
         with self._lock, _CrossProcessLock(self.lock_path):
