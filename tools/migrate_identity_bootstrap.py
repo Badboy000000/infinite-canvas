@@ -65,6 +65,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+# CB-P5-12 承接（identity PR-1 · Wave 3-M 主线 B）:Windows 默认 codepage=cp936
+# 下,print("已完成 …") / print("--force 未实现 …") 等中文输出会以 cp936 编码
+# 写出;若父进程用 `subprocess.run(..., text=True)` 默认 UTF-8 解码就会抛
+# UnicodeDecodeError。此处对 stdout / stderr 做 UTF-8 重配 · 让本脚本在
+# Windows 默认 chcp=936 环境下也能与 UTF-8 父进程编解码对齐。参照
+# tools/data_reconcile.py 顶部 CB-P5-04 的 try/except 静默降级模式(极老
+# Python 或非标准流 · pytest capture · IPython 等非标准流不支持时静默降级)。
+if sys.platform == "win32":
+    try:  # pragma: no cover — Windows-only defensive path
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        # 极老 Python 或非标准流(如 IPython / pytest capture)不支持 · 静默降级
+        pass
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_IDENTITY_DIR = REPO_ROOT / "data" / "identity"
 

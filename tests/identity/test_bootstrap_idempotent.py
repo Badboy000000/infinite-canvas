@@ -70,6 +70,15 @@ def _hash_dir(base: Path) -> dict[str, str]:
 
 
 def _run_bootstrap(identity_dir: Path) -> subprocess.CompletedProcess:
+    # CB-P5-12 承接（identity PR-1 · Wave 3-M 主线 B）:
+    # Windows 默认 codepage=cp936 时，`subprocess.run(..., text=True)` 会用
+    # cp936 解码子进程 stdout / stderr。migrate_identity_bootstrap.py 中的
+    # 中文输出（"已完成" / "缺失 ..." / "--force 未实现"）由子进程侧以
+    # locale.getpreferredencoding()=cp936 编码写入 · 若父进程默认 UTF-8
+    # 解码就会抛 UnicodeDecodeError（0xbf / 0xd2 / 0xa1 / 0xb2 等首字节）。
+    # 显式指定 encoding="utf-8" + errors="replace" · 与 migrate_identity_bootstrap.py
+    # 顶部 Windows stdout/stderr.reconfigure(encoding="utf-8") 兜底成对使用 ·
+    # 保证父子两端编码一致 · 极端情况下（未来出现非 UTF-8 字节）也不 crash。
     return subprocess.run(
         [
             sys.executable,
@@ -79,6 +88,8 @@ def _run_bootstrap(identity_dir: Path) -> subprocess.CompletedProcess:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=REPO_ROOT,
     )
 
@@ -129,6 +140,8 @@ def test_bootstrap_dry_run_writes_nothing(tmp_path: Path) -> None:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=REPO_ROOT,
     )
     assert result.returncode == 0
@@ -217,6 +230,8 @@ def test_bootstrap_force_flag_prints_warning(tmp_path: Path) -> None:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=REPO_ROOT,
     )
     assert result.returncode == 0
