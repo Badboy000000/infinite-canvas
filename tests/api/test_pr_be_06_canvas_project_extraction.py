@@ -361,6 +361,188 @@ def test_t107_canvas_service_preserves_409_semantic() -> None:
 
 
 # ---------------------------------------------------------------------------
+# CB-P5-14 承接（数据 PR-17 · Wave 3-M 主线 A）· Service 层 3 边界补齐
+# ---------------------------------------------------------------------------
+
+
+def _build_canvas_service_with_store(fake_store: MagicMock) -> Any:
+    """CB-P5-14 承接 · 3 边界共用 fixture 构造器（fake_store 由调用方注入）。
+
+    与 T107 完全同形状（避免 T107 现有测试受影响）。刻意不改 T107。
+    """
+
+    from app.modules.canvas.service import CanvasService
+
+    async def _broadcast(*_a, **_kw):
+        return None
+
+    return CanvasService(
+        store=fake_store,
+        list_canvases=lambda: [],
+        list_deleted_canvases=lambda: [],
+        new_canvas=lambda *a, **kw: {},
+        canvas_record=lambda c: c,
+        canvas_path=lambda cid: cid,
+        load_canvas_any=lambda cid: {"id": cid},
+        normalize_canvas_kind=lambda k: k or "classic",
+        normalize_canvas_color=lambda c: c,
+        canvas_lock=MagicMock(__enter__=lambda s: None, __exit__=lambda *a: None),
+        default_project_id="default",
+        broadcast_canvas_updated=_broadcast,
+        now_ms=lambda: 2000,
+    )
+
+
+def test_t107b_canvas_service_equal_boundary_succeeds_200() -> None:
+    """T123 · CB-P5-14 承接 · equal 边界（client base == DB updated_at）→ 200。
+
+    fake_store.load_canvas 返回 updated_at=1000 · cmd.base_updated_at=1000 →
+    service.update_canvas 应成功 · 不抛异常 · fake_store.save_canvas 被
+    调用一次。
+    """
+
+    from app.modules.canvas.commands import CanvasSaveCommand
+
+    fake_store = MagicMock()
+    fake_store.load_canvas.return_value = {
+        "id": "abc",
+        "updated_at": 1000,
+        "title": "hi",
+        "icon": "layers",
+        "kind": "classic",
+    }
+    fake_store.save_canvas = MagicMock()
+    service = _build_canvas_service_with_store(fake_store)
+
+    cmd = CanvasSaveCommand(
+        canvas_id="abc",
+        title="x",
+        icon="",
+        nodes=[],
+        connections=[],
+        viewport={},
+        logs=[],
+        settings={},
+        client_id="",
+        base_updated_at=1000,  # equal 边界（严格等于 DB updated_at）
+        raw={},
+    )
+
+    # 不应抛异常
+    result = asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
+    assert isinstance(result, dict)
+    # save 应被调用（equal 边界不冲突）
+    fake_store.save_canvas.assert_called_once()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "CB-P5-17 · CanvasService.update_canvas 只用 `<` 比较 · 未处理"
+        " newer 反向漂移边界（client base > DB updated_at 应 409 · 现"
+        "行代码放行）"
+    ),
+)
+def test_t107c_canvas_service_newer_boundary_returns_409() -> None:
+    """T124 · CB-P5-14 承接 · newer 边界（反向漂移防护）→ 409。
+
+    fake_store.load_canvas 返回 updated_at=1000 · cmd.base_updated_at=2000
+    (client 更新)→ 应抛 HTTPException(409)· fake_store.save_canvas
+    未被调用。
+
+    **回炉登记**：CanvasService.update_canvas 当前只判定 `<`
+    (`main.py:16286` 契约同款)· 未覆盖 newer 边界 → 独立 CB-P5-17。
+    本测试 xfail 直到 CB-P5-17 承接。
+    """
+
+    from app.modules.canvas.commands import CanvasSaveCommand
+
+    fake_store = MagicMock()
+    fake_store.load_canvas.return_value = {
+        "id": "abc",
+        "updated_at": 1000,
+        "title": "hi",
+        "icon": "layers",
+        "kind": "classic",
+    }
+    fake_store.save_canvas = MagicMock()
+    service = _build_canvas_service_with_store(fake_store)
+
+    cmd = CanvasSaveCommand(
+        canvas_id="abc",
+        title="x",
+        icon="",
+        nodes=[],
+        connections=[],
+        viewport={},
+        logs=[],
+        settings={},
+        client_id="",
+        base_updated_at=2000,  # newer 边界（严格大于 DB updated_at · 反向漂移）
+        raw={},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
+    assert exc_info.value.status_code == 409
+    fake_store.save_canvas.assert_not_called()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "CB-P5-18 · CanvasService.update_canvas 未做 revision compare-and"
+        "-swap；当 base_updated_at 相等但 revision 不匹配时应 409，现行"
+        "代码放行"
+    ),
+)
+def test_t107d_canvas_service_revision_compare_and_swap() -> None:
+    """T125 · CB-P5-14 承接 · revision compare-and-swap 组合边界。
+
+    组合场景：updated_at 匹配（cmd.base_updated_at == DB.updated_at）
+    但 revision 不匹配（DB.revision=5 · cmd.raw['revision']=3 · 旧版本）
+    → 应 409。
+
+    **回炉登记**：CanvasService.update_canvas 未做 revision compare-and
+    -swap（只做 base_updated_at 单一维度比对）→ 独立 CB-P5-18。本测试
+    xfail 直到 CB-P5-18 承接。
+    """
+
+    from app.modules.canvas.commands import CanvasSaveCommand
+
+    fake_store = MagicMock()
+    fake_store.load_canvas.return_value = {
+        "id": "abc",
+        "updated_at": 1000,
+        "revision": 5,  # DB 现有 revision
+        "title": "hi",
+        "icon": "layers",
+        "kind": "classic",
+    }
+    fake_store.save_canvas = MagicMock()
+    service = _build_canvas_service_with_store(fake_store)
+
+    cmd = CanvasSaveCommand(
+        canvas_id="abc",
+        title="x",
+        icon="",
+        nodes=[],
+        connections=[],
+        viewport={},
+        logs=[],
+        settings={},
+        client_id="",
+        base_updated_at=1000,  # updated_at 维度匹配
+        raw={"revision": 3},  # revision 维度失配（旧版本）
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
+    assert exc_info.value.status_code == 409
+    fake_store.save_canvas.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # T108 — ProjectService.delete_project 默认项目不可删除 400
 # ---------------------------------------------------------------------------
 
