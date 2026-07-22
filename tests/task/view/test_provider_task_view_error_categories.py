@@ -280,9 +280,16 @@ def _load_fixture_with_key_based_sentinel_injection(
 def test_error_message_may_leak_provider_secret_values_p1_obs(
     provider: str, mapper,
 ) -> None:
-    """现状 pin:message 字段值层泄漏是**已知**未闭合的 gap(负向断言 = 存在)。
+    """CB-P5-03 已闭合 pin(数据 PR-16 · Wave 3-L 主线 C):Provider 错误消息值
+    中的 secret 字面量**必须**被 sanitize 值层正则扫描脱敏。
 
-    未来某个 sanitize 值扫描 PR 交付后,把此测试改成断言"leak 为空"。
+    历史轨迹:
+    - Wave 3-I 反审首次发现此 leak(P1-obs · negative pin 锁定"当前存在")
+    - CB-P5-03 登记为独立 tools/security PR 承接
+    - **数据 PR-16(Wave 3-L 主线 C)承接**:`_SECRET_VALUE_REGEX_PATTERNS`
+      新增 `sk-[A-Za-z0-9\\-]{8,}` 正则 · 覆盖 startswith 判据未覆盖的
+      "值中间含 sk- sentinel"场景
+    - 本测试**已从 negative pin 升级为 positive assert**:blob 不许含 sentinel
     """
     # 只针对 `fail` 状态,因为 provider_message 提取路径主要在 error 分支
     with open(os.path.join(FIXTURES_ROOT, provider, "fail.json"), encoding="utf-8") as fh:
@@ -296,16 +303,11 @@ def test_error_message_may_leak_provider_secret_values_p1_obs(
     view = mapper(raw)
     blob = json.dumps(view.to_dict(), ensure_ascii=False)
 
-    # 记录现状:sk- 前缀被 _SECRET_VALUE_MARKERS 扫到(canvas 4 provider 已覆盖);
-    # 但 raw["message"] 直接进 error.raw / provider_message,sanitize 不扫这里
-    # → 断言当前泄漏路径未被闭合(P1-obs 抗回归 pin)
-    if "sk-INJECT-live-abc" in blob:
-        # 已知未修复:这是 P1-obs 场景,不阻塞承接补丁交付,登记为 CB-P5-03 候选
-        return  # 现状 OK(负向 pin)
-
-    # 若泄漏消失,说明有 PR 已闭合此 gap → 此 test 需要升级为正向断言
-    pytest.fail(
-        f"[P1-obs 已闭合] {provider} 不再泄漏 message 值中的 sk- sentinel —— "
-        "请把本测试升级为 `assert 'sk-INJECT-live-abc' not in blob` "
-        "并将 CB-P5-03 从缺陷追踪索引闭合。"
+    # CB-P5-03 闭合硬断言(数据 PR-16):sanitize 值层正则扫描后 · sk- sentinel
+    # 必须不出现在 view 输出的任何字段(error.raw / provider_message / raw_excerpt.*)
+    assert "sk-INJECT-live-abc" not in blob, (
+        f"CB-P5-03 回归 · {provider} view 输出中出现 sk- sentinel:\n"
+        f"blob={blob[:500]}...\n"
+        "若正则被弱化或 sanitize 路径被绕过,请恢复 provider_view._SECRET_VALUE_REGEX_PATTERNS "
+        "并检查 raw_excerpt / error.provider_message 是否漏了 sanitize。"
     )

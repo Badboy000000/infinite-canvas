@@ -31,8 +31,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Pattern, Sequence, Tuple
 
 from app.task.view.error_category import ErrorCategoryMapper, TaskErrorCategory
 
@@ -64,10 +65,34 @@ _SECRET_KEY_TOKENS: tuple = (
 
 
 #: 需要脱敏的**值前缀 / 关键词**。命中即整字段替换为 `"[REDACTED]"`。
+#:
+#: **CB-P5-02 承接(数据 PR-16 · Wave 3-L 主线 C)**:原 `"aki"` 前缀过宽,会命中
+#: `akira` / `akihabara` 等合法业务字符串。收紧为 AWS 官方 access key 4 字符
+#: 前缀 `AKIA` / `ASIA`(long-term + temporary)。
 _SECRET_VALUE_MARKERS: tuple = (
     "bearer ",
     "sk-",
-    "aki",
+    "akia",
+    "asia",
+)
+
+
+#: **CB-P5-03 承接(数据 PR-16 · Wave 3-L 主线 C)**:sanitize 值层扫描 gap。
+#: 原 `startswith` 判据只覆盖字符串开头,不覆盖 Provider 错误消息值中间的
+#: secret 字面量(如 `{"message": "Invalid api_key='sk-xxxxxxxxxxxxxxxx'"}`)。
+#: 新增正则模式对字符串值做**内容级**扫描,命中即整值替换为 `"[REDACTED]"`。
+#:
+#: 正则设计原则:
+#: - `sk-[A-Za-z0-9\-]{8,}` — OpenAI / Anthropic / test sentinel style key(8+ 字符
+#:   防误伤裸 `sk-` 前缀但允许连字符 · 覆盖 `sk-INJECT-live-abc` sentinel 模式);
+#: - `AKIA[0-9A-Z]{16}` — AWS long-term access key(严格 20 字符固定长度);
+#: - `ASIA[0-9A-Z]{16}` — AWS temporary session access key;
+#: - `Bearer\s+[A-Za-z0-9._~+/=\-]+` — OAuth / JWT bearer token。
+_SECRET_VALUE_REGEX_PATTERNS: Tuple[Pattern[str], ...] = (
+    re.compile(r"sk-[A-Za-z0-9\-]{8,}"),
+    re.compile(r"AKIA[0-9A-Z]{16}"),
+    re.compile(r"ASIA[0-9A-Z]{16}"),
+    re.compile(r"Bearer\s+[A-Za-z0-9._~+/=\-]+"),
 )
 
 
@@ -181,21 +206,32 @@ def _looks_like_secret_value(value: Any) -> bool:
     if not isinstance(value, str):
         return False
     lowered = value.lower().strip()
-    return any(lowered.startswith(mark) for mark in _SECRET_VALUE_MARKERS)
+    if any(lowered.startswith(mark) for mark in _SECRET_VALUE_MARKERS):
+        return True
+    # CB-P5-03(数据 PR-16 · Wave 3-L 主线 C):值内容级正则扫描 · 覆盖字符串
+    # 中间的 secret 字面量(原 startswith 判据无法命中的 Provider error
+    # message payload 场景)。
+    if any(pattern.search(value) for pattern in _SECRET_VALUE_REGEX_PATTERNS):
+        return True
+    return False
 
 
 def sanitize_raw_excerpt(raw: Any, *, max_depth: int = 6) -> Any:
     """递归剔除任何形似密钥的字段。
 
-    命中判据：
+    命中判据:
     - key 名字含 `api_key / access_token / secret / bearer / authorization`
       等子串 → 值替换为 `"[REDACTED]"`。
-    - value 是字符串且以 `Bearer ` / `sk-` / `AKI` 起头 → 值替换为
-      `"[REDACTED]"`。
-    - **容器**递归深度超 `max_depth` 时截断为 `"[TRUNCATED]"`（防病态大响
-      应嵌套；只有 dict/list 计入深度，标量叶子不计）。
+    - value 是字符串且以 `Bearer ` / `sk-` / `AKIA` / `ASIA` 起头 → 值替换为
+      `"[REDACTED]"`(**CB-P5-02** 数据 PR-16 收紧 · 原 `aki` 前缀过宽误伤
+      `akira` / `akihabara` 等合法业务字符串)。
+    - value 是字符串且**内部含** `sk-{16,}` / `AKIA{16}` / `ASIA{16}` /
+      `Bearer <token>` 正则命中 → 值替换为 `"[REDACTED]"`(**CB-P5-03** 数据
+      PR-16 承接 · 覆盖 Provider 错误消息中间的 secret 字面量场景)。
+    - **容器**递归深度超 `max_depth` 时截断为 `"[TRUNCATED]"`(防病态大响
+      应嵌套;只有 dict/list 计入深度,标量叶子不计)。
 
-    返回值本身是新对象，不修改入参。
+    返回值本身是新对象,不修改入参。
     """
 
     if isinstance(raw, Mapping):

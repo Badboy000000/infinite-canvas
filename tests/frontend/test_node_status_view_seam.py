@@ -538,18 +538,25 @@ def _extract_canvas_legacy_status_template() -> tuple[str, dict]:
         (template_line, label_dict) —— template_line 是 canvas.js 里出现的
         字符串模板字面量(含 `${...}` 占位符);label_dict 是 legacy 4 值 → 中文
         标签的映射。二者共同重构 legacy 输出。
+
+    **CB-P5-05 承接(数据 PR-16 · Wave 3-L 主线 C)同步更新**:canvas.js:6186
+    的 cascadeIdx 拼接从 `${node._cascadeIdx?' '+node._cascadeIdx:''}` 改为
+    `${node._cascadeIdx?' '+escapeHtml(node._cascadeIdx):''}`(cascadeIdx 全通道
+    escape 硬锁)。**运行时行为**:当 `_cascadeIdx=''` 时 `escapeHtml('')=''`,
+    输出与原完全字节等价(见 T45/T47 byte-equivalent 契约);pattern 只是同步。
     """
     src = CANVAS_JS.read_text(encoding="utf-8")
-    # 提取 legacy 内联 template 字符串(canvas.js:6130 附近)
+    # 提取 legacy 内联 template 字符串(canvas.js:6186 附近 · CB-P5-05 承接后)
     template_match = re.search(
         r"`<span class=\"node-run-status \$\{node\.runStatus\}\">"
         r"<span class=\"dot\"></span>\$\{escapeHtml\(label\)\}"
-        r"\$\{node\._cascadeIdx\?' '\+node\._cascadeIdx:''\}</span>`",
+        r"\$\{node\._cascadeIdx\?' '\+escapeHtml\(node\._cascadeIdx\):''\}</span>`",
         src,
     )
     assert template_match, (
         "canvas.js legacy 内联 template 未提取到;若 canvas.js:6108-6131 消费点被"
         "重构,请同步更新本测试的 template 匹配 pattern。"
+        "(CB-P5-05 承接后 cascadeIdx 拼接已 wrap escapeHtml)"
     )
     # 提取 label 字典(canvas.js:6129 附近)
     label_match = re.search(
@@ -587,7 +594,7 @@ def test_migration_byte_equivalent_dom_snapshot(legacy_status):
         }}[s]));
         const node = {{ runStatus: {json.dumps(legacy_status)}, _cascadeIdx: '' }};
         const label = {json.dumps(label)};
-        const legacyHtml = `<span class="node-run-status ${{node.runStatus}}"><span class="dot"></span>${{escapeHtml(label)}}${{node._cascadeIdx?' '+node._cascadeIdx:''}}</span>`;
+        const legacyHtml = `<span class="node-run-status ${{node.runStatus}}"><span class="dot"></span>${{escapeHtml(label)}}${{node._cascadeIdx?' '+escapeHtml(node._cascadeIdx):''}}</span>`;
         console.log(JSON.stringify({{legacyHtml}}));
         """
     )

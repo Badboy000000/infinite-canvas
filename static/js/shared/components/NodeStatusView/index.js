@@ -35,9 +35,17 @@
 //   - 不动 data-action 契约（status badge 挂载点当前无 data-action，不新增）
 //   - 不接管 CSS（.node-run-status 规则仍在 canvas.css）
 //   - 不做 i18n runtime 切换（当前只有 zh；en 由 PR-9/10 承接）
-//   - **不动 cascadeIdx 通道 escape 语义**（KNOWN LIMITATION 继承 canvas.js:6130
-//     legacy 行为；当前 `node._cascadeIdx` 全部写入点为内部纯数字模板，无用户
-//     可控入口；PR-9 或 CB-P5-05 承接 cascadeIdx 全通道 escape 硬锁）
+//
+// **CB-P5-05 承接(数据 PR-16 · Wave 3-L 主线 C)**:cascadeIdx 全通道 escape 硬锁。
+// 原 buildBadgeHtml / buildFallbackHtml 直接把 options.cascadeIdx 拼入 HTML,继承
+// canvas.js:6186 legacy 行为。当前 `node._cascadeIdx` 全部写入点(canvas.js
+// L1458/L2146/L11141/L11895/L11912/L11922/L11951/L11978/L11992)均为内部纯数字
+// 模板 `\`${a}/${b}\`` 或空串 · **无用户可控入口**;但为防未来漂移(如接入 i18n
+// 或 provider 上游描述),此处硬锁 escape 语义。
+//   - 输入侧: options.cascadeIdx 视为 untrusted string · String() coerce 后 escapeHtml
+//   - 输出侧: 仍保持 `${space}${cascadeIdx}` 结构 · T45 runtime-byte-equal 契约不破
+//   - canvas.js:6186 由 `escapeHtml(node._cascadeIdx)` wrap · nsv.renderHtml
+//     (canvas.js:6179)通过 opts.cascadeIdx 传入 · 由本模块 escape · 无双重 escape
 
 import { statusEntry, resolveStatus, CANONICAL_STATUSES, STATUS_MAP, LEGACY_STATUS_ALIASES } from './statusMap.js';
 
@@ -135,7 +143,9 @@ function statusClassFor(canonical) {
 function buildBadgeHtml(canonical, opts) {
     const options = opts || {};
     const entry = STATUS_MAP[canonical];
-    const cascadeIdx = options.cascadeIdx ? ' ' + String(options.cascadeIdx) : '';
+    // CB-P5-05(数据 PR-16 · Wave 3-L 主线 C):cascadeIdx 全通道 escape 硬锁。
+    // 原 String(options.cascadeIdx) 直接拼入 HTML,继承 canvas.js:6186 legacy 行为。
+    const cascadeIdx = options.cascadeIdx ? ' ' + escapeHtml(String(options.cascadeIdx)) : '';
     const cls = statusClassFor(canonical);
     return `<span class="node-run-status ${cls}"><span class="dot"></span>${escapeHtml(entry.labelZh)}${cascadeIdx}</span>`;
 }
@@ -146,7 +156,8 @@ function buildBadgeHtml(canonical, opts) {
  */
 function buildFallbackHtml(rawInput, opts) {
     const options = opts || {};
-    const cascadeIdx = options.cascadeIdx ? ' ' + String(options.cascadeIdx) : '';
+    // CB-P5-05(数据 PR-16 · Wave 3-L 主线 C):cascadeIdx 全通道 escape 硬锁。
+    const cascadeIdx = options.cascadeIdx ? ' ' + escapeHtml(String(options.cascadeIdx)) : '';
     const safeRaw = escapeHtml(rawInput == null ? '' : String(rawInput));
     return `<span class="node-run-status node-status-unknown" data-raw-status="${escapeAttr(rawInput == null ? '' : String(rawInput))}"><span class="dot"></span>${safeRaw || '未知状态'}${cascadeIdx}</span>`;
 }

@@ -29,6 +29,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# CB-P5-04 承接(数据 PR-16 · Wave 3-L 主线 C):Windows GBK codepage 下打印
+# 含 Unicode 字符(emoji · 表格线 · CJK 边界)时会抛 UnicodeEncodeError。
+# 此处对 stdout / stderr 做 UTF-8 重配 · 让本 CLI 在 Windows 默认 chcp=936
+# 环境下也能安全输出对账结果。Python 3.7+ 支持 `reconfigure`。
+if sys.platform == "win32":
+    try:  # pragma: no cover — Windows-only defensive path
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        # 极老 Python 或非标准流(如 IPython)不支持 · 静默降级
+        pass
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 

@@ -6182,8 +6182,11 @@ function renderNode(node){
         // 三值与 NodeStatusView.renderHtml **runtime-output-byte-equal**;对 legacy
         // `done` 值仅**visual-byte-equal**(见上方注释三轴说明)。
         // 修改此块必须同步 NodeStatusView/index.js::buildBadgeHtml 并跑 T47。
+        // CB-P5-05(数据 PR-16 · Wave 3-L 主线 C):cascadeIdx 全通道 escape 硬锁。
+        // 原直接拼 `node._cascadeIdx` 继承 line 6186 legacy 行为;当前所有写入点
+        // 都是内部数字模板但为防未来漂移(接入 i18n / provider 描述)显式 escape。
         const label = { queued:'排队中', running:'运行中', done:'完成', failed:'失败' }[node.runStatus] || '';
-        return `<span class="node-run-status ${node.runStatus}"><span class="dot"></span>${escapeHtml(label)}${node._cascadeIdx?' '+node._cascadeIdx:''}</span>`;
+        return `<span class="node-run-status ${node.runStatus}"><span class="dot"></span>${escapeHtml(label)}${node._cascadeIdx?' '+escapeHtml(node._cascadeIdx):''}</span>`;
     })() : '';
     el.innerHTML = `<div class="node-head"><span class="node-title">${displayTitle}</span><div style="display:flex;align-items:center;gap:8px">${statusHtml}<button onclick="deleteNodeFromButton('${escapeAttr(node.id)}', event)" class="text-gray-300 hover:text-red-500"><i data-lucide="x" class="w-4 h-4"></i></button></div></div>`;
     const body = document.createElement('div');
