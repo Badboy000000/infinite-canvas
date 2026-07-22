@@ -301,6 +301,9 @@ def test_T73_cb_p5_08a_regression_db_lock_contention_p99_under_550ms(
     # + 首次 statement cache 建立 · 需 3+ 次才稳定)
     # **仍保持 json 主写模式**:T73 语义是"json 主写 + shadow_write 在锁竞争
     # 下 fail-safe";切 db-primary 会破坏 fail-safe 契约(db_writer 会上抛)
+    # 数据 PR-15 反转后：默认改成 db；本用例继续需要 json 主写路径，因此
+    # 必须显式 setenv `CANVAS_PRIMARY_WRITE=json` 才能保留原契约。
+    monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
     monkeypatch.setenv("SHADOW_WRITE_CANVAS", "true")
     for i in range(3):
         prewarm = _seed_canvas(canvas_id=f"c_T73_prewarm_{i}", title=f"prewarm-{i}")
@@ -389,14 +392,17 @@ def test_T74_shadow_write_failure_isolated_fail_safe(
     抛错 → `canvas_store.save_canvas` 主路径无感（主写返回值不受影响）。
 
     覆盖 canvas_store.py:99-117 的 shadow_write 隔离 try/except。
+
+    数据 PR-15 反转后：显式 `CANVAS_PRIMARY_WRITE=json` 才走 legacy shadow_write
+    路径（新默认 db 主写不经过 shadow_write hook）。
     """
 
     from app.stores import canvas_store
     from app.shadow_write import runner as shadow_runner
 
     migrate_baseline(tmp_path)
-    # 默认 json 模式
-    monkeypatch.delenv("CANVAS_PRIMARY_WRITE", raising=False)
+    # 数据 PR-15 反转后：显式 json 才走 shadow_write hook。
+    monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
     monkeypatch.setenv("SHADOW_WRITE_CANVAS", "true")
 
     # 让 shadow_write.runner.run_shadow_write 直接抛错
@@ -423,12 +429,16 @@ def test_T74_shadow_write_failure_isolated_fail_safe(
 def test_T75_rollback_from_db_to_json_mode(
     monkeypatch, canvas_dir_fixture, tmp_path
 ):
-    """T75 · 生产回滚步骤（docstring 记录）：CANVAS_PRIMARY_WRITE=db → unset。
+    """T75 · 生产回滚步骤（docstring 记录）：CANVAS_PRIMARY_WRITE=db → json。
 
     - 先 db 模式写一次 → DB 有行 + JSON 有文件；
-    - unset env → 再写一次 → **绝不 import canvas_writer 命名空间**（sys.modules
-      虽然已有，但不应再触发 save_canvas_db 调用；用 spy 抓一下）；
+    - env 显式设成 `json`（回滚）→ 再写一次 → **绝不 import canvas_writer**
+      命名空间（sys.modules 虽然已有，但不应再触发 save_canvas_db 调用；
+      用 spy 抓一下）；
     - JSON 文件应更新到最新状态（legacy main.save_canvas 主写）。
+
+    数据 PR-15 反转后：`unset` 会走回默认 db 路径；显式 `json` 才是 P0 快速
+    回滚开关。
     """
 
     from app.db import canvas_writer as cw
@@ -436,13 +446,13 @@ def test_T75_rollback_from_db_to_json_mode(
 
     migrate_baseline(tmp_path)
 
-    # 第 1 步：db 模式
+    # 第 1 步：db 模式（显式）
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "db")
     canvas = _seed_canvas(canvas_id="c_T75", title="db-mode")
     canvas_store.save_canvas(canvas)
 
-    # 第 2 步：unset env（回滚）
-    monkeypatch.delenv("CANVAS_PRIMARY_WRITE", raising=False)
+    # 第 2 步：env=json（回滚）· 数据 PR-15 反转后需要显式设 json
+    monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
     monkeypatch.delenv("SHADOW_WRITE_CANVAS", raising=False)
 
     # spy：save_canvas_db 不得再被调
@@ -466,31 +476,33 @@ def test_T75_rollback_from_db_to_json_mode(
 
 
 # ---------------------------------------------------------------------------
-# T76 — 未设置 env 时 `_get_primary_write_mode` 返回 `"json"` 默认
+# T76 — 数据 PR-15 反转后：未设置 env 时 `_get_primary_write_mode` 返回 `"db"`
 # ---------------------------------------------------------------------------
 
 
 def test_T76_unset_env_returns_json_default(monkeypatch):
-    """T76 · 严禁静默切换：`CANVAS_PRIMARY_WRITE` 未设置时必须返回 `"json"`。
+    """T76 · 数据 PR-15 M1 收官反转默认：`CANVAS_PRIMARY_WRITE` 未设置时
+    必须返回 `"db"`（历史命名保留 · 避免下游依赖测试节点 id 断裂）。
 
-    也覆盖空字符串、纯空白、`domain != "canvas"` 分支。
+    也覆盖空字符串、纯空白、`domain != "canvas"` 分支。反转前该函数返回
+    `"json"`；反转后返回 `"db"`。T92 / T96 覆盖新默认，T97 覆盖 fail-fast。
     """
 
     from app.stores import canvas_store
 
-    # unset
+    # unset · 反转后默认 db
     monkeypatch.delenv("CANVAS_PRIMARY_WRITE", raising=False)
-    assert canvas_store._get_primary_write_mode("canvas") == "json"
+    assert canvas_store._get_primary_write_mode("canvas") == "db"
 
-    # empty
+    # empty · 与 unset 语义一致
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "")
-    assert canvas_store._get_primary_write_mode("canvas") == "json"
+    assert canvas_store._get_primary_write_mode("canvas") == "db"
 
-    # whitespace-only
+    # whitespace-only · 与 unset 语义一致
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "   ")
-    assert canvas_store._get_primary_write_mode("canvas") == "json"
+    assert canvas_store._get_primary_write_mode("canvas") == "db"
 
-    # domain != canvas 直接 json（哪怕 env 是 db）
+    # domain != canvas 直接 json（其他 4 domain 默认由各自 store 独立管辖）
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "db")
     assert canvas_store._get_primary_write_mode("project") == "json"
 

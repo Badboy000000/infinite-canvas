@@ -77,12 +77,15 @@ def _seed_canvas(canvas_id: str = "c1", **overrides) -> dict:
 def test_json_mode_default_does_not_import_canvas_writer(
     monkeypatch, canvas_dir_fixture, tmp_path
 ):
-    """`CANVAS_PRIMARY_WRITE=json`（默认）时 `app.db.canvas_writer` 从未 import。
+    """`CANVAS_PRIMARY_WRITE=json`（数据 PR-15 反转后 · 显式回滚开关）时
+    `app.db.canvas_writer` 从未 import。
 
-    P0 硬约束 #3：默认路径无任何行为变化（PR-6 → PR-7 用户零感知）。
+    P0 硬约束 #3：json 回滚路径无任何行为变化（PR-6 → PR-7 → PR-15 用户零感知）。
     """
 
-    monkeypatch.delenv("CANVAS_PRIMARY_WRITE", raising=False)
+    # 数据 PR-15 反转后：默认已经是 db，本用例语义是"显式 json 回滚开关"
+    # 下不 import canvas_writer；因此必须 setenv，不能 delenv。
+    monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
     monkeypatch.delenv("SHADOW_WRITE_CANVAS", raising=False)
 
     # 强行卸载 canvas_writer（如果之前测试拉起过），保证从零开始
@@ -110,9 +113,12 @@ def test_json_mode_default_does_not_import_canvas_writer(
 def test_json_mode_default_does_not_build_db_engine(
     monkeypatch, canvas_dir_fixture, tmp_path
 ):
-    """默认模式下 `save_canvas` 不构造 DB engine（P0 硬约束）。"""
+    """显式 `json` 回滚模式下 `save_canvas` 不构造 DB engine（P0 硬约束）。
 
-    monkeypatch.delenv("CANVAS_PRIMARY_WRITE", raising=False)
+    数据 PR-15 反转后：默认已经是 db；本用例语义是"显式 json"下不建 engine。
+    """
+
+    monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
     monkeypatch.delenv("SHADOW_WRITE_CANVAS", raising=False)
 
     from app.db import engine as db_engine

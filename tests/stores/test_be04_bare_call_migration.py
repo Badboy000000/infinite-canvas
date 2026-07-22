@@ -202,8 +202,15 @@ def test_facade_delegates_to_main(store_name, method):
 def isolated_data(tmp_path, monkeypatch):
     """把 `main.py` 里各条 JSON 路径 monkeypatch 到临时目录，保证测试之间隔离，
     也不污染真实 `data/` 目录。
+
+    数据 PR-15 反转默认后，canvas_store 默认走 DB 主写；本文件测试的是"store
+    facade → main JSON helper"等价性，需要显式 `CANVAS_PRIMARY_WRITE=json` 才能
+    保留 JSON roundtrip 契约。
     """
     import main
+
+    # 数据 PR-15 反转承接：强制 json 主写路径。
+    monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)

@@ -328,7 +328,9 @@ def _scenario_A_hit_rate(
     field_diff_counts: list[int] = []
     load_latency: list[float] = []
 
-    with _env_scope({"SHADOW_READ_CANVAS": "true"}):
+    with _env_scope(
+        {"SHADOW_READ_CANVAS": "true", "CANVAS_PRIMARY_WRITE": "json"}
+    ):
         for _ in range(loads):
             cid = rng.choice(all_ids)
             t0 = time.perf_counter()
@@ -415,7 +417,9 @@ def _scenario_B_diff_rate(
     loads_missing_expected = 0
     loads_hit_expected = 0
 
-    with _env_scope({"SHADOW_READ_CANVAS": "true"}):
+    with _env_scope(
+        {"SHADOW_READ_CANVAS": "true", "CANVAS_PRIMARY_WRITE": "json"}
+    ):
         for _ in range(loads):
             cid = rng.choice(all_ids)
             if cid in missing_ids:
@@ -494,7 +498,9 @@ def _scenario_C_write_latency(
     save_latency: list[float] = []
     errors_bubbled = 0
 
-    with _env_scope({"SHADOW_WRITE_CANVAS": "true"}):
+    with _env_scope(
+        {"SHADOW_WRITE_CANVAS": "true", "CANVAS_PRIMARY_WRITE": "json"}
+    ):
         for i in range(saves):
             # 循环使用已经种下来的 canvas；每次 clone 一份并 tweak title
             base = canvases[i % len(canvases)]
@@ -542,7 +548,9 @@ def _scenario_D_tx_fail_safe(
     db_path = main.DATA_DB_PATH
 
     # 先在无锁状态下 pre-warm 一次 shadow write 确保 canvases 表有行
-    with _env_scope({"SHADOW_WRITE_CANVAS": "true"}):
+    with _env_scope(
+        {"SHADOW_WRITE_CANVAS": "true", "CANVAS_PRIMARY_WRITE": "json"}
+    ):
         pre_warm = dict(canvases[0])
         pre_warm["title"] = "prewarm"
         canvas_store.save_canvas(pre_warm)
@@ -557,7 +565,9 @@ def _scenario_D_tx_fail_safe(
 
     try:
         lock_conn.execute("BEGIN EXCLUSIVE")
-        with _env_scope({"SHADOW_WRITE_CANVAS": "true"}):
+        with _env_scope(
+            {"SHADOW_WRITE_CANVAS": "true", "CANVAS_PRIMARY_WRITE": "json"}
+        ):
             for i in range(tx_fail_iters):
                 snap = dict(canvases[(i + 1) % len(canvases)])
                 snap["title"] = f"lockprobe iter {i}"

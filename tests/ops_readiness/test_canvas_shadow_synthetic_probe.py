@@ -195,18 +195,29 @@ def test_T86_cli_end_to_end_scale_10(tmp_path):
 
 
 def test_T87_asymmetric_normalizer_observation_registered(small_probe_report):
-    """T87 · shadow_read canvas normalizer 非对称观察项必登记 CB-P5-08。
+    """T87 · shadow_read canvas normalizer 非对称观察项。
 
-    canvas 域的 `_normalize_json_canvas` 只返回单 canvas，而 DB snapshot 是
-    整表 → 每次 load_canvas 都会把 DB 里其它 canvas 记录到 missing_in_json。
-    这是 canvas 域独有的 diff 语义非对称，探针必须自动识别并登记 CB-P5-08。
+    历史（PR-10 之前）：canvas 域的 `_normalize_json_canvas` 只返回单 canvas，
+    而 DB snapshot 是整表 → 每次 load_canvas 都会把 DB 里其它 canvas 记录到
+    `missing_in_json`（O(N) 假 missing 噪声）· CB-P5-08b 观察项。
+
+    数据 PR-15 内嵌承接（CB-P5-08b closed）：`app/shadow_read/runner.py` 在
+    canvas 域下会先把 DB snapshot 收敛到 JSON snapshot 覆盖的 legacy_id 上
+    （`app/shadow_read/canvas_normalizer.py::scope_db_snapshot_to_json`），
+    因此探针不再观察到 `records_with_missing_in_json_nonempty > 0`。
+
+    修复后契约：探针**不再登记**非对称观察项（本用例反过来护栏 · CB-P5-08b
+    观察项闭合的抗回归）。
     """
 
     titles = [o["title"] for o in small_probe_report["observations"]]
-    assert any("非对称" in t for t in titles), (
-        f"expected asymmetric-normalizer observation, got: {titles}"
+    # CB-P5-08b 修复后：观察项不再触发。若未来出现回归（比如意外恢复整表
+    # 扫描），本断言会失败并提示回归。
+    assert not any("非对称" in t for t in titles), (
+        "CB-P5-08b 已闭合（数据 PR-15）· 探针不应再登记非对称观察项，"
+        f"实际观察项 titles={titles}"
     )
-    # CB 编号一致
+    # 其它现存观察项（如 created_at/updated_at 类型漂移）仍需保持 CB-P5-08 归口。
     for o in small_probe_report["observations"]:
         assert o.get("cb_candidate") == "CB-P5-08"
 

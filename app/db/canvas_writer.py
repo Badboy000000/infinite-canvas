@@ -203,12 +203,19 @@ def save_canvas_db(canvas: dict) -> None:
     # 写入 DB 的 base_updated_at 列 = 新 updated_at 字符串（作为下一次写入的
     # 乐观锁基线）。调用方传入的 base_updated_at 只做比对，不进 row。
     new_base_updated_at = str(canvas["updated_at"])
+    # CB-P5-10 · 数据 PR-15 内嵌承接：先把 canvas["base_updated_at"] 对齐到
+    # 新基线，**再**做 content_json 序列化——这样 DB 的 `content_json` 与
+    # 异步 JSON 回写文件字段字节等价，避免 base_updated_at 序列化时序漂移。
+    # 修复前：content_json 里的 base_updated_at 是"旧基线"（客户端传入值），
+    # 而异步 JSON 回写用的是已 mutate 后的 canvas（新基线），二者不字节等价。
+    canvas["base_updated_at"] = new_base_updated_at
 
     content_json = _serialize_content_json(canvas)
     content_hash = _compute_content_hash(content_json)
     row = _build_row(canvas, content_json=content_json, content_hash=content_hash)
     # 覆盖 row 中的 base_updated_at：写入 DB 的值必须是"新的基线"而非
-    # "客户端刚才用来比对的旧基线"。
+    # "客户端刚才用来比对的旧基线"（`_build_row` 已从 canvas 读到新值，
+    # 这里的显式赋值是防御 build_row 未来重构漂移的护栏）。
     row["base_updated_at"] = new_base_updated_at
 
     engine = get_engine()
@@ -241,9 +248,8 @@ def save_canvas_db(canvas: dict) -> None:
         )
         conn.execute(stmt)
 
-    # 成功后把 canvas base_updated_at 对齐到最新 updated_at（下次写入的乐观
-    # 锁基线）。字符串化以便与 DB `TEXT` 列对齐。
-    canvas["base_updated_at"] = str(canvas["updated_at"])
+    # CB-P5-10 · canvas base_updated_at 已在序列化前对齐到新基线（见上方
+    # 承接注释）；此处不再重复赋值，保留注释作 zero-touch 护栏说明。
 
 
 def load_canvas_db(canvas_id: str) -> dict | None:

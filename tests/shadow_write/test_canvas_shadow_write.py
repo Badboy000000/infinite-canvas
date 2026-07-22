@@ -38,6 +38,16 @@ def isolated_env(monkeypatch, tmp_path):
         yield sandbox
 
 
+@pytest.fixture(autouse=True)
+def _force_json_primary_write(monkeypatch):
+    """数据 PR-15 反转默认后，`save_canvas` 无 env 时走 DB 主写；本文件
+    的用例语义是"JSON 主写 + shadow_write hook"，需要显式回滚到 json
+    才能测试 hook 是否正确挂在老主写路径上。"""
+
+    monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
+    yield
+
+
 @pytest.fixture
 def canvas_dir_fixture(tmp_path, monkeypatch, isolated_env):
     """把 `CANVAS_DIR` 指到 tmp_path/canvases；写 seed canvas 文件为空目录。"""

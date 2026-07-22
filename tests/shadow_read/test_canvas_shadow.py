@@ -25,6 +25,16 @@ def isolated_env(monkeypatch, tmp_path):
         yield sandbox
 
 
+@pytest.fixture(autouse=True)
+def _force_json_primary_write(monkeypatch):
+    """数据 PR-15 反转默认后，`load_canvas` 无 env 时走 DB-first。本文件
+    整体测试 shadow_read（JSON 主读 + shadow diff）语义，需要显式回滚到
+    JSON 主读路径避免绕过 shadow_read runner。"""
+
+    monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
+    yield
+
+
 @pytest.fixture
 def canvas_dir_fixture(tmp_path, monkeypatch, isolated_env):
     """把 `CANVAS_DIR` 指到 tmp_path/canvases，写一个已知画布文件。"""

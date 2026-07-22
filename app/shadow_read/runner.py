@@ -476,6 +476,16 @@ def run_shadow_read(
             return None
         json_snapshot = normalizer(json_result)
         db_snapshot = _load_db_snapshot(domain)
+        if domain == "canvas":
+            # CB-P5-08b · 数据 PR-15 内嵌承接：canvas 域是单-id load 路径，
+            # 只对该 id 判定（不 O(N) 扫描其它 canvas）。收敛后
+            # `missing_in_json` 语义变为"这一次 load 覆盖的 id 集合上的差集"，
+            # 消除 shadow_diff 假 missing 噪声。
+            from app.shadow_read.canvas_normalizer import (
+                scope_db_snapshot_to_json,
+            )
+
+            db_snapshot = scope_db_snapshot_to_json(json_snapshot, db_snapshot)
         missing_in_db, missing_in_json, field_diffs = _compare_snapshots(
             domain, json_snapshot, db_snapshot
         )
