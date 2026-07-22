@@ -886,6 +886,17 @@
             "title": "Nodes",
             "type": "array"
           },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
           "settings": {
             "additionalProperties": true,
             "default": {},

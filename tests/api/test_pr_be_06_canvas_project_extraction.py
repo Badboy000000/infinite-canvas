@@ -435,14 +435,6 @@ def test_t107b_canvas_service_equal_boundary_succeeds_200() -> None:
     fake_store.save_canvas.assert_called_once()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "CB-P5-17 · CanvasService.update_canvas 只用 `<` 比较 · 未处理"
-        " newer 反向漂移边界（client base > DB updated_at 应 409 · 现"
-        "行代码放行）"
-    ),
-)
 def test_t107c_canvas_service_newer_boundary_returns_409() -> None:
     """T124 · CB-P5-14 承接 · newer 边界（反向漂移防护）→ 409。
 
@@ -488,14 +480,6 @@ def test_t107c_canvas_service_newer_boundary_returns_409() -> None:
     fake_store.save_canvas.assert_not_called()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "CB-P5-18 · CanvasService.update_canvas 未做 revision compare-and"
-        "-swap；当 base_updated_at 相等但 revision 不匹配时应 409，现行"
-        "代码放行"
-    ),
-)
 def test_t107d_canvas_service_revision_compare_and_swap() -> None:
     """T125 · CB-P5-14 承接 · revision compare-and-swap 组合边界。
 
@@ -540,6 +524,230 @@ def test_t107d_canvas_service_revision_compare_and_swap() -> None:
         asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
     assert exc_info.value.status_code == 409
     fake_store.save_canvas.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T130-T134 — 数据 PR-19 · CanvasService 乐观锁双维度补齐(CB-P5-17+18 承接)
+# ---------------------------------------------------------------------------
+
+
+def test_t130_canvas_service_equal_boundary_with_revision_match() -> None:
+    """T130 · 数据 PR-19 · equal 边界 + revision 匹配 → 200。
+
+    组合成功场景:updated_at 相等 且 revision 匹配 · service 应放行 · save
+    被调用一次。
+    """
+
+    from app.modules.canvas.commands import CanvasSaveCommand
+
+    fake_store = MagicMock()
+    fake_store.load_canvas.return_value = {
+        "id": "abc",
+        "updated_at": 1000,
+        "revision": 5,
+        "title": "hi",
+        "icon": "layers",
+        "kind": "classic",
+    }
+    fake_store.save_canvas = MagicMock()
+    service = _build_canvas_service_with_store(fake_store)
+
+    cmd = CanvasSaveCommand(
+        canvas_id="abc",
+        title="x",
+        icon="",
+        nodes=[],
+        connections=[],
+        viewport={},
+        logs=[],
+        settings={},
+        client_id="",
+        base_updated_at=1000,  # equal
+        revision=5,  # match
+        raw={},
+    )
+
+    result = asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
+    assert isinstance(result, dict)
+    fake_store.save_canvas.assert_called_once()
+
+
+def test_t131_canvas_service_newer_boundary_strict_not_equal() -> None:
+    """T131 · 数据 PR-19 · CB-P5-17 · newer 反向漂移严格 `!=` 语义延伸测试。
+
+    与 T107c 场景对齐:client base > DB(newer / clock-drift)→ 应 409 ·
+    detail shape 与 base_updated_at 分支逐字节一致(不引入新字段)。此测
+    试强化 detail 字段断言,防止未来 error shape 漂移。
+    """
+
+    from app.modules.canvas.commands import CanvasSaveCommand
+
+    fake_store = MagicMock()
+    fake_store.load_canvas.return_value = {
+        "id": "abc",
+        "updated_at": 1000,
+        "title": "hi",
+        "icon": "layers",
+        "kind": "classic",
+    }
+    fake_store.save_canvas = MagicMock()
+    service = _build_canvas_service_with_store(fake_store)
+
+    cmd = CanvasSaveCommand(
+        canvas_id="abc",
+        title="x",
+        icon="",
+        nodes=[],
+        connections=[],
+        viewport={},
+        logs=[],
+        settings={},
+        client_id="",
+        base_updated_at=3000,  # newer 反向漂移
+        raw={},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
+    assert exc_info.value.status_code == 409
+    detail = exc_info.value.detail
+    assert isinstance(detail, dict)
+    # error shape 保持 {"message", "canvas", "updated_at"} 逐字节一致
+    assert set(detail.keys()) == {"message", "canvas", "updated_at"}
+    assert detail["updated_at"] == 1000
+    fake_store.save_canvas.assert_not_called()
+
+
+def test_t132_canvas_service_revision_matches_returns_200() -> None:
+    """T132 · 数据 PR-19 · CB-P5-18 · revision 显式提供且匹配 → 200。
+
+    命令对象显式带 revision=5 · DB revision=5 · base_updated_at 也匹配 →
+    service 放行 · save 被调用。
+    """
+
+    from app.modules.canvas.commands import CanvasSaveCommand
+
+    fake_store = MagicMock()
+    fake_store.load_canvas.return_value = {
+        "id": "abc",
+        "updated_at": 1000,
+        "revision": 5,
+        "title": "hi",
+        "icon": "layers",
+        "kind": "classic",
+    }
+    fake_store.save_canvas = MagicMock()
+    service = _build_canvas_service_with_store(fake_store)
+
+    cmd = CanvasSaveCommand(
+        canvas_id="abc",
+        title="x",
+        icon="",
+        nodes=[],
+        connections=[],
+        viewport={},
+        logs=[],
+        settings={},
+        client_id="",
+        base_updated_at=1000,
+        revision=5,  # 显式匹配
+        raw={},
+    )
+
+    result = asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
+    assert isinstance(result, dict)
+    fake_store.save_canvas.assert_called_once()
+
+
+def test_t133_canvas_service_revision_stale_returns_409() -> None:
+    """T133 · 数据 PR-19 · CB-P5-18 · revision 显式提供但落后 → 409。
+
+    命令对象显式带 revision=3 · DB revision=5(client 端旧缓存)· base_
+    updated_at 维度仍匹配 → revision compare-and-swap 应拦截,抛 409 ·
+    save 未被调用 · error shape 与 base_updated_at 分支逐字节一致。
+    """
+
+    from app.modules.canvas.commands import CanvasSaveCommand
+
+    fake_store = MagicMock()
+    fake_store.load_canvas.return_value = {
+        "id": "abc",
+        "updated_at": 1000,
+        "revision": 5,
+        "title": "hi",
+        "icon": "layers",
+        "kind": "classic",
+    }
+    fake_store.save_canvas = MagicMock()
+    service = _build_canvas_service_with_store(fake_store)
+
+    cmd = CanvasSaveCommand(
+        canvas_id="abc",
+        title="x",
+        icon="",
+        nodes=[],
+        connections=[],
+        viewport={},
+        logs=[],
+        settings={},
+        client_id="",
+        base_updated_at=1000,  # updated_at 匹配
+        revision=3,  # 显式落后
+        raw={},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
+    assert exc_info.value.status_code == 409
+    detail = exc_info.value.detail
+    assert isinstance(detail, dict)
+    # revision 分支复用 base_updated_at 分支的 error shape · 不引入新字段
+    assert set(detail.keys()) == {"message", "canvas", "updated_at"}
+    assert detail["updated_at"] == 1000
+    fake_store.save_canvas.assert_not_called()
+
+
+def test_t134_canvas_service_revision_absent_backward_compatible() -> None:
+    """T134 · 数据 PR-19 · CB-P5-18 向后兼容 · 老前端不上报 revision → 单维
+    度 base_updated_at 语义保留。
+
+    命令对象 revision=None(老前端不上报 revision · payload 里也没有)·
+    base_updated_at 匹配 · service 单维度语义应放行 · save 被调用。这条
+    是 Lead 独立锁维度决策的向后兼容护栏。
+    """
+
+    from app.modules.canvas.commands import CanvasSaveCommand
+
+    fake_store = MagicMock()
+    fake_store.load_canvas.return_value = {
+        "id": "abc",
+        "updated_at": 1000,
+        "revision": 5,  # DB 有 revision · 但 cmd 未提供
+        "title": "hi",
+        "icon": "layers",
+        "kind": "classic",
+    }
+    fake_store.save_canvas = MagicMock()
+    service = _build_canvas_service_with_store(fake_store)
+
+    cmd = CanvasSaveCommand(
+        canvas_id="abc",
+        title="x",
+        icon="",
+        nodes=[],
+        connections=[],
+        viewport={},
+        logs=[],
+        settings={},
+        client_id="",
+        base_updated_at=1000,  # updated_at 匹配
+        revision=None,  # 老前端不上报
+        raw={},  # raw 里也没 revision
+    )
+
+    result = asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
+    assert isinstance(result, dict)
+    fake_store.save_canvas.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

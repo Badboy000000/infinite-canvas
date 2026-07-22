@@ -139,9 +139,17 @@ class CanvasService:
     async def update_canvas(self, cmd: CanvasSaveCommand) -> dict[str, Any]:
         """`PUT /api/canvases/{canvas_id}` 主写路径。
 
-        `base_updated_at` compare-and-swap 契约保留（任务书零触碰第 2 项）。
-        409 响应 shape 与 `main.py` 逐字节一致（`{"message", "canvas",
-        "updated_at"}`）。
+        乐观锁双维度契约(CB-P5-17 + CB-P5-18 承接 · 数据 PR-19):
+
+        - `base_updated_at` compare-and-swap:严格 `!=` 语义(与 Store 层
+          `canvas_writer.py::save_canvas_db` 保持一致 · older `<` +
+          newer `>` 反向漂移都拦截)。
+        - `revision` compare-and-swap:独立锁维度 · 当 `cmd.revision` 显
+          式提供时启用(老前端不上报 → 保持向后兼容 · 单维度语义不变)。
+
+        409 响应 shape 与 `main.py` 逐字节一致(`{"message", "canvas",
+        "updated_at"}`)· revision 分支复用同一 shape,避免破坏前端 409
+        兼容读。
         """
         from fastapi import HTTPException
 
@@ -150,7 +158,7 @@ class CanvasService:
         if (
             cmd.base_updated_at
             and current_updated_at
-            and int(cmd.base_updated_at) < current_updated_at
+            and int(cmd.base_updated_at) != current_updated_at
         ):
             raise HTTPException(
                 status_code=409,
@@ -160,6 +168,36 @@ class CanvasService:
                     "updated_at": current_updated_at,
                 },
             )
+        if cmd.revision is not None:
+            current_revision = int(canvas.get("revision") or 0)
+            if int(cmd.revision) != current_revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
+                        "canvas": canvas,
+                        "updated_at": current_updated_at,
+                    },
+                )
+        elif "revision" in cmd.raw:
+            # `raw` 兜底(与 CanvasCreateCommand / CanvasMetaPatchCommand 一
+            # 致的宽松 JSON 承接语义 · commands.py:57 注释):当调用侧未
+            # 走 router DTO 投影(如老前端 payload 直接构造命令时),仍
+            # 从 raw dict 里捞回 revision 维度。
+            current_revision = int(canvas.get("revision") or 0)
+            try:
+                cmd_revision = int(cmd.raw["revision"])
+            except (TypeError, ValueError):
+                cmd_revision = None
+            if cmd_revision is not None and cmd_revision != current_revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
+                        "canvas": canvas,
+                        "updated_at": current_updated_at,
+                    },
+                )
         canvas["title"] = (cmd.title or canvas.get("title") or "未命名画布")[:80]
         canvas["icon"] = (cmd.icon or canvas.get("icon") or "layers")[:32]
         canvas["kind"] = self._normalize_canvas_kind(canvas.get("kind"))

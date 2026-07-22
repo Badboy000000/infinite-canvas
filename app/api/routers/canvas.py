@@ -114,6 +114,7 @@ def create_router(
             settings=payload.settings,
             client_id=payload.client_id,
             base_updated_at=payload.base_updated_at,
+            revision=getattr(payload, "revision", None),
             raw=raw,
         )
         canvas = await service.update_canvas(cmd)

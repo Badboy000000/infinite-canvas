@@ -66,6 +66,7 @@ class CanvasSaveCommand:
     settings: dict[str, Any]
     client_id: str
     base_updated_at: int
+    revision: int | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
