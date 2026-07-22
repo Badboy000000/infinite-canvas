@@ -74,6 +74,15 @@ from app.api.routers.history import create_router as create_history_router  # no
 from app.api.routers.storage import create_router as create_storage_router  # noqa: E402
 from app.api.routers.system import create_router as create_system_router  # noqa: E402
 from app.api.routers.workflows import create_router as create_workflows_router  # noqa: E402
+# --- PR-BE-06 canvas / project domain router assembly (Wave 3-L 主线 B) -----
+from app.api.routers.canvas import create_router as create_canvas_router  # noqa: E402
+from app.api.routers.canvas_assets import create_router as create_canvas_assets_router  # noqa: E402
+from app.api.routers.canvas_workflows import create_router as create_canvas_workflows_router  # noqa: E402
+from app.api.routers.projects import create_router as create_projects_router  # noqa: E402
+from app.modules.canvas.service import CanvasService  # noqa: E402
+from app.modules.canvas.store import CanvasStore  # noqa: E402
+from app.modules.project.service import ProjectService  # noqa: E402
+from app.modules.project.store import ProjectStore  # noqa: E402
 # ---------------------------------------------------------------------------
 import json
 import uuid
@@ -15076,20 +15085,21 @@ async def delete_conversation(conversation_id: str, request: Request, x_user_id:
     return {"ok": True}
 
 # --- 画布管理 ---
+# PR-BE-06 抽出 `/api/canvases*` / `/api/projects*` / `/api/canvas-assets*` /
+# `/api/canvas-workflows*` 到 `app/api/routers/` 下的独立分组。原函数体保
+# 留在下方作为 re-export 兼容层（`@app.` 装饰器已剥离；由文件末尾统一
+# include_router 装配）。详见 [[40 实施计划/后端模块化治理实施计划与PR清
+# 单#PR-BE-06]]。
 
-@app.get("/api/canvases")
 async def canvases():
     return {"canvases": list_canvases()}
 
-@app.get("/api/projects")
 async def get_projects():
     return {"projects": list_projects()}
 
-@app.post("/api/projects")
 async def create_project(payload: ProjectCreateRequest):
     return {"project": project_record(new_project(payload.name))}
 
-@app.post("/api/projects/{project_id}")
 async def update_project(project_id: str, payload: ProjectUpdateRequest):
     projects = ensure_default_project()
     target = next((p for p in projects if p.get("id") == project_id), None)
@@ -15103,7 +15113,6 @@ async def update_project(project_id: str, payload: ProjectUpdateRequest):
     project_store.save_projects(projects)
     return {"project": project_record(target)}
 
-@app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str):
     """删除项目：默认项目不可删除；其余项目删除后，其下画布回归默认项目（不删画布）。"""
     if project_id == DEFAULT_PROJECT_ID:
@@ -15132,15 +15141,12 @@ async def delete_project(project_id: str):
                 moved += 1
     return {"ok": True, "moved": moved}
 
-@app.get("/api/canvases/trash")
 async def trashed_canvases():
     return {"canvases": list_deleted_canvases(), "retention_days": 30}
 
-@app.post("/api/canvases")
 async def create_canvas(payload: CanvasCreateRequest):
     return {"canvas": new_canvas(payload.title, payload.icon, payload.kind, payload.project, payload.board_x, payload.board_y)}
 
-@app.get("/api/canvases/{canvas_id}/meta")
 async def get_canvas_meta(canvas_id: str):
     canvas = canvas_store.load_canvas(canvas_id)
     return {
@@ -15151,7 +15157,6 @@ async def get_canvas_meta(canvas_id: str):
         "kind": normalize_canvas_kind(canvas.get("kind")),
     }
 
-@app.post("/api/canvases/{canvas_id}/meta")
 async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
     """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
     刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
@@ -15177,17 +15182,14 @@ async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
             json.dump(canvas, f, ensure_ascii=False, indent=2)
     return {"canvas": canvas_record(canvas)}
 
-@app.get("/api/canvases/{canvas_id}")
 async def get_canvas(canvas_id: str):
     return {"canvas": canvas_store.load_canvas(canvas_id)}
 
-@app.post("/api/canvases/{canvas_id}/touch")
 async def touch_canvas(canvas_id: str):
     canvas = canvas_store.load_canvas(canvas_id)
     canvas_store.save_canvas(canvas)
     return {"canvas": canvas_record(canvas), "updated_at": canvas.get("updated_at", 0)}
 
-@app.get("/api/canvas-assets")
 async def list_canvas_assets():
     # canvas_assets_index 会同步遍历并解析所有画布 JSON，放进线程池避免阻塞事件循环
     # （否则画布多时一次请求就会卡住整个 asyncio loop，连 WebSocket 一起掉线）。
@@ -15203,7 +15205,6 @@ async def smart_canvas_prompt_templates():
         print(f"读取提示词模板失败: {e}")
         return {"templates": []}
 
-@app.post("/api/canvas-assets/check")
 async def check_canvas_assets(payload: CanvasAssetCheckRequest):
     result = {}
     for url in payload.urls[:3000]:
@@ -15216,7 +15217,6 @@ async def check_canvas_assets(payload: CanvasAssetCheckRequest):
             result[text] = True
     return {"exists": result}
 
-@app.post("/api/canvas-assets/download")
 async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
     buffer = BytesIO()
     used_names = set()
@@ -15353,7 +15353,6 @@ def build_canvas_workflow_archive(payload: CanvasWorkflowExportRequest) -> Tuple
     buffer.seek(0)
     return buffer.getvalue(), {"resources": resources, "node_count": len(nodes_payload), "connection_count": len(connections_payload)}
 
-@app.post("/api/canvas-workflows/export")
 async def export_canvas_workflow(payload: CanvasWorkflowExportRequest):
     archive, _ = build_canvas_workflow_archive(payload)
     filename = sanitize_export_filename(payload.filename or "canvas-workflow.zip", "canvas-workflow.zip")
@@ -15363,7 +15362,6 @@ async def export_canvas_workflow(payload: CanvasWorkflowExportRequest):
     headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"}
     return Response(archive, media_type="application/zip", headers=headers)
 
-@app.post("/api/canvas-workflows/export-to-library")
 async def export_canvas_workflow_to_library(payload: CanvasWorkflowExportRequest):
     archive, meta = build_canvas_workflow_archive(payload)
     filename = sanitize_export_filename(payload.filename or "canvas-workflow.zip", "canvas-workflow.zip")
@@ -15402,7 +15400,6 @@ async def upload_asset_library_workflows(
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "items": added}
 
-@app.post("/api/canvas-workflows/import")
 async def import_canvas_workflow(file: UploadFile = File(...)):
     raw = await file.read()
     if not raw:
@@ -16284,7 +16281,6 @@ async def batch_crop_asset_library_items(payload: AssetLibraryBatchCropRequest):
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "added": len(added), "items": added}
 
-@app.put("/api/canvases/{canvas_id}")
 async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
     canvas = canvas_store.load_canvas(canvas_id)
     current_updated_at = int(canvas.get("updated_at") or 0)
@@ -16309,7 +16305,6 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
     await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
     return {"canvas": canvas}
 
-@app.delete("/api/canvases/{canvas_id}")
 async def delete_canvas(canvas_id: str):
     canvas = load_canvas_any(canvas_id)
     if not canvas.get("deleted_at"):
@@ -16317,7 +16312,6 @@ async def delete_canvas(canvas_id: str):
         canvas_store.save_canvas(canvas)
     return {"ok": True}
 
-@app.post("/api/canvases/{canvas_id}/restore")
 async def restore_canvas(canvas_id: str):
     canvas = load_canvas_any(canvas_id)
     if canvas.get("deleted_at"):
@@ -16325,12 +16319,80 @@ async def restore_canvas(canvas_id: str):
         canvas_store.save_canvas(canvas)
     return {"canvas": canvas}
 
-@app.delete("/api/canvases/{canvas_id}/purge")
 async def purge_canvas(canvas_id: str):
     path = canvas_path(canvas_id)
     if os.path.exists(path):
         os.remove(path)
     return {"ok": True}
+
+# --- PR-BE-06 canvas / project domain router assembly ----------------------
+# 上方 21 个 async def 函数体保留为 re-export 兼容层（`@app.` 装饰器已剥
+# 离）；下方 4 个 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/{canvas,projects,canvas_assets,canvas_workflows}.py` 与
+# `app/modules/{canvas,project}/`。
+_canvas_service = CanvasService(
+    store=CanvasStore(),
+    list_canvases=list_canvases,
+    list_deleted_canvases=list_deleted_canvases,
+    new_canvas=new_canvas,
+    canvas_record=canvas_record,
+    canvas_path=canvas_path,
+    load_canvas_any=load_canvas_any,
+    normalize_canvas_kind=normalize_canvas_kind,
+    normalize_canvas_color=normalize_canvas_color,
+    canvas_lock=CANVAS_LOCK,
+    default_project_id=DEFAULT_PROJECT_ID,
+    broadcast_canvas_updated=manager.broadcast_canvas_updated,
+    now_ms=now_ms,
+)
+_project_service = ProjectService(
+    store=ProjectStore(),
+    list_projects=list_projects,
+    new_project=new_project,
+    project_record=project_record,
+    ensure_default_project=ensure_default_project,
+    canvas_lock=CANVAS_LOCK,
+    canvas_dir=CANVAS_DIR,
+    default_project_id=DEFAULT_PROJECT_ID,
+    now_ms=now_ms,
+)
+# Router include 顺序（GM-11 · 主 router 内部路由顺序另由文件自身声明保证）：
+#   projects → canvas → canvas_assets → canvas_workflows
+# 该顺序保证 `/api/projects*` 与 `/api/canvases*` 之间的相互独立命名空间
+# 稳定；canvas router 内部 `/api/canvases/trash` 优先于 `/api/canvases/{id}`
+# （由 `app/api/routers/canvas.py` 内部装饰器顺序保证）。
+app.include_router(
+    create_projects_router(
+        service=_project_service,
+        project_create_dto=ProjectCreateRequest,
+        project_update_dto=ProjectUpdateRequest,
+    )
+)
+app.include_router(
+    create_canvas_router(
+        service=_canvas_service,
+        canvas_create_dto=CanvasCreateRequest,
+        canvas_meta_update_dto=CanvasMetaUpdate,
+        canvas_save_dto=CanvasSaveRequest,
+    )
+)
+app.include_router(
+    create_canvas_assets_router(
+        list_canvas_assets_callback=list_canvas_assets,
+        check_canvas_assets_callback=check_canvas_assets,
+        download_canvas_assets_callback=download_canvas_assets,
+        canvas_asset_check_dto=CanvasAssetCheckRequest,
+        canvas_asset_download_dto=CanvasAssetDownloadRequest,
+    )
+)
+app.include_router(
+    create_canvas_workflows_router(
+        export_canvas_workflow_callback=export_canvas_workflow,
+        export_canvas_workflow_to_library_callback=export_canvas_workflow_to_library,
+        import_canvas_workflow_callback=import_canvas_workflow,
+        canvas_workflow_export_dto=CanvasWorkflowExportRequest,
+    )
+)
 
 # --- GPT 对话 ---
 

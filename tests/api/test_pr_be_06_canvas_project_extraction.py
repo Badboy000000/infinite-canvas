@@ -1,0 +1,445 @@
+"""PR-BE-06 focused contracts for the canvas / project domain module extraction.
+
+Test IDs: T100-T109 (Wave 3-L 主线 B · 独立分配的 10 个 T-编号)
+
+契约覆盖：
+- T100: 路由数量与 baseline routes=167 一致(通过 OpenAPI diff 保证)
+- T101: 4 路由文件都不 `import main`（继承 PR-BE-05 硬约束）
+- T102: 4 路由文件不做业务级 IO（不 `import os`/`json` 直接落盘）
+- T103: canvas router 内部 `/api/canvases/trash` 声明顺序优先于 `/api/canvases/{canvas_id}`（GM-11）
+- T104: app.include_router 组装顺序：projects → canvas → canvas_assets → canvas_workflows
+- T105: 4 领域函数体在 main.py 仍以 re-export 兼容层保留（`async def` 且无 `@app.` 装饰器）
+- T106: Canvas/Project 命令对象 dataclass 契约：都保留 `raw: dict` 兜底字段
+- T107: CanvasService.update_canvas 保持 409 语义 + base_updated_at compare-and-swap
+- T108: ProjectService.delete_project 保持默认项目不可删除 400 语义
+- T109: `/api/canvases/trash` 与 `/api/canvases/{canvas_id}` HTTP 路径解析优先级实测
+"""
+
+from __future__ import annotations
+
+import ast
+import asyncio
+from pathlib import Path
+from unittest.mock import MagicMock, AsyncMock
+
+import pytest
+from fastapi import HTTPException
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+
+
+ROOT = Path(__file__).resolve().parents[2]
+ROUTER_DIR = ROOT / "app" / "api" / "routers"
+BE06_ROUTER_FILES = (
+    "canvas.py",
+    "projects.py",
+    "canvas_assets.py",
+    "canvas_workflows.py",
+)
+
+
+# ---------------------------------------------------------------------------
+# T100 — 4 领域 20 条路由全部注册（不新增 / 不遗漏）
+# ---------------------------------------------------------------------------
+
+EXPECTED_DOMAIN_ROUTES = frozenset(
+    {
+        # projects
+        ("/api/projects", "GET"),
+        ("/api/projects", "POST"),
+        ("/api/projects/{project_id}", "POST"),
+        ("/api/projects/{project_id}", "DELETE"),
+        # canvas core
+        ("/api/canvases", "GET"),
+        ("/api/canvases", "POST"),
+        ("/api/canvases/trash", "GET"),
+        ("/api/canvases/{canvas_id}", "GET"),
+        ("/api/canvases/{canvas_id}", "PUT"),
+        ("/api/canvases/{canvas_id}", "DELETE"),
+        ("/api/canvases/{canvas_id}/meta", "GET"),
+        ("/api/canvases/{canvas_id}/meta", "POST"),
+        ("/api/canvases/{canvas_id}/touch", "POST"),
+        ("/api/canvases/{canvas_id}/restore", "POST"),
+        ("/api/canvases/{canvas_id}/purge", "DELETE"),
+        # canvas assets
+        ("/api/canvas-assets", "GET"),
+        ("/api/canvas-assets/check", "POST"),
+        ("/api/canvas-assets/download", "POST"),
+        # canvas workflows
+        ("/api/canvas-workflows/export", "POST"),
+        ("/api/canvas-workflows/export-to-library", "POST"),
+        ("/api/canvas-workflows/import", "POST"),
+    }
+)
+
+
+def _application_route_set() -> set[tuple[str, str]]:
+    import main
+
+    routes: set[tuple[str, str]] = set()
+    for route in main.app.routes:
+        if isinstance(route, APIRoute):
+            for method in route.methods:
+                routes.add((route.path, method))
+    return routes
+
+
+def test_t100_all_domain_routes_registered_exactly_once() -> None:
+    """T100 — 4 领域 21 条路由全部注册且每条只出现一次。"""
+
+    all_routes = []
+    import main
+
+    for route in main.app.routes:
+        if isinstance(route, APIRoute):
+            for method in route.methods:
+                all_routes.append((route.path, method))
+
+    for entry in EXPECTED_DOMAIN_ROUTES:
+        assert all_routes.count(entry) == 1, f"missing or duplicate route: {entry}"
+
+
+# ---------------------------------------------------------------------------
+# T101 — 4 路由文件都不 `import main`
+# ---------------------------------------------------------------------------
+
+def test_t101_routers_do_not_import_main() -> None:
+    for filename in BE06_ROUTER_FILES:
+        tree = ast.parse((ROUTER_DIR / filename).read_text(encoding="utf-8"))
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported.add(alias.name)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+        assert "main" not in imported, filename
+
+
+# ---------------------------------------------------------------------------
+# T102 — 4 路由文件不直接做业务级 IO（不 `import os`/`json`）
+# ---------------------------------------------------------------------------
+
+def test_t102_routers_stay_free_of_direct_legacy_io() -> None:
+    for filename in BE06_ROUTER_FILES:
+        tree = ast.parse((ROUTER_DIR / filename).read_text(encoding="utf-8"))
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported.add(alias.name)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+        # 允许 typing / fastapi / commands / service。IO 与文件系统必须走
+        # service。
+        assert "os" not in imported, filename
+        assert "json" not in imported, filename
+        # 不允许在 router 层调 open(...)
+        assert not any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "open"
+            for node in ast.walk(tree)
+        ), filename
+
+
+# ---------------------------------------------------------------------------
+# T103 — canvas router 内部 `/api/canvases/trash` 优先于
+# `/api/canvases/{canvas_id}` （GM-11 · 路由声明顺序保证）
+# ---------------------------------------------------------------------------
+
+def test_t103_canvas_router_declares_trash_before_by_id() -> None:
+    """canvas router 源码里 `/api/canvases/trash` 装饰器必须出现在
+    `/api/canvases/{canvas_id}` 之前，否则 FastAPI 会把 `trash` 当成一个
+    `canvas_id` 值匹配到通配路由。"""
+
+    src = (ROUTER_DIR / "canvas.py").read_text(encoding="utf-8")
+    trash_pos = src.find('"/api/canvases/trash"')
+    by_id_pos = src.find('"/api/canvases/{canvas_id}"')
+    assert trash_pos >= 0, "trash route decorator missing"
+    assert by_id_pos >= 0, "by-id route decorator missing"
+    assert trash_pos < by_id_pos, (
+        "GM-11 违反：`/api/canvases/trash` 装饰器必须在 "
+        "`/api/canvases/{canvas_id}` 之前声明"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T104 — main.py include_router 顺序：projects → canvas → canvas_assets → canvas_workflows
+# ---------------------------------------------------------------------------
+
+def test_t104_main_include_router_order() -> None:
+    import re
+
+    src = (ROOT / "main.py").read_text(encoding="utf-8")
+    order = [
+        "create_projects_router",
+        "create_canvas_router",
+        "create_canvas_assets_router",
+        "create_canvas_workflows_router",
+    ]
+    positions: list[int] = []
+    for name in order:
+        # 兼容多行格式：`app.include_router(\n    create_xxx_router(...)`
+        pattern = re.compile(
+            r"app\.include_router\s*\(\s*" + re.escape(name) + r"\s*\("
+        )
+        match = pattern.search(src)
+        assert match is not None, (
+            f"main.py 缺少 `app.include_router({name}(...))` 调用"
+        )
+        positions.append(match.start())
+    assert positions == sorted(positions), (
+        "main.py include_router 顺序漂移；期望 projects → canvas → "
+        "canvas_assets → canvas_workflows"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T105 — 4 领域函数体作为 re-export 兼容层保留在 main.py（无装饰器）
+# ---------------------------------------------------------------------------
+
+RE_EXPORTED_FUNCTIONS = (
+    "canvases",
+    "get_projects",
+    "create_project",
+    "update_project",
+    "delete_project",
+    "trashed_canvases",
+    "create_canvas",
+    "get_canvas_meta",
+    "update_canvas_meta",
+    "get_canvas",
+    "touch_canvas",
+    "list_canvas_assets",
+    "check_canvas_assets",
+    "download_canvas_assets",
+    "export_canvas_workflow",
+    "export_canvas_workflow_to_library",
+    "import_canvas_workflow",
+    "update_canvas",
+    "delete_canvas",
+    "restore_canvas",
+    "purge_canvas",
+)
+
+
+def test_t105_domain_functions_kept_as_reexport_compat() -> None:
+    tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+    async_names = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+    }
+    for fname in RE_EXPORTED_FUNCTIONS:
+        assert fname in async_names, f"main.py 缺少 re-export 兼容层 `async def {fname}`"
+
+    # 装饰器必须已剥离：`@app.get("/api/canvases")` 等不应残留
+    src = (ROOT / "main.py").read_text(encoding="utf-8")
+    forbidden_decorators = (
+        '@app.get("/api/canvases")',
+        '@app.post("/api/canvases")',
+        '@app.get("/api/canvases/trash")',
+        '@app.get("/api/canvases/{canvas_id}")',
+        '@app.put("/api/canvases/{canvas_id}")',
+        '@app.delete("/api/canvases/{canvas_id}")',
+        '@app.post("/api/canvases/{canvas_id}/touch")',
+        '@app.get("/api/canvases/{canvas_id}/meta")',
+        '@app.post("/api/canvases/{canvas_id}/meta")',
+        '@app.post("/api/canvases/{canvas_id}/restore")',
+        '@app.delete("/api/canvases/{canvas_id}/purge")',
+        '@app.get("/api/projects")',
+        '@app.post("/api/projects")',
+        '@app.post("/api/projects/{project_id}")',
+        '@app.delete("/api/projects/{project_id}")',
+        '@app.get("/api/canvas-assets")',
+        '@app.post("/api/canvas-assets/check")',
+        '@app.post("/api/canvas-assets/download")',
+        '@app.post("/api/canvas-workflows/export")',
+        '@app.post("/api/canvas-workflows/export-to-library")',
+        '@app.post("/api/canvas-workflows/import")',
+    )
+    for decorator in forbidden_decorators:
+        assert decorator not in src, (
+            f"main.py 还残留 `{decorator}` — PR-BE-06 应已剥离该装饰器并把绑定"
+            f"迁到 app/api/routers/"
+        )
+
+
+# ---------------------------------------------------------------------------
+# T106 — 命令对象 dataclass 契约：都保留 `raw: dict` 兜底字段
+# ---------------------------------------------------------------------------
+
+def test_t106_commands_expose_raw_dict_field() -> None:
+    from dataclasses import fields
+
+    from app.modules.canvas.commands import (
+        CanvasCreateCommand,
+        CanvasIdCommand,
+        CanvasMetaPatchCommand,
+        CanvasSaveCommand,
+    )
+    from app.modules.project.commands import (
+        ProjectCreateCommand,
+        ProjectDeleteCommand,
+        ProjectUpdateCommand,
+    )
+
+    for cmd in (
+        CanvasCreateCommand,
+        CanvasIdCommand,
+        CanvasMetaPatchCommand,
+        CanvasSaveCommand,
+        ProjectCreateCommand,
+        ProjectDeleteCommand,
+        ProjectUpdateCommand,
+    ):
+        raw_field = {f.name: f for f in fields(cmd)}.get("raw")
+        assert raw_field is not None, f"{cmd.__name__} 缺少 raw dict 兜底字段"
+
+
+# ---------------------------------------------------------------------------
+# T107 — CanvasService.update_canvas 保持 409 + base_updated_at 语义
+# ---------------------------------------------------------------------------
+
+def test_t107_canvas_service_preserves_409_semantic() -> None:
+    from app.modules.canvas.commands import CanvasSaveCommand
+    from app.modules.canvas.service import CanvasService
+
+    fake_store = MagicMock()
+    # 后端当前 updated_at=1000；请求携带 base_updated_at=500（旧版本）
+    fake_store.load_canvas.return_value = {
+        "id": "abc",
+        "updated_at": 1000,
+        "title": "hi",
+        "icon": "layers",
+        "kind": "classic",
+    }
+    fake_store.save_canvas = MagicMock()
+
+    async def _broadcast(*_a, **_kw):
+        return None
+
+    service = CanvasService(
+        store=fake_store,
+        list_canvases=lambda: [],
+        list_deleted_canvases=lambda: [],
+        new_canvas=lambda *a, **kw: {},
+        canvas_record=lambda c: c,
+        canvas_path=lambda cid: cid,
+        load_canvas_any=lambda cid: {"id": cid},
+        normalize_canvas_kind=lambda k: k or "classic",
+        normalize_canvas_color=lambda c: c,
+        canvas_lock=MagicMock(__enter__=lambda s: None, __exit__=lambda *a: None),
+        default_project_id="default",
+        broadcast_canvas_updated=_broadcast,
+        now_ms=lambda: 2000,
+    )
+    cmd = CanvasSaveCommand(
+        canvas_id="abc",
+        title="x",
+        icon="",
+        nodes=[],
+        connections=[],
+        viewport={},
+        logs=[],
+        settings={},
+        client_id="",
+        base_updated_at=500,
+        raw={},
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.get_event_loop().run_until_complete(service.update_canvas(cmd))
+    assert exc_info.value.status_code == 409
+    detail = exc_info.value.detail
+    assert isinstance(detail, dict)
+    assert "message" in detail
+    assert detail.get("updated_at") == 1000
+    assert "canvas" in detail
+    # 未触发 save
+    fake_store.save_canvas.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T108 — ProjectService.delete_project 默认项目不可删除 400
+# ---------------------------------------------------------------------------
+
+def test_t108_project_service_default_project_undeletable() -> None:
+    from app.modules.project.commands import ProjectDeleteCommand
+    from app.modules.project.service import ProjectService
+
+    service = ProjectService(
+        store=MagicMock(),
+        list_projects=lambda: [],
+        new_project=lambda name: {"id": "x"},
+        project_record=lambda p: p,
+        ensure_default_project=lambda: [{"id": "default"}],
+        canvas_lock=MagicMock(__enter__=lambda s: None, __exit__=lambda *a: None),
+        canvas_dir=".",
+        default_project_id="default",
+        now_ms=lambda: 0,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        service.delete_project(ProjectDeleteCommand(project_id="default"))
+    assert exc_info.value.status_code == 400
+    assert "默认项目" in str(exc_info.value.detail)
+
+
+# ---------------------------------------------------------------------------
+# T109 — `/api/canvases/trash` HTTP 路径解析优先级（synthetic FastAPI app）
+# ---------------------------------------------------------------------------
+
+def test_t109_trash_route_wins_over_by_id_wildcard() -> None:
+    from fastapi import FastAPI
+
+    from app.api.routers.canvas import create_router
+    from app.modules.canvas.commands import CanvasCreateCommand, CanvasIdCommand
+    from app.modules.canvas.service import CanvasService
+
+    # Prepare a fake service that records which method was invoked.
+    fake_store = MagicMock()
+    fake_store.load_canvas.return_value = {"id": "trash", "kind": "classic"}
+
+    async def _broadcast(*_a, **_kw):
+        return None
+
+    service = CanvasService(
+        store=fake_store,
+        list_canvases=lambda: [{"id": "a"}],
+        list_deleted_canvases=lambda: [{"id": "deleted"}],
+        new_canvas=lambda *a, **kw: {"id": "new"},
+        canvas_record=lambda c: c,
+        canvas_path=lambda cid: cid,
+        load_canvas_any=lambda cid: {"id": cid},
+        normalize_canvas_kind=lambda k: k or "classic",
+        normalize_canvas_color=lambda c: c,
+        canvas_lock=MagicMock(__enter__=lambda s: None, __exit__=lambda *a: None),
+        default_project_id="default",
+        broadcast_canvas_updated=_broadcast,
+        now_ms=lambda: 0,
+    )
+
+    # Import DTOs from main.py to preserve shape/kind契约.
+    import main
+
+    synth_app = FastAPI()
+    synth_app.include_router(
+        create_router(
+            service=service,
+            canvas_create_dto=main.CanvasCreateRequest,
+            canvas_meta_update_dto=main.CanvasMetaUpdate,
+            canvas_save_dto=main.CanvasSaveRequest,
+        )
+    )
+    client = TestClient(synth_app)
+
+    # `/trash` 必须命中 list_deleted_canvases（而不是把 "trash" 当作 canvas_id）
+    response = client.get("/api/canvases/trash")
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"canvases": [{"id": "deleted"}], "retention_days": 30}
+
+    # `/{canvas_id}` 通配路径仍可正常工作
+    response = client.get("/api/canvases/abc123")
+    assert response.status_code == 200
+    assert response.json()["canvas"]["id"] == "trash"  # 来自 fake_store
