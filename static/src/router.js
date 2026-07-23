@@ -7,6 +7,7 @@ import ApiSettingsPage from './pages/ApiSettingsPage.vue'
 import ComfyuiSettingsPage from './pages/ComfyuiSettingsPage.vue'
 import CanvasListPage from './pages/CanvasListPage.vue'
 import AssetManagerPage from './pages/AssetManagerPage.vue'
+import CanvasPage from './pages/CanvasPage.vue'
 
 export default createRouter({
   history: createWebHistory('/static/'),
@@ -19,5 +20,6 @@ export default createRouter({
     { path: '/comfyui-settings', component: ComfyuiSettingsPage },
     { path: '/canvas-list', component: CanvasListPage },
     { path: '/asset-manager', component: AssetManagerPage },
+    { path: '/canvas', component: CanvasPage },
   ]
 })
