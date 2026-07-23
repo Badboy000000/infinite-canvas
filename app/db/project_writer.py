@@ -1,7 +1,13 @@
-"""`app.db.project_writer` — 数据 PR-8 Project DB 主写路径。
+"""`app.db.project_writer` — 数据 PR-8 Project DB 主写路径 · PR-20 反转默认。
 
-只有 `PROJECT_PRIMARY_WRITE=db` 时，`project_store.save_projects` /
-`.load_projects` 才 import 本模块（默认 `json` 路径**不 import**）。
+**数据 PR-20**（Wave 3-N.5 主线 B）反转默认后：`PROJECT_PRIMARY_WRITE` 未设 /
+空 env → `"db"`（既往为 `"json"`）；本模块变为**默认 DB 主写**的落盘承接点。
+只有显式 `PROJECT_PRIMARY_WRITE=json` 时，`project_store.save_projects` /
+`.load_projects` 才**不** import 本模块（回滚路径 · 参照 canvas 域 PR-15 pattern）。
+
+**回滚方式反转**：切回 PR-8 行为 = `export PROJECT_PRIMARY_WRITE=json`
+立即生效；此时 `project_store` 走 legacy `main.save_projects` JSON 主写路径，
+本模块不 import、DB engine 不构造、任何 fallback 文件不落地。
 
 关键契约（治理期）：
 
@@ -17,8 +23,9 @@
 
 详见：
 
-- [[40 实施计划/数据模型治理实施计划与PR清单]] PR-8
+- [[40 实施计划/数据模型治理实施计划与PR清单]] PR-8 / PR-20
 - [[60 讨论记录/2026-07-19 Wave 3-G-数据 PR-8 开工]] 协调纲要
+- [[70 开发过程跟踪/开发编年史/2026-07-23 Wave 3-N 开工.md]] Wave 3-N.5 段
 """
 
 from __future__ import annotations

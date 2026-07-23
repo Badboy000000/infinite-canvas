@@ -28,6 +28,8 @@ def legacy_sources(tmp_path, monkeypatch):
     # 契约固化），必须走 json 主写路径，否则 canvas_store.save_canvas 会走
     # DB 主写并触发 `canvases` 表查询而失败。
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
+    # 数据 PR-20 反转承接：同理 Project 域也必须走 json 主写路径。
+    monkeypatch.setenv("PROJECT_PRIMARY_WRITE", "json")
 
     data_dir = tmp_path / "data"
     canvas_dir = data_dir / "canvases"

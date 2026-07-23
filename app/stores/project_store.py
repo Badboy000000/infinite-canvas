@@ -1,4 +1,4 @@
-"""Project store facade — 数据模型治理 PR-0 + PR-4 shadow 双读 + PR-8 主写分派。
+"""Project store facade — 数据模型治理 PR-0 + PR-4 shadow 双读 + PR-8 主写分派 + PR-20 反转默认。
 
 包裹 `main.py` 中项目列表 JSON 读写函数 `load_projects` / `save_projects`。
 签名与原函数一一对应，仅做委派，不改行为。
@@ -9,11 +9,20 @@
 
 **数据 PR-8**（Wave 3-G）：`save_projects()` 按 `PROJECT_PRIMARY_WRITE` env
 分派：
-- `"json"`（默认）→ 完全等价 PR-4 行为（老 JSON 主写；shadow read 由
+- `"json"`（显式回滚开关）→ 完全等价 PR-4 行为（老 JSON 主写；shadow read 由
   `load_projects` 独立触发）。**必须**保证不 import `app.db.project_writer`，
   不构造 DB engine，不落任何 fallback 文件（P0 硬约束 #3）。
-- `"db"`（显式启用）→ `app.db.project_writer.save_projects_db` DB 主写 +
-  JSON 异步回写。DB 主写失败上抛（不 fallback 到 JSON 主写；P0 硬约束 #4）。
+- `"db"`（数据 PR-20 反转后默认 · Wave 3-N.5 主线 B）→
+  `app.db.project_writer.save_projects_db` DB 主写 + JSON 异步回写。
+  DB 主写失败上抛（不 fallback 到 JSON 主写；P0 硬约束 #4）。
+
+**数据 PR-20**（Wave 3-N.5 主线 B）：Project 域 M1 收官反转默认。
+`_get_primary_write_mode` 未设 env / 空 env → `"db"`（既往为 `"json"`）；
+`save_projects` 分派开关不变；仅 fallback 常量翻转（2 处单行 + AST 断言
+zero-diff 于其余部分 · T255 覆盖）。
+
+**回滚方式反转**：切回 PR-8 行为 = `export PROJECT_PRIMARY_WRITE=json`
+立即生效（fail-fast 值域校验保留 · 参照 canvas 域 PR-15 pattern）。
 """
 from __future__ import annotations
 
@@ -37,10 +46,10 @@ def _get_primary_write_mode(domain: str) -> str:
 
     raw = os.environ.get("PROJECT_PRIMARY_WRITE")
     if raw is None:
-        return "json"
+        return "db"
     value = str(raw).strip().lower()
     if not value:
-        return "json"
+        return "db"
     if value not in _PRIMARY_WRITE_ALLOWED:
         raise ValueError(
             f"Invalid PROJECT_PRIMARY_WRITE {raw!r}; expected one of: "

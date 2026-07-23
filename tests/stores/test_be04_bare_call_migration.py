@@ -206,11 +206,16 @@ def isolated_data(tmp_path, monkeypatch):
     数据 PR-15 反转默认后，canvas_store 默认走 DB 主写；本文件测试的是"store
     facade → main JSON helper"等价性，需要显式 `CANVAS_PRIMARY_WRITE=json` 才能
     保留 JSON roundtrip 契约。
+
+    数据 PR-20（Wave 3-N.5 主线 B）反转默认后，project_store 亦默认走 DB 主写；
+    同理需要显式 `PROJECT_PRIMARY_WRITE=json` 才能保留 JSON roundtrip 契约。
     """
     import main
 
     # 数据 PR-15 反转承接：强制 json 主写路径。
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
+    # 数据 PR-20 反转承接：强制 json 主写路径（Project 域）。
+    monkeypatch.setenv("PROJECT_PRIMARY_WRITE", "json")
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -519,9 +524,21 @@ def client():
     创建的 bootstrap 文件（`data/projects.json` / `data/prompt_libraries.json`），
     避免污染仓库工作树。仅在文件是**测试期新建**（不存在于 fixture 进入前）
     时才清理，已存在的用户数据保留。
+
+    数据 PR-15 / PR-20 反转承接：本 fixture 模块作用域;走真实 main.app;
+    默认 `CANVAS_PRIMARY_WRITE=db` / `PROJECT_PRIMARY_WRITE=db` 会尝试触发
+    DB 主写(但 fixture 没有 `migrate_baseline`)。强制 env=json 保留原
+    JSON bootstrap 语义。测试结束后原样还原 env。
     """
     from fastapi.testclient import TestClient
     import main
+
+    # 数据 PR-15 反转承接：强制 canvas json 主写路径。
+    _prev_canvas = os.environ.get("CANVAS_PRIMARY_WRITE")
+    os.environ["CANVAS_PRIMARY_WRITE"] = "json"
+    # 数据 PR-20 反转承接：强制 project json 主写路径。
+    _prev_project = os.environ.get("PROJECT_PRIMARY_WRITE")
+    os.environ["PROJECT_PRIMARY_WRITE"] = "json"
 
     to_clean = []
     for path_attr in ("PROJECTS_PATH", "PROMPT_LIBRARY_PATH"):
@@ -539,6 +556,15 @@ def client():
                     os.remove(path)
             except OSError:
                 pass
+        # 还原 env
+        if _prev_canvas is None:
+            os.environ.pop("CANVAS_PRIMARY_WRITE", None)
+        else:
+            os.environ["CANVAS_PRIMARY_WRITE"] = _prev_canvas
+        if _prev_project is None:
+            os.environ.pop("PROJECT_PRIMARY_WRITE", None)
+        else:
+            os.environ["PROJECT_PRIMARY_WRITE"] = _prev_project
 
 
 def test_e2e_get_providers(client):

@@ -67,12 +67,15 @@ def _seed_project(pid: str, name: str = "P", order: int = 0) -> dict:
 def test_json_mode_default_does_not_import_project_writer(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    """`PROJECT_PRIMARY_WRITE=json`（默认）时 `app.db.project_writer` 从未 import。
+    """`PROJECT_PRIMARY_WRITE=json`（数据 PR-20 反转后 · 显式回滚开关）时
+    `app.db.project_writer` 从未 import。
 
-    P0 硬约束 #3。
+    P0 硬约束 #3：json 回滚路径无任何行为变化（PR-4 → PR-8 → PR-20 用户零感知）。
     """
 
-    monkeypatch.delenv("PROJECT_PRIMARY_WRITE", raising=False)
+    # 数据 PR-20 反转后：默认已经是 db，本用例语义是"显式 json 回滚开关"
+    # 下不 import project_writer；因此必须 setenv，不能 delenv。
+    monkeypatch.setenv("PROJECT_PRIMARY_WRITE", "json")
     sys.modules.pop("app.db.project_writer", None)
 
     from app.stores import project_store
@@ -94,9 +97,12 @@ def test_json_mode_default_does_not_import_project_writer(
 def test_json_mode_default_does_not_build_db_engine(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    """默认模式下 `save_projects` 不构造 DB engine（P0 硬约束）。"""
+    """显式 `json` 回滚模式下 `save_projects` 不构造 DB engine（P0 硬约束）。
 
-    monkeypatch.delenv("PROJECT_PRIMARY_WRITE", raising=False)
+    数据 PR-20 反转后：默认已经是 db；本用例语义是"显式 json"下不建 engine。
+    """
+
+    monkeypatch.setenv("PROJECT_PRIMARY_WRITE", "json")
 
     from app.db import engine as db_engine
 
