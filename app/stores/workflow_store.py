@@ -1,4 +1,4 @@
-"""Workflow store facade — 数据模型治理 PR-0 + PR-4 shadow 双读 + PR-8 主写分派。
+"""Workflow store facade — 数据模型治理 PR-0 + PR-4 shadow 双读 + PR-8 主写分派 + PR-22 反转默认。
 
 包裹 `main.py` 中 RunningHub 工作流存储读写函数
 `load_runninghub_workflow_store` / `save_runninghub_workflow_store`。
@@ -10,12 +10,21 @@
 
 **数据 PR-8**（Wave 3-G）：`save_runninghub_workflow_store()` 按
 `WORKFLOW_DEFINITION_PRIMARY_WRITE` env 分派：
-- `"json"`（默认）→ 完全等价 PR-4 行为。**必须**保证不 import
-  `app.db.workflow_writer`，不构造 DB engine，不落 fallback 文件。
-- `"db"`（显式启用）→ `save_runninghub_workflow_store_db` DB 主写（含 P0
-  密钥剪枝）+ JSON 异步回写。DB 主写失败上抛（不 fallback）。
+- `"json"`（显式回滚开关）→ 完全等价 PR-4 行为。**必须**保证不 import
+  `app.db.workflow_writer`，不构造 DB engine，不落 fallback 文件（P0 硬约束 #3）。
+- `"db"`（数据 PR-22 反转后默认 · Wave 3-N.5 主线 B）→
+  `save_runninghub_workflow_store_db` DB 主写（含 P0 密钥剪枝）+ JSON 异步回写。
+  DB 主写失败上抛（不 fallback）。
   `prune_runninghub_workflow_store_for_provider` 语义自动等价（`main.py`
   通过 store facade 调用；wrapper 分派内自动接管）。
+
+**数据 PR-22**（Wave 3-N.5 主线 B）：WorkflowDefinition 域 M1 收官反转默认。
+`_get_primary_write_mode` 未设 env / 空 env → `"db"`（既往为 `"json"`）；
+`save_runninghub_workflow_store` 分派开关不变；仅 fallback 常量翻转（2 处单行 +
+AST 断言 zero-diff 于其余部分 · T274/T275 覆盖）。
+
+**回滚方式反转**：切回 PR-8 行为 = `export WORKFLOW_DEFINITION_PRIMARY_WRITE=json`
+立即生效（fail-fast 值域校验保留 · 参照 canvas 域 PR-15 / project 域 PR-20 pattern）。
 """
 from __future__ import annotations
 
@@ -38,10 +47,10 @@ def _get_primary_write_mode(domain: str) -> str:
 
     raw = os.environ.get("WORKFLOW_DEFINITION_PRIMARY_WRITE")
     if raw is None:
-        return "json"
+        return "db"
     value = str(raw).strip().lower()
     if not value:
-        return "json"
+        return "db"
     if value not in _PRIMARY_WRITE_ALLOWED:
         raise ValueError(
             f"Invalid WORKFLOW_DEFINITION_PRIMARY_WRITE {raw!r}; expected one of: "
@@ -60,10 +69,10 @@ def load_runninghub_workflow_store(*args: Any, **kwargs: Any) -> Any:
 def save_runninghub_workflow_store(*args: Any, **kwargs: Any) -> Any:
     """`save_runninghub_workflow_store(store)` wrapper。
 
-    - `WORKFLOW_DEFINITION_PRIMARY_WRITE=json`（默认）→ 老 `main.save_runninghub_workflow_store`；
-      **不 import** `app.db.workflow_writer`。
-    - `WORKFLOW_DEFINITION_PRIMARY_WRITE=db` → `save_runninghub_workflow_store_db` DB 主写
-      + JSON 异步回写。
+    - `WORKFLOW_DEFINITION_PRIMARY_WRITE=json`（显式回滚开关 · PR-22 反转后）→
+      老 `main.save_runninghub_workflow_store`；**不 import** `app.db.workflow_writer`。
+    - `WORKFLOW_DEFINITION_PRIMARY_WRITE=db`（PR-22 反转后默认）→
+      `save_runninghub_workflow_store_db` DB 主写 + JSON 异步回写。
       `prune_runninghub_workflow_store_for_provider`（在 `main.py` 内）通过
       本 facade 调用，因此 prune 语义在 db 模式下自动等价（DELETE 集合级事务
       会清除不在 payload 中的 rh workflow 行）。
@@ -86,7 +95,8 @@ def save_runninghub_workflow_store(*args: Any, **kwargs: Any) -> Any:
         _async_write_json_fallback(store)
         return None
 
-    # 默认 mode == "json"：完全等价 PR-4 行为。
+    # 默认 mode == "db"（PR-22 反转后 · Wave 3-N.5 主线 B）：以上路径。
+    # 显式 mode == "json"：完全等价 PR-4 行为（回滚开关）。
     from main import save_runninghub_workflow_store as _impl
     return _impl(*args, **kwargs)
 
