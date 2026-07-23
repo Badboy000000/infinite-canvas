@@ -83,6 +83,14 @@ from app.modules.canvas.service import CanvasService  # noqa: E402
 from app.modules.canvas.store import CanvasStore  # noqa: E402
 from app.modules.project.service import ProjectService  # noqa: E402
 from app.modules.project.store import ProjectStore  # noqa: E402
+# --- PR-BE-08 provider domain + 4 router group extraction (Wave 3-N.6 Batch 2 主线 A) -----
+from app.api.routers.providers import create_router as create_providers_router  # noqa: E402
+from app.api.routers.runninghub import create_router as create_runninghub_router  # noqa: E402
+from app.api.routers.cli import create_router as create_cli_router  # noqa: E402
+from app.api.routers.generation import create_router as create_generation_router  # noqa: E402
+from app.modules.provider.service import ProviderConfigService  # noqa: E402
+from app.modules.provider.store import ProviderStore  # noqa: E402
+from app.modules.provider.registry import ProviderRegistry, ProviderResolution  # noqa: E402,F401
 # ---------------------------------------------------------------------------
 import json
 import uuid
@@ -12415,7 +12423,6 @@ async def import_local_ai_reference(payload: LocalImageImportRequest, request: R
         raise HTTPException(status_code=400, detail="没有可导入的本地图片")
     return {"files": [import_local_image_file(normalize_local_image_path(path)) for path in requested]}
 
-@app.get("/api/runninghub/app-info")
 async def runninghub_app_info(webappId: str = ""):
     webapp_id = str(webappId or "").strip()
     if not webapp_id:
@@ -12438,7 +12445,6 @@ async def runninghub_app_info(webappId: str = ""):
     data = raw.get("data") if isinstance(raw, dict) else {}
     return {"success": True, "data": data or {}}
 
-@app.post("/api/runninghub/submit")
 async def runninghub_submit(payload: RunningHubSubmitRequest):
     webapp_id = str(payload.webappId or "").strip()
     if not webapp_id:
@@ -12469,7 +12475,6 @@ async def runninghub_submit(payload: RunningHubSubmitRequest):
         return {"success": True, "data": {"taskId": task_id, "raw": raw}}
     raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}")
 
-@app.post("/api/runninghub/workflow-submit")
 async def runninghub_workflow_submit(payload: RunningHubWorkflowSubmitRequest):
     workflow_id = str(payload.workflowId or "").strip()
     if not workflow_id:
@@ -12505,7 +12510,6 @@ async def runninghub_workflow_submit(payload: RunningHubWorkflowSubmitRequest):
         return {"success": True, "data": {"taskId": task_id, "raw": raw}}
     raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 工作流提交失败：{raw}")
 
-@app.get("/api/runninghub/workflow-info")
 async def runninghub_workflow_info(workflowId: str = ""):
     workflow_id = str(workflowId or "").strip()
     if not workflow_id:
@@ -12537,7 +12541,6 @@ async def runninghub_workflow_info(workflowId: str = ""):
     node_info_list = runninghub_workflow_node_info_list(workflow_json)
     return {"success": True, "data": {"workflowId": workflow_id, "nodeInfoList": node_info_list, "raw": raw}}
 
-@app.get("/api/runninghub/workflows")
 def list_runninghub_workflows():
     providers = provider_config_store.load_api_providers()
     hidden_ids = runninghub_saved_hidden_workflow_ids()
@@ -12578,7 +12581,6 @@ def list_runninghub_workflows():
     items.sort(key=lambda item: item["title"])
     return {"workflows": items}
 
-@app.get("/api/runninghub/workflows/{workflow_id:path}")
 def get_runninghub_workflow(workflow_id: str):
     key = runninghub_workflow_store_key(workflow_id)
     if not key:
@@ -12592,7 +12594,6 @@ def get_runninghub_workflow(workflow_id: str):
         raise HTTPException(status_code=404, detail="RunningHub 工作流未找到")
     return {"workflow": cfg}
 
-@app.post("/api/runninghub/workflows/fetch")
 async def fetch_runninghub_workflow(payload: RunningHubWorkflowConfig):
     workflow_id = runninghub_workflow_store_key(payload.workflowId)
     if not workflow_id:
@@ -12624,7 +12625,6 @@ async def fetch_runninghub_workflow(payload: RunningHubWorkflowConfig):
     fields = runninghub_collect_workflow_fields(workflow_json)
     return {"success": True, "data": {"workflowId": workflow_id, "title": payload.title or workflow_id, "description": payload.description or "", "fields": fields, "workflowJson": workflow_json, "raw": raw}}
 
-@app.put("/api/runninghub/workflows/{workflow_id:path}")
 def save_runninghub_workflow(workflow_id: str, payload: RunningHubWorkflowConfig):
     key = runninghub_workflow_store_key(workflow_id)
     if not key:
@@ -12650,7 +12650,6 @@ def save_runninghub_workflow(workflow_id: str, payload: RunningHubWorkflowConfig
     sync_runninghub_workflow_to_provider(cfg)
     return {"success": True, "workflow": cfg}
 
-@app.delete("/api/runninghub/workflows/{workflow_id:path}")
 def delete_runninghub_workflow(workflow_id: str):
     key = runninghub_workflow_store_key(workflow_id)
     if not key:
@@ -12665,7 +12664,6 @@ def delete_runninghub_workflow(workflow_id: str):
     remove_runninghub_workflow_from_provider(key)
     return {"success": True}
 
-@app.get("/api/runninghub/query")
 async def runninghub_query(taskId: str = "", useWallet: bool = False):
     task_id = str(taskId or "").strip()
     if not task_id:
@@ -12704,7 +12702,6 @@ async def runninghub_query(taskId: str = "", useWallet: bool = False):
             status = "UNKNOWN"
         return {"success": True, "data": {"status": status, "urls": urls, "image_items": image_items, "failReason": runninghub_fail_reason(raw), "code": code, "raw": raw}}
 
-@app.post("/api/runninghub/upload-asset")
 async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
     source_url = rewrite_runninghub_file_url(str(payload.url or "").strip())
     if not source_url:
@@ -12746,7 +12743,6 @@ async def runninghub_upload_asset(payload: RunningHubUploadAssetRequest):
         return {"success": True, "data": {"fileName": raw["data"]["fileName"], "fileType": raw["data"].get("fileType") or content_type}}
     raise HTTPException(status_code=400, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传失败：{raw}")
 
-@app.get("/api/codex/status")
 async def codex_status():
     exe = codex_cli_executable()
     image2_exe = gpt_image_2_skill_executable()
@@ -12790,7 +12786,6 @@ async def codex_status():
             "message": f"Codex CLI 检测失败：{exc}",
         }
 
-@app.post("/api/codex/help")
 async def codex_help(payload: CodexHelpRequest):
     exe = codex_cli_executable()
     if not exe:
@@ -12815,7 +12810,6 @@ async def codex_help(payload: CodexHelpRequest):
         raise HTTPException(status_code=502, detail=(err_text or out_text or f"exit={proc.returncode}")[:1000])
     return {"text": out_text or err_text, "raw": {"stdout": out_text, "stderr": err_text}}
 
-@app.get("/api/gemini-cli/status")
 async def gemini_cli_status():
     exe = gemini_cli_executable()
     display_name = gemini_cli_display_name(exe)
@@ -12856,7 +12850,6 @@ async def gemini_cli_status():
             "message": f"{display_name} 检测失败：{exc}",
         }
 
-@app.post("/api/gemini-cli/help")
 async def gemini_cli_help(payload: GeminiCliHelpRequest):
     exe = gemini_cli_executable()
     if not exe:
@@ -12882,7 +12875,6 @@ async def gemini_cli_help(payload: GeminiCliHelpRequest):
         raise HTTPException(status_code=502, detail=(err_text or out_text or f"exit={proc.returncode}")[:1000])
     return {"text": out_text or err_text, "raw": {"stdout": out_text, "stderr": err_text}}
 
-@app.get("/api/jimeng/status")
 async def jimeng_status():
     exe = jimeng_cli_executable()
     if not exe:
@@ -12911,17 +12903,14 @@ async def jimeng_status():
             "min_version": min_version_str,
         }
 
-@app.get("/api/jimeng/credit")
 async def jimeng_credit():
     raw = await run_jimeng_cli(["user_credit"], timeout=30)
     return {"success": True, "raw": raw}
 
-@app.post("/api/jimeng/logout")
 async def jimeng_logout():
     raw = await run_jimeng_cli(["logout"], timeout=30)
     return {"success": True, "raw": raw}
 
-@app.post("/api/jimeng/login/start")
 async def jimeng_login_start():
     old_proc = JIMENG_LOGIN_SESSION.get("proc")
     if old_proc and getattr(old_proc, "returncode", None) is None:
@@ -12969,7 +12958,6 @@ async def jimeng_login_start():
         "started_at": JIMENG_LOGIN_SESSION.get("started_at") or 0,
     }
 
-@app.get("/api/jimeng/login/status")
 async def jimeng_login_status():
     proc = JIMENG_LOGIN_SESSION.get("proc")
     text = jimeng_login_text()
@@ -12991,7 +12979,6 @@ async def jimeng_login_status():
         "raw": credit_raw,
     }
 
-@app.post("/api/jimeng/help")
 async def jimeng_help(payload: JimengHelpRequest):
     command = str(payload.command or "").strip()
     allowed = {"", "login", "logout", "user_credit", "text2image", "image2image", "image_upscale", "text2video", "image2video", "multimodal2video", "frames2video", "multiframe2video", "list_task", "query_result"}
@@ -13004,7 +12991,6 @@ async def jimeng_help(payload: JimengHelpRequest):
         text = f"{text}\n{raw.get('_stderr')}".strip()
     return {"success": True, "command": command, "text": text, "raw": raw}
 
-@app.post("/api/jimeng/query-media")
 async def jimeng_query_media(payload: JimengQueryMediaRequest):
     """按 submit_id 续查即梦任务：出图返回 succeeded+urls；仍排队返回 pending+queue_info；失败返回 failed。
     供画布「排队中」卡片自动轮询与手动查询复用。"""
@@ -13045,11 +13031,9 @@ async def ai_models():
 
 app.include_router(create_storage_router(ai_config, ai_models))
 
-@app.get("/api/providers")
 async def api_providers():
     return {"providers": public_api_providers()}
 
-@app.put("/api/providers")
 async def save_providers(payload: List[ApiProviderPayload]):
     providers = []
     env_updates = {}
@@ -13356,7 +13340,6 @@ def apply_agnes_model_defaults(base_url, grouped, ids):
     grouped["video"] = sorted(set(grouped.get("video") or []))
     return grouped, ids
 
-@app.post("/api/providers/test-connection")
 async def test_provider_connection(payload: TestConnectionPayload):
     """测试请求地址是否可用：调上游 /v1/models。验证通过时同时把模型清单按类别返回，避免再调一次拉取接口。"""
     protocol = protocol_from_payload(payload)
@@ -13469,7 +13452,6 @@ async def test_provider_connection(payload: TestConnectionPayload):
                 pass
         return {"ok": False, "status": 0, "message": str(e)[:300]}
 
-@app.post("/api/providers/probe-async")
 async def probe_async_endpoint(payload: TestConnectionPayload):
     """验证异步协议：用假 task_id 请求 GET /v1/tasks/{fake_id}。
     收到 400 Invalid task ID = 端点存在且 Key 有效；401/403 = Key 无效；404/连接失败 = 不支持异步端点。"""
@@ -13745,14 +13727,12 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
         "image_request_mode": detect_image_request_mode(base_url, ids) or normalize_image_request_mode(image_request_mode),
     }
 
-@app.post("/api/providers/fetch-models")
 async def fetch_upstream_models_from_payload(payload: TestConnectionPayload):
     """按页面当前表单值拉取模型，支持新增平台未保存时直接使用临时 Base URL / Key。"""
     protocol = protocol_from_payload(payload)
     api_key = api_key_from_payload(payload, protocol)
     return await fetch_models_from_upstream(payload.base_url, api_key, protocol, payload.image_request_mode)
 
-@app.get("/api/providers/{provider_id}/fetch-models")
 async def fetch_upstream_models(provider_id: str):
     """从已保存的上游 OpenAI 兼容接口拉取 /v1/models 列表，按名称智能分类为 image/chat/video。"""
     provider = get_api_provider_exact(provider_id)
@@ -13828,11 +13808,9 @@ async def build_online_image_result(payload: OnlineImageRequest):
         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
     return result
 
-@app.post("/api/online-image")
 async def online_image(payload: OnlineImageRequest):
     return await build_online_image_result(payload)
 
-@app.post("/api/image-task-query")
 async def query_image_task(payload: ImageTaskQueryRequest):
     provider = get_api_provider(payload.provider_id)
     task_id = str(payload.task_id or "").strip()
@@ -14029,7 +14007,6 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
             )
         _shadow_register("release", task_id, status="failed", error_message=str(detail))
 
-@app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(payload: OnlineImageRequest):
     task_id = f"canvas_img_{uuid.uuid4().hex}"
     with CANVAS_TASK_LOCK:
@@ -14055,7 +14032,6 @@ async def create_canvas_image_task(payload: OnlineImageRequest):
     asyncio.create_task(run_canvas_image_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
 
-@app.get("/api/canvas-image-tasks/{task_id}")
 async def get_canvas_image_task(task_id: str):
     with CANVAS_TASK_LOCK:
         task = dict(CANVAS_TASKS.get(task_id) or {})
@@ -14094,7 +14070,6 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
             })
         _shadow_register("release", task_id, status="failed", error_message=str(detail))
 
-@app.post("/api/canvas-comfy-tasks")
 async def create_canvas_comfy_task(payload: GenerateRequest):
     task_id = f"canvas_comfy_{uuid.uuid4().hex}"
     with CANVAS_TASK_LOCK:
@@ -14118,7 +14093,6 @@ async def create_canvas_comfy_task(payload: GenerateRequest):
     asyncio.create_task(run_canvas_comfy_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
 
-@app.get("/api/canvas-comfy-tasks/{task_id}")
 async def get_canvas_comfy_task(task_id: str):
     with CANVAS_TASK_LOCK:
         task = dict(CANVAS_TASKS.get(task_id) or {})
@@ -14179,7 +14153,6 @@ def build_image_param_fields(engine: str, provider: dict, model: str):
     fields.append(refs_field)
     return fields
 
-@app.get("/api/image-params")
 async def image_params(provider_id: str = "", model: str = ""):
     providers = provider_config_store.load_api_providers()
     provider = next((p for p in providers if p.get("id") == (provider_id or "").strip().lower()), None) or {}
@@ -14712,7 +14685,6 @@ def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
     suffix_text = " ".join(suffixes)
     return f"{text} {suffix_text}".strip() if text else suffix_text
 
-@app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
     provider = get_api_provider(payload.provider_id)
     if is_jimeng_provider(provider):
@@ -16646,6 +16618,95 @@ app.include_router(
         export_canvas_workflow_to_library_callback=export_canvas_workflow_to_library,
         import_canvas_workflow_callback=import_canvas_workflow,
         canvas_workflow_export_dto=CanvasWorkflowExportRequest,
+    )
+)
+
+# --- PR-BE-08 provider domain + 4 router group assembly (Wave 3-N.6 Batch 2 主线 A) --
+# 上方 30 个 async def / def 函数体保留为 re-export 兼容层(装饰器已剥离);
+# 下方 4 个 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/{providers,runninghub,cli,generation}.py` 与
+# `app/modules/provider/`。
+_provider_store = ProviderStore()
+# `prune_runninghub_workflow_store_for_provider` 定义在文件下方(≈L17848 ·
+# `save_providers` 函数体运行时才用到);此处的 include_router 在模块加载
+# 时执行,故用 lambda 做延迟解析,避免 NameError。
+_provider_service = ProviderConfigService(
+    store=_provider_store,
+    public_api_providers=public_api_providers,
+    get_api_provider=get_api_provider,
+    get_api_provider_exact=get_api_provider_exact,
+    normalize_provider=normalize_provider,
+    public_provider=public_provider,
+    preserve_runninghub_hidden_overrides=preserve_runninghub_hidden_overrides,
+    prune_runninghub_workflow_store_for_provider=lambda provider: prune_runninghub_workflow_store_for_provider(provider),
+    provider_key_env=provider_key_env,
+    runninghub_wallet_key_env=runninghub_wallet_key_env,
+    volcengine_access_key_env=volcengine_access_key_env,
+    volcengine_secret_key_env=volcengine_secret_key_env,
+)
+_provider_registry = ProviderRegistry(
+    load_providers=_provider_store.load_api_providers,
+)
+# Router include 顺序(裁决 2 加强 · T356 路由顺序三条位置断言):
+#   providers → runninghub → cli → generation
+# providers router 内部声明顺序保证 `/api/providers/{provider_id}/fetch-models` /
+# `/api/providers/test-connection` / `/api/providers/probe-async` 都在
+# `/api/providers/{provider_id}` 通配路由(如未来引入)之前。
+app.include_router(
+    create_providers_router(
+        service=_provider_service,
+        registry=_provider_registry,
+        api_provider_dto=ApiProviderPayload,
+        test_connection_dto=TestConnectionPayload,
+        update_env_values_callback=update_env_values,
+        reload_env_globals_callback=reload_env_globals,
+        public_provider_callback=public_provider,
+        test_connection_callback=test_provider_connection,
+        probe_async_callback=probe_async_endpoint,
+        fetch_models_from_payload_callback=fetch_upstream_models_from_payload,
+        fetch_models_by_provider_id_callback=fetch_upstream_models,
+    )
+)
+app.include_router(
+    create_runninghub_router(
+        runninghub_app_info=runninghub_app_info,
+        runninghub_submit=runninghub_submit,
+        runninghub_workflow_submit=runninghub_workflow_submit,
+        runninghub_workflow_info=runninghub_workflow_info,
+        list_runninghub_workflows=list_runninghub_workflows,
+        fetch_runninghub_workflow=fetch_runninghub_workflow,
+        get_runninghub_workflow=get_runninghub_workflow,
+        save_runninghub_workflow=save_runninghub_workflow,
+        delete_runninghub_workflow=delete_runninghub_workflow,
+        runninghub_query=runninghub_query,
+        runninghub_upload_asset=runninghub_upload_asset,
+    )
+)
+app.include_router(
+    create_cli_router(
+        codex_status=codex_status,
+        codex_help=codex_help,
+        gemini_cli_status=gemini_cli_status,
+        gemini_cli_help=gemini_cli_help,
+        jimeng_status=jimeng_status,
+        jimeng_credit=jimeng_credit,
+        jimeng_logout=jimeng_logout,
+        jimeng_login_start=jimeng_login_start,
+        jimeng_login_status=jimeng_login_status,
+        jimeng_help=jimeng_help,
+        jimeng_query_media=jimeng_query_media,
+    )
+)
+app.include_router(
+    create_generation_router(
+        online_image=online_image,
+        query_image_task=query_image_task,
+        create_canvas_image_task=create_canvas_image_task,
+        get_canvas_image_task=get_canvas_image_task,
+        create_canvas_comfy_task=create_canvas_comfy_task,
+        get_canvas_comfy_task=get_canvas_comfy_task,
+        image_params=image_params,
+        canvas_video=canvas_video,
     )
 )
 

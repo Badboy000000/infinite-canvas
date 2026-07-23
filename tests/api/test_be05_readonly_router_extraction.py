@@ -71,10 +71,13 @@ def test_order_sensitive_neighbors_match_pre_extraction_order() -> None:
 
     expected_runs = (
         (("/api/app-info", "GET"), ("/api/update-connectivity/probe", "GET")),
+        # 注:`/api/providers` GET 在 PR-BE-08(Wave 3-N.6 Batch 2 主线 A)中
+        # 迁到独立 `create_providers_router`,include_router 顺序移到 PR-BE-06
+        # 之后 · 故不再是 `/api/models` 的邻位。此处仅断言 storage.py 抽出的
+        # `/api/config` + `/api/models` 仍相邻(PR-BE-05 抽出结果冻结)。
         (
             ("/api/config", "GET"),
             ("/api/models", "GET"),
-            ("/api/providers", "GET"),
         ),
         (("/api/history", "GET"), ("/api/queue_status", "GET")),
         (
@@ -228,14 +231,21 @@ def test_main_assembly_injects_local_helpers_without_importing_main() -> None:
 
 
 def test_write_provider_runninghub_cli_and_websocket_routes_remain_in_main() -> None:
+    """PR-BE-05 抽出边界护栏。
+
+    PR-BE-08(Wave 3-N.6 Batch 2 主线 A)已把 `/api/providers` / `/api/
+    runninghub/*` / `/api/jimeng/*` 装饰器迁到独立 router 文件(函数体保
+    留在 main.py 作 re-export 兼容层)。故此处只断言:
+    - `/api/workflows` POST / PUT / DELETE 仍在 main.py(未抽出)
+    - `/ws/stats` websocket 仍在 main.py
+    - 6 条 PR-BE-05 抽出的只读路由**不再**保留 `@app.get(...)` 装饰器。
+    """
+
     source = (ROOT / "main.py").read_text(encoding="utf-8")
     required_main_decorators = (
         '@app.put("/api/comfyui/instances")',
         '@app.get("/api/workflows/{name:path}")',
         '@app.post("/api/workflows")',
-        '@app.get("/api/providers")',
-        '@app.get("/api/runninghub/app-info")',
-        '@app.get("/api/jimeng/status")',
         '@app.websocket("/ws/stats")',
     )
     for decorator in required_main_decorators:
