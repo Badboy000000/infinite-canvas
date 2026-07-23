@@ -2505,9 +2505,13 @@
         "title": "WorkflowUploadRequest",
         "type": "object"
       }
-    },
-    "securitySchemes": {}
+    }
   },
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
   "paths": {
     "/": {
       "get": {
@@ -4262,12 +4266,20 @@
         "operationId": "chat_api_chat_post",
         "parameters": [
           {
-            "in": "header",
-            "name": "x-user-id",
+            "in": "query",
+            "name": "request",
+            "required": true,
+            "schema": {
+              "title": "Request"
+            }
+          },
+          {
+            "in": "query",
+            "name": "x_user_id",
             "required": false,
             "schema": {
               "default": "",
-              "title": "X-User-Id",
+              "title": "X User Id",
               "type": "string"
             }
           }
@@ -4310,12 +4322,20 @@
         "operationId": "chat_agent_api_chat_agent_post",
         "parameters": [
           {
-            "in": "header",
-            "name": "x-user-id",
+            "in": "query",
+            "name": "request",
+            "required": true,
+            "schema": {
+              "title": "Request"
+            }
+          },
+          {
+            "in": "query",
+            "name": "x_user_id",
             "required": false,
             "schema": {
               "default": "",
-              "title": "X-User-Id",
+              "title": "X User Id",
               "type": "string"
             }
           }
@@ -4358,12 +4378,20 @@
         "operationId": "chat_stream_api_chat_stream_post",
         "parameters": [
           {
-            "in": "header",
-            "name": "x-user-id",
+            "in": "query",
+            "name": "request",
+            "required": true,
+            "schema": {
+              "title": "Request"
+            }
+          },
+          {
+            "in": "query",
+            "name": "x_user_id",
             "required": false,
             "schema": {
               "default": "",
-              "title": "X-User-Id",
+              "title": "X User Id",
               "type": "string"
             }
           }
@@ -4558,7 +4586,6 @@
     },
     "/api/comfyui/upload-base64": {
       "post": {
-        "description": "base64 方式把图片传到 ComfyUI 各后端的 input 目录，返回 comfy 用文件名（供 UXP 做 ComfyUI 图生图）。",
         "operationId": "upload_comfyui_base64_api_comfyui_upload_base64_post",
         "requestBody": {
           "content": {
@@ -4666,12 +4693,20 @@
         "operationId": "create_conversation_api_conversations_post",
         "parameters": [
           {
-            "in": "header",
-            "name": "x-user-id",
+            "in": "query",
+            "name": "request",
+            "required": true,
+            "schema": {
+              "title": "Request"
+            }
+          },
+          {
+            "in": "query",
+            "name": "x_user_id",
             "required": false,
             "schema": {
               "default": "",
-              "title": "X-User-Id",
+              "title": "X User Id",
               "type": "string"
             }
           }
@@ -7562,16 +7597,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateRequest",
-                "default": {
-                  "auto_restart": false,
-                  "fallback": true,
-                  "restart_delay": 3,
-                  "source": "github"
-                }
+                "$ref": "#/components/schemas/UpdateRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
