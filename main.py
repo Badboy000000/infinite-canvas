@@ -783,6 +783,14 @@ FILE_SERVICE_PRIMARY_WRITE_GENERATION = str(
     os.environ.get("FILE_SERVICE_PRIMARY_WRITE_GENERATION", "false")
 ).strip().lower() in ("1", "true", "yes")
 
+# 文件 PR-4b(Wave 3-N.5 主线 A)· FileService 上传通道主写门禁
+# true  → 5 处上传入口在旧路径写盘完成后追加 file_service.create_from_upload 写 DB metadata
+# false(默认)→ 完全旧路径 · file_objects 表零触碰 · 回滚兜底
+# monkeypatch 场景必须读 main.FILE_SERVICE_PRIMARY_WRITE_UPLOAD(动态值 · 勿捕获常量)
+FILE_SERVICE_PRIMARY_WRITE_UPLOAD = str(
+    os.environ.get("FILE_SERVICE_PRIMARY_WRITE_UPLOAD", "false")
+).strip().lower() in ("1", "true", "yes")
+
 def _shadow_error_code(exc):
     if isinstance(exc, FileNotFoundError):
         return "legacy_file_missing"
@@ -11612,6 +11620,14 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
             f.write(content)
         local_url = output_url_for(filename, "input")
         await shadow_register_existing_async(path, local_url, "ai_input", content_type)
+        if FILE_SERVICE_PRIMARY_WRITE_UPLOAD:
+            file_service.create_from_upload(
+                data=content,
+                mime_type=content_type or "",
+                origin_kind="ai_input",
+                legacy_path=path,
+                legacy_url=local_url,
+            )
         uploaded.append({"url": local_url, "name": file.filename or filename, "kind": kind, "mime": content_type})
     return {"files": uploaded}
 
@@ -11648,6 +11664,14 @@ async def upload_ai_base64(payload: Base64UploadRequest):
         f.write(content)
     local_url = output_url_for(filename, "input")
     await shadow_register_existing_async(path, local_url, "ai_input", ct)
+    if FILE_SERVICE_PRIMARY_WRITE_UPLOAD:
+        file_service.create_from_upload(
+            data=content,
+            mime_type=ct or "",
+            origin_kind="ai_input",
+            legacy_path=path,
+            legacy_url=local_url,
+        )
     return {"files": [{"url": local_url, "name": payload.name or filename, "kind": kind}]}
 
 @app.post("/api/comfyui/upload-base64")
@@ -11981,6 +12005,14 @@ async def upload_local_assets(files: List[UploadFile] = File(...), folder: str =
             f.write(content)
         local_url = _local_upload_item(rel_name)["url"]
         await shadow_register_existing_async(path, local_url, "upload", file.content_type or "")
+        if FILE_SERVICE_PRIMARY_WRITE_UPLOAD:
+            file_service.create_from_upload(
+                data=content,
+                mime_type=file.content_type or "",
+                origin_kind="upload",
+                legacy_path=path,
+                legacy_url=local_url,
+            )
         if kind == "image":
             classification = await classify_asset_image_best_effort(path)
             if classification:
@@ -15506,6 +15538,13 @@ async def upload_asset_library_workflows(
         item = make_workflow_library_item_from_bytes(raw, filename, os.path.splitext(filename)[0])
         cat.setdefault("items", []).append(item)
         added.append(item)
+        if FILE_SERVICE_PRIMARY_WRITE_UPLOAD:
+            file_service.create_from_upload(
+                data=raw,
+                mime_type=file.content_type or "application/zip",
+                origin_kind="workflow_import",
+                legacy_url=item.get("url"),
+            )
     if not added:
         raise HTTPException(status_code=400, detail="没有可上传的工作流文件")
     asset_library_store.save_asset_library(lib)
@@ -15563,6 +15602,20 @@ async def import_canvas_workflow(file: UploadFile = File(...)):
                     rel = os.path.relpath(target, ASSETS_DIR).replace("\\", "/")
                     new_url = f"/assets/{rel}"
                     await shadow_register_existing_async(target, new_url, "workflow_import", mimetypes.guess_type(target)[0] or "")
+                    if FILE_SERVICE_PRIMARY_WRITE_UPLOAD:
+                        try:
+                            with open(target, "rb") as _pr4b_fh:
+                                _pr4b_bytes = _pr4b_fh.read()
+                            file_service.create_from_upload(
+                                data=_pr4b_bytes,
+                                mime_type=mimetypes.guess_type(target)[0] or "",
+                                origin_kind="workflow_import",
+                                legacy_path=target,
+                                legacy_url=new_url,
+                            )
+                        except (OSError, IOError):
+                            # 主写失败不阻断旧路径(shadow 已完成)· fail-open
+                            pass
                     old_url = str(res.get("url") or "").strip()
                     if old_url:
                         resource_mapping[old_url] = new_url

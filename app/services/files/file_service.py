@@ -338,6 +338,139 @@ class FileService:
             created_at=now.isoformat(),
         )
 
+    def create_from_upload(
+        self,
+        data: bytes,
+        *,
+        mime_type: str,
+        origin_kind: str = "upload",
+        legacy_path: str | None = None,
+        legacy_url: str | None = None,
+        owner_user_id: str | None = None,
+        workspace_id: str | None = None,
+        project_id: str | None = None,
+        subject_table: str = "upload",
+    ) -> FileRecord:
+        """PR-4b primary-write path for the 5 upload entry points.
+
+        Contract differences vs ``create_from_generation``:
+        - Callers already wrote content to disk (upload endpoints do the write
+          before calling us); this method does **not** invoke
+          ``self.adapter.put`` a second time. It only records DB metadata.
+        - Uses ``subject_table`` (default ``"upload"``) for ``file_refs``,
+          disambiguating upload-owned rows from generation-owned rows.
+
+        Idempotency contract (matches PR-3):
+        - Same sha256 → one ``file_objects`` row; ``reference_count += 1``.
+        - Same ``(subject_table, subject_id, role, file_id)`` → one ``file_refs`` row.
+        """
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        from app.data_import import tables as t
+        from app.db.engine import get_engine
+        from app.shared.ids import generate_id
+
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise TypeError("data must be bytes-like")
+        payload = bytes(data)
+
+        sha256_digest = hashlib.sha256(payload)
+        sha256_bytes = sha256_digest.digest()
+        sha256_hex = sha256_digest.hexdigest()
+        size_bytes = len(payload)
+        xxh64_bytes = sha256_bytes[:8]
+
+        # object_key: prefer legacy filesystem shape; upload endpoints already
+        # own the on-disk path (assets/input/ai_ref_*, assets/library/*, ...).
+        # Fall back to a synthetic upload key when caller did not supply one.
+        ext = _mime_ext(mime_type or "") or "bin"
+        key = legacy_path or f"upload/{sha256_hex[0:2]}/{sha256_hex[2:4]}/{sha256_hex}.{ext}"
+
+        now = datetime.now(timezone.utc)
+        file_id = generate_id()
+        engine = get_engine()
+        with engine.begin() as conn:
+            stmt = sqlite_insert(t.file_objects).values(
+                id=file_id,
+                sha256=sha256_bytes,
+                xxh64=xxh64_bytes,
+                size_bytes=size_bytes,
+                mime_type=mime_type or None,
+                storage_backend=self.adapter.backend_name,
+                bucket=None,
+                object_key=key,
+                etag=None,
+                origin_kind=origin_kind,
+                owner_user_id=owner_user_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                created_at=now,
+                deleted_at=None,
+                reference_count=1,
+                last_referenced_at=now,
+                legacy_path=legacy_path,
+                legacy_url=legacy_url,
+                import_batch_id=None,
+                raw_meta=None,
+                origin_metadata_sha=None,
+                width=None,
+                height=None,
+                duration_ms=None,
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["sha256"],
+                set_={
+                    "reference_count": t.file_objects.c.reference_count + 1,
+                    "last_referenced_at": now,
+                },
+            )
+            conn.execute(stmt)
+
+            from sqlalchemy import select
+            existing = conn.execute(
+                select(t.file_objects.c.id).where(
+                    t.file_objects.c.sha256 == sha256_bytes
+                )
+            ).fetchone()
+            actual_id = existing[0] if existing else file_id
+
+            conn.execute(
+                sqlite_insert(t.file_refs).values(
+                    id=generate_id(),
+                    file_id=actual_id,
+                    subject_table=subject_table,
+                    subject_id=actual_id,
+                    role="primary",
+                    created_at=now,
+                ).on_conflict_do_nothing(
+                    index_elements=["subject_table", "subject_id", "role", "file_id"],
+                )
+            )
+
+            if legacy_url is not None:
+                conn.execute(
+                    sqlite_insert(t.legacy_url_refs).values(
+                        id=generate_id(),
+                        file_id=actual_id,
+                        url=legacy_url,
+                        migrated_at=now,
+                        sha256=sha256_bytes,
+                    ).on_conflict_do_nothing(
+                        index_elements=["url"],
+                    )
+                )
+
+        return FileRecord(
+            id=str(actual_id),
+            sha256=sha256_hex,
+            size_bytes=size_bytes,
+            mime_type=mime_type or None,
+            origin_kind=origin_kind,
+            legacy_path=legacy_path or "",
+            legacy_url=legacy_url,
+            created_at=now.isoformat(),
+        )
+
     def resolve_by_id(self, file_id: str) -> Optional[FileRecord]:
         with self._lock, _CrossProcessLock(self.lock_path):
             payload = self._read_index()
