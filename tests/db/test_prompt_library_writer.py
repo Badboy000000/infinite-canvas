@@ -67,9 +67,15 @@ def _lib(lid: str, name: str = "L", items: list[dict] | None = None) -> dict:
 def test_json_mode_default_does_not_import_prompt_library_writer(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    """P0 硬约束 #3：默认模式不 import `app.db.prompt_library_writer`。"""
+    """`PROMPT_LIBRARY_PRIMARY_WRITE=json`（数据 PR-21 反转后 · 显式回滚开关）时
+    `app.db.prompt_library_writer` 从未 import。
 
-    monkeypatch.delenv("PROMPT_LIBRARY_PRIMARY_WRITE", raising=False)
+    P0 硬约束 #3：json 回滚路径无任何行为变化（PR-4 → PR-8 → PR-21 用户零感知）。
+    """
+
+    # 数据 PR-21 反转后：默认已经是 db，本用例语义是"显式 json 回滚开关"
+    # 下不 import prompt_library_writer；因此必须 setenv，不能 delenv。
+    monkeypatch.setenv("PROMPT_LIBRARY_PRIMARY_WRITE", "json")
     sys.modules.pop("app.db.prompt_library_writer", None)
 
     from app.stores import prompt_library_store
@@ -89,7 +95,12 @@ def test_json_mode_default_does_not_import_prompt_library_writer(
 def test_json_mode_default_does_not_build_db_engine(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    monkeypatch.delenv("PROMPT_LIBRARY_PRIMARY_WRITE", raising=False)
+    """显式 `json` 回滚模式下 `save_prompt_libraries` 不构造 DB engine（P0 硬约束）。
+
+    数据 PR-21 反转后：默认已经是 db；本用例语义是"显式 json"下不建 engine。
+    """
+
+    monkeypatch.setenv("PROMPT_LIBRARY_PRIMARY_WRITE", "json")
 
     from app.db import engine as db_engine
 

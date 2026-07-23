@@ -26,6 +26,12 @@ def isolated_env(monkeypatch, tmp_path):
 def prompt_lib_file(tmp_path, monkeypatch, isolated_env):
     import main
 
+    # 数据 PR-21 反转承接：shadow 双读契约测的是 legacy JSON 读通路；
+    # `load_prompt_libraries` normalize 后若差异会经 store facade 触发 save，
+    # 反转后默认走 DB 主写会依赖 migrate_baseline。这里显式回滚到 json 主写路径，
+    # 保持 PR-4 shadow 双读契约不变。
+    monkeypatch.setenv("PROMPT_LIBRARY_PRIMARY_WRITE", "json")
+
     p = tmp_path / "prompt_libraries.json"
     p.write_text(
         json.dumps({

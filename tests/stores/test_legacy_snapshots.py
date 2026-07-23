@@ -30,6 +30,8 @@ def legacy_sources(tmp_path, monkeypatch):
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
     # 数据 PR-20 反转承接：同理 Project 域也必须走 json 主写路径。
     monkeypatch.setenv("PROJECT_PRIMARY_WRITE", "json")
+    # 数据 PR-21 反转承接：同理 PromptLibrary 域也必须走 json 主写路径。
+    monkeypatch.setenv("PROMPT_LIBRARY_PRIMARY_WRITE", "json")
 
     data_dir = tmp_path / "data"
     canvas_dir = data_dir / "canvases"
