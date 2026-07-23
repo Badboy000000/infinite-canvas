@@ -23,15 +23,46 @@ from app.services.files.file_service import FileService, _mime_ext
 
 @pytest.fixture(autouse=True)
 def file_objects_db(monkeypatch, tmp_path):
-    """Point DATA_DB_PATH to a temporary DB and run migrations."""
+    """Point DATA_DB_PATH to a temporary DB and run migrations.
+
+    Root cause of the file PR-3 fixture leak (RC反审 · CB-P5-21 候选):
+    ``main.DATA_DB_PATH`` is resolved at import-time (main.py:360) from
+    ``os.environ.get("DATA_DB_PATH")``. Once ``main`` has been imported
+    (any earlier test triggers this), ``monkeypatch.setenv`` no longer
+    influences the module attribute. ``get_database_url()`` re-reads
+    ``main.DATA_DB_PATH`` on each call, so we must patch **the module
+    attribute**, not the env var. We mirror the shape used by
+    ``tests/shadow_read/_helpers.isolated_shadow_env`` — that helper is
+    the established convention across shadow-read tests.
+    """
+    import main
+    from app.db import engine as db_engine
+
     db_path = tmp_path / "test_file_objects.db"
+    # Patch import-time constants that downstream code consumes.
+    monkeypatch.setattr(main, "DATA_DB_PATH", str(db_path))
+    monkeypatch.setattr(main, "DATA_DIR", str(tmp_path))
+    # Env var kept for parity with any consumer that reads it dynamically
+    # (belt-and-braces; the module attribute patch is the load-bearing one).
     monkeypatch.setenv("DATA_DB_PATH", str(db_path))
-    reset_engine()
+
+    # Also invalidate the lru_cache on _deployment_snapshot (harmless if unused
+    # by this test suite, but keeps the snapshot pattern consistent).
+    try:
+        from app.shared.settings.runtime import _reset_settings_cache_for_tests
+        _reset_settings_cache_for_tests()
+    except Exception:
+        pass
+
+    # Tear down the engine singleton so create_engine() re-reads the patched path.
+    db_engine.reset_engine()
     from app.db.engine import run_migrations
 
     run_migrations("head")
-    yield
-    reset_engine()
+    try:
+        yield
+    finally:
+        db_engine.reset_engine()
 
 
 @pytest.fixture

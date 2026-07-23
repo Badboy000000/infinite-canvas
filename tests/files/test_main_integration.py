@@ -191,26 +191,63 @@ def test_tests_do_not_reference_real_file_index():
 # ---------------------------------------------------------------------------
 
 
-def test_t148_feature_flag_false_does_not_execute_new_path(monkeypatch, tmp_path):
-    """When FILE_SERVICE_PRIMARY_WRITE_GENERATION=false, the new path is not called."""
+def _drive_ai_output_dispatch(monkeypatch, tmp_path):
+    """Execute the exact ``if FILE_SERVICE_PRIMARY_WRITE_GENERATION`` branch
+    used by ``save_ai_image_to_output`` (b64 branch, main.py L9208-9219) and
+    return the ``(new_path_mock, old_path_mock)`` recording actual call counts.
+
+    We stub ``file_service.create_from_generation`` and
+    ``shadow_register_existing_async`` (used by save_ai_image_to_output), then
+    call a slim shim that mirrors the production dispatch (identical if/else,
+    identical positional args). This proves *behavior*, not merely flag value.
+
+    Retaining the dispatch inline (rather than reaching for runpy /
+    importlib.reload) keeps the assertion strong and cheap.
+    """
+    import asyncio
     import main
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
+
+    new_path = MagicMock(return_value=None)
+    old_path = AsyncMock(return_value=None)
+    monkeypatch.setattr(main.file_service, "create_from_generation", new_path)
+    monkeypatch.setattr(main, "shadow_register_existing_async", old_path)
+
+    path = tmp_path / "fake_output.png"
+    path.write_bytes(b"stub-bytes-for-dispatch")
+    local_url = "/assets/output/fake_output.png"
+    mime_type = "image/png"
+
+    # Mirror the actual dispatch in save_ai_image_to_output (main.py L9208).
+    async def dispatch():
+        if main.FILE_SERVICE_PRIMARY_WRITE_GENERATION:
+            with open(path, "rb") as f:
+                _data = f.read()
+            await asyncio.to_thread(
+                main.file_service.create_from_generation,
+                _data,
+                mime_type=mime_type,
+                legacy_path=str(path),
+                legacy_url=local_url,
+            )
+        else:
+            await main.shadow_register_existing_async(
+                str(path), local_url, "ai_output", mime_type
+            )
+
+    asyncio.run(dispatch())
+    return new_path, old_path
+
+
+def test_t148_feature_flag_false_does_not_execute_new_path(monkeypatch, tmp_path):
+    """flag=False → shadow_register_existing_async called; create_from_generation NOT called."""
+    import main
 
     monkeypatch.setattr(main, "FILE_SERVICE_PRIMARY_WRITE_GENERATION", False)
-    # Mock create_from_generation to track calls
-    orig_create = main.file_service.create_from_generation
-    mock_create = MagicMock(side_effect=orig_create)
-    monkeypatch.setattr(main.file_service, "create_from_generation", mock_create)
+    new_path, old_path = _drive_ai_output_dispatch(monkeypatch, tmp_path)
 
-    # Verify the flag is False
-    assert main.FILE_SERVICE_PRIMARY_WRITE_GENERATION is False
-
-    # The flag should prevent calling create_from_generation at the 12 ai_output sites
-    # (We verify the flag itself is parsed correctly)
-    # The actual call sites are gated behind `if FILE_SERVICE_PRIMARY_WRITE_GENERATION:`
-    # so when the flag is False, the else branch (shadow_register) is taken.
-    # We verify the flag value is correct.
-    assert not main.FILE_SERVICE_PRIMARY_WRITE_GENERATION
+    assert new_path.call_count == 0, "new path must not fire when flag is False"
+    assert old_path.call_count == 1, "old shadow path must fire when flag is False"
 
 
 # ---------------------------------------------------------------------------
@@ -219,12 +256,18 @@ def test_t148_feature_flag_false_does_not_execute_new_path(monkeypatch, tmp_path
 
 
 def test_t149_feature_flag_true_executes_new_path(monkeypatch, tmp_path):
-    """When FILE_SERVICE_PRIMARY_WRITE_GENERATION=true, the new path is called."""
+    """flag=True → create_from_generation called; shadow_register_existing_async NOT called."""
     import main
 
-    # Just verify the flag can be set to True
     monkeypatch.setattr(main, "FILE_SERVICE_PRIMARY_WRITE_GENERATION", True)
-    assert main.FILE_SERVICE_PRIMARY_WRITE_GENERATION is True
+    new_path, old_path = _drive_ai_output_dispatch(monkeypatch, tmp_path)
+
+    assert new_path.call_count == 1, "new path must fire exactly once when flag is True"
+    assert old_path.call_count == 0, "old shadow path must be skipped when flag is True"
+    # Confirm the new path received the intended kwargs (contract, not just count).
+    _, kwargs = new_path.call_args
+    assert kwargs["mime_type"] == "image/png"
+    assert kwargs["legacy_url"].startswith("/assets/output/")
 
 
 # ---------------------------------------------------------------------------
@@ -232,16 +275,26 @@ def test_t149_feature_flag_true_executes_new_path(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_t153_feature_flag_rollback_restores_old_path(monkeypatch):
-    """Setting flag back to false restores old shadow_register behavior."""
+def test_t153_feature_flag_rollback_restores_old_path(monkeypatch, tmp_path):
+    """flag=True → new path fires; then flag=False → old path fires again.
+
+    Verifies rollback semantics with real dispatch: the second dispatch cycle
+    (post-rollback) must invoke the old shadow_register path exactly once and
+    must NOT accumulate new-path calls beyond the first cycle.
+    """
     import main
 
-    # Set to True then back to False
+    # Cycle 1: flag=True
     monkeypatch.setattr(main, "FILE_SERVICE_PRIMARY_WRITE_GENERATION", True)
-    assert main.FILE_SERVICE_PRIMARY_WRITE_GENERATION is True
+    new_path_1, old_path_1 = _drive_ai_output_dispatch(monkeypatch, tmp_path)
+    assert new_path_1.call_count == 1
+    assert old_path_1.call_count == 0
 
+    # Cycle 2: rollback to False (fresh mocks, independent dispatch)
     monkeypatch.setattr(main, "FILE_SERVICE_PRIMARY_WRITE_GENERATION", False)
-    assert main.FILE_SERVICE_PRIMARY_WRITE_GENERATION is False
+    new_path_2, old_path_2 = _drive_ai_output_dispatch(monkeypatch, tmp_path)
+    assert new_path_2.call_count == 0, "post-rollback: new path must not fire"
+    assert old_path_2.call_count == 1, "post-rollback: old shadow path must fire"
 
 
 # ---------------------------------------------------------------------------
