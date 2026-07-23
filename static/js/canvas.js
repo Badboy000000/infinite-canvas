@@ -422,15 +422,26 @@ let promptTemplateCategory = 'all';
 let promptTemplateSelectedId = '';
 let promptTemplateQuery = '';
 let promptTemplateEditing = false;
-let canvasPromptTemplates = [];
-let canvasPromptTemplatesLoaded = false;
+// PR-11 seam：`canvasPromptTemplates` / `canvasPromptTemplatesLoaded` /
+// `canvasPromptTemplateOverrides` 三条模块级状态由
+// `static/js/shared/prompt/PromptTemplateDrawer/templateRegistry.js` 装到
+// `window` 上（同名 defineProperty 代理）；下方对它们的读写会转发到 registry。
+// 若 seam 脚本未加载（bootstrap 失败），保底以 `window.*` 兜底赋值。
+if (typeof window !== 'undefined' && !window.__promptTemplateProxiesInstalled) {
+    window.canvasPromptTemplates = window.canvasPromptTemplates || [];
+    window.canvasPromptTemplatesLoaded = Boolean(window.canvasPromptTemplatesLoaded);
+    window.canvasPromptTemplateOverrides = window.canvasPromptTemplateOverrides || {hiddenBuiltinIds:[], editedBuiltins:{}};
+}
 let canvasPromptLibraries = [];
 let activePromptLibraryId = 'system';
 const CANVAS_PROMPT_TEMPLATE_GROUPS_KEY = 'canvas_prompt_template_groups_v1';
 const CANVAS_PROMPT_TEMPLATE_OVERRIDES_KEY = 'canvas_prompt_template_overrides';
 let promptTemplateGroups = [];
 let promptTemplateGroupEditMode = false;
-let canvasPromptTemplateOverrides = {hiddenBuiltinIds:[], editedBuiltins:{}};
+// PR-11 seam：`canvasPromptTemplateOverrides` 由 templateRegistry.js 通过
+// `Object.defineProperty(window, 'canvasPromptTemplateOverrides', {get,set})` 代理。
+// 迁移前 canvas.js 顶部 `let canvasPromptTemplateOverrides = {...}` 的初值
+// 由 registry 内 `registry.overrides` 默认值保持字节等价（同 shape 同默认）。
 let canvasAssetLibrary = {categories:[]};
 let canvasAssetLibraryOpen = false;
 let activeCanvasAssetLibraryId = '';
@@ -15019,3 +15030,33 @@ window.openInpaintDialog = function openInpaintDialog(nodeId, options = {}) {
     openImageEditor(nodeId, 'brush');
     return Promise.resolve({ ok: true, mode: 'inpaint', canvasKind: 'classic', fallback: true });
 };
+
+// -------------------------------------------------------------------------
+// PromptTemplateDrawer seam 注册（[[前端组件化治理实施计划与PR清单]] PR-11）
+// -------------------------------------------------------------------------
+// canvas.js 内的抽屉实现（openPromptTemplateModal / renderPromptTemplateModal /
+// closePromptTemplateModal + loadCanvasPromptTemplates + 保存/删除若干函数）保持
+// byte-equivalent；通过 PromptTemplateDrawer.open({canvasKind:'classic', nodeId})
+// 收敛外部调用点。canvas.js 内部原有 direct call point 继续可用（wrapper 已就位）。
+if (window.PromptTemplateDrawerReady) {
+    window.PromptTemplateDrawerReady.then(() => {
+        try {
+            window.PromptTemplateDrawer.register('classic', {
+                open: (nodeId, _options) => openPromptTemplateModal(nodeId),
+                close: () => closePromptTemplateModal(),
+                renderCallback: () => renderPromptTemplateModal(),
+                loadTemplates: () => loadCanvasPromptTemplates(),
+                saveTemplate: (payload) => saveCurrentCanvasPromptAsTemplate(payload),
+            });
+        } catch (err) {
+            console.warn('[PromptTemplateDrawer] classic adapter register failed', err);
+        }
+    }).catch(() => {});
+}
+
+// 公共 wrapper 函数（PR-11 冻结签名）；body 一律走 PromptTemplateDrawer.open。
+// [[前端兼容合同冻结清单]] §6 全局函数清单可扩展。
+window.openPromptTemplateModal = window.openPromptTemplateModal || openPromptTemplateModal;
+window.renderPromptTemplateModal = window.renderPromptTemplateModal || renderPromptTemplateModal;
+window.closePromptTemplateModal = window.closePromptTemplateModal || closePromptTemplateModal;
+
