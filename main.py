@@ -400,7 +400,7 @@ CANVAS_PRIMARY_WRITE = str(os.environ.get("CANVAS_PRIMARY_WRITE", "json")).strip
 PROJECT_PRIMARY_WRITE = str(os.environ.get("PROJECT_PRIMARY_WRITE", "db")).strip().lower()  # 数据 PR-8（Wave 3-G）Project 主写门禁 · 数据 PR-20（Wave 3-N.5 主线 B）反转默认为 "db"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 PROMPT_LIBRARY_PRIMARY_WRITE = str(os.environ.get("PROMPT_LIBRARY_PRIMARY_WRITE", "db")).strip().lower()  # 数据 PR-8（Wave 3-G）PromptLibrary 主写门禁 · 数据 PR-21（Wave 3-N.5 主线 A · Batch 2）反转默认为 "db"（GM-22 pattern）；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 WORKFLOW_DEFINITION_PRIMARY_WRITE = str(os.environ.get("WORKFLOW_DEFINITION_PRIMARY_WRITE", "db")).strip().lower()  # 数据 PR-8（Wave 3-G）WorkflowDefinition 主写门禁 · 数据 PR-22（Wave 3-N.5 主线 B · Batch 2）反转默认为 "db"（GM-22 pattern）；Settings 层校验值域 {"json","db"}；HTTP 不可修改
-ASSET_LIBRARY_PRIMARY_WRITE = str(os.environ.get("ASSET_LIBRARY_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-9（Wave 3-H）AssetLibrary 主写门禁，默认 "json"；Settings 层校验值域 {"json","db"}；HTTP 不可修改
+ASSET_LIBRARY_PRIMARY_WRITE = str(os.environ.get("ASSET_LIBRARY_PRIMARY_WRITE", "db")).strip().lower()  # 数据 PR-9（Wave 3-H）AssetLibrary 主写门禁 · 数据 PR-23（Wave 3-N.5 主线 A · Batch 3）反转默认为 "db"（GM-22 pattern · M1 阶段 5 域反转最后一域）；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 DEFAULT_STORAGE_DIRS = {
     "upload": OUTPUT_INPUT_DIR,
     "generated": OUTPUT_OUTPUT_DIR,

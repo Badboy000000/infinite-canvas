@@ -1,4 +1,4 @@
-"""Asset library store facade — 数据模型治理 PR-0 + PR-9 主写分派。
+"""Asset library store facade — 数据模型治理 PR-0 + PR-9 主写分派 + PR-23 反转默认。
 
 包裹 `main.py` 中素材库 JSON 读写函数
 `load_asset_library` / `save_asset_library`。签名与原函数一一对应，仅做委派，
@@ -7,13 +7,23 @@
 **数据 PR-9**（Wave 3-H）：`save_asset_library()` / `load_asset_library()`
 按 `ASSET_LIBRARY_PRIMARY_WRITE` env 分派：
 
-- `"json"`（默认）→ 完全等价 PR-0 行为（老 `main.save_asset_library`
+- `"json"`（显式回滚开关）→ 完全等价 PR-0 行为（老 `main.save_asset_library`
   / `main.load_asset_library`）。**必须**保证不 import
   `app.db.asset_library_writer`，不构造 DB engine，不落任何 fallback 文件
   （P0 硬约束 #3）。
-- `"db"`（显式启用）→ `app.db.asset_library_writer.save_asset_library_db`
+- `"db"`（数据 PR-23 反转后默认 · Wave 3-N.5 主线 A · Batch 3）→
+  `app.db.asset_library_writer.save_asset_library_db`
   DB 主写 + JSON 异步回写；`load_asset_library_db()` 优先 + JSON fallback。
   DB 主写失败上抛（不 fallback 到 JSON 主写；P0 硬约束 #4）。
+
+**数据 PR-23**（Wave 3-N.5 主线 A · Batch 3 · M1 阶段 5 域反转最后一域）：
+AssetLibrary 域 M1 收官反转默认。`_get_primary_write_mode` 未设 env / 空 env →
+`"db"`（既往为 `"json"`）；`save_asset_library` / `load_asset_library` 分派开关
+不变；仅 fallback 常量翻转（2 处单行）。
+
+**回滚方式反转**：切回 PR-9 行为 = `export ASSET_LIBRARY_PRIMARY_WRITE=json`
+立即生效（fail-fast 值域校验保留 · 参照 canvas 域 PR-15 / project 域 PR-20 /
+prompt_library 域 PR-21 / workflow_definition 域 PR-22 pattern）。
 
 AssetLibrary 域**不列入**数据 PR-4 shadow 双读范围，本 PR 也不引入
 `read_shadow()` hook（区别于 project_store / prompt_library_store /
@@ -41,10 +51,10 @@ def _get_primary_write_mode(domain: str) -> str:
 
     raw = os.environ.get("ASSET_LIBRARY_PRIMARY_WRITE")
     if raw is None:
-        return "json"
+        return "db"
     value = str(raw).strip().lower()
     if not value:
-        return "json"
+        return "db"
     if value not in _PRIMARY_WRITE_ALLOWED:
         raise ValueError(
             f"Invalid ASSET_LIBRARY_PRIMARY_WRITE {raw!r}; expected one of: "
@@ -56,17 +66,24 @@ def _get_primary_write_mode(domain: str) -> str:
 def load_asset_library(*args: Any, **kwargs: Any) -> Any:
     """`load_asset_library()` wrapper。
 
-    - `ASSET_LIBRARY_PRIMARY_WRITE=json`（默认）→ 老 `main.load_asset_library`。
-    - `ASSET_LIBRARY_PRIMARY_WRITE=db` → 优先 `load_asset_library_db()`；
-      DB 空（`None`）时 fallback 到 JSON 主读，保持首次冷启语义。
+    - `ASSET_LIBRARY_PRIMARY_WRITE=json`（PR-23 反转后为显式回滚开关）→ 老
+      `main.load_asset_library`。
+    - `ASSET_LIBRARY_PRIMARY_WRITE=db`（PR-23 反转后默认）→ 优先
+      `load_asset_library_db()`；DB 空（`None`）时 fallback 到 JSON 主读，
+      保持首次冷启语义。
     """
 
     mode = _get_primary_write_mode(DOMAIN)
     if mode == "db":
         # 懒 import：仅在 db 模式下才拉起 asset_library_writer 命名空间。
-        from app.db.asset_library_writer import load_asset_library_db
+        try:
+            from app.db.asset_library_writer import load_asset_library_db
 
-        db_payload = load_asset_library_db()
+            db_payload = load_asset_library_db()
+        except Exception:
+            # DB 读失败降级 JSON 主读（参照 canvas_store.load_canvas 的 try/except
+            # 契约 · 保持 P0 硬约束 #4：只主写抛，读路径允许 fallback）。
+            db_payload = None
         if db_payload is not None:
             # 复用老实现的 normalize，保证下游代码看到的 shape 与 JSON
             # 主读路径完全一致（categories/libraries 结构补齐等）。
@@ -81,10 +98,11 @@ def load_asset_library(*args: Any, **kwargs: Any) -> Any:
 def save_asset_library(*args: Any, **kwargs: Any) -> Any:
     """`save_asset_library(lib)` wrapper。
 
-    - `ASSET_LIBRARY_PRIMARY_WRITE=json`（默认）→ 老 `main.save_asset_library`；
-      **不 import** `app.db.asset_library_writer`。
-    - `ASSET_LIBRARY_PRIMARY_WRITE=db` → `save_asset_library_db` DB 主写 +
-      JSON 异步回写。DB 主写失败上抛（不 fallback 到 JSON 主写）。
+    - `ASSET_LIBRARY_PRIMARY_WRITE=json`（PR-23 反转后为显式回滚开关）→ 老
+      `main.save_asset_library`；**不 import** `app.db.asset_library_writer`。
+    - `ASSET_LIBRARY_PRIMARY_WRITE=db`（PR-23 反转后默认）→
+      `save_asset_library_db` DB 主写 + JSON 异步回写。DB 主写失败上抛
+      （不 fallback 到 JSON 主写）。
     """
 
     mode = _get_primary_write_mode(DOMAIN)

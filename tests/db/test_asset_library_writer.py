@@ -93,11 +93,11 @@ def _seed_lib(active_id: str = "default", libraries: list[dict] | None = None) -
 def test_default_json_mode_does_not_import_writer(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    """`ASSET_LIBRARY_PRIMARY_WRITE=json`（默认）时 `app.db.asset_library_writer`
-    从未 import。P0 硬约束 #3。
+    """`ASSET_LIBRARY_PRIMARY_WRITE=json`（数据 PR-23 反转后为显式回滚开关）时
+    `app.db.asset_library_writer` 从未 import。P0 硬约束 #3。
     """
 
-    monkeypatch.delenv("ASSET_LIBRARY_PRIMARY_WRITE", raising=False)
+    monkeypatch.setenv("ASSET_LIBRARY_PRIMARY_WRITE", "json")
     sys.modules.pop("app.db.asset_library_writer", None)
 
     from app.stores import asset_library_store
@@ -124,9 +124,10 @@ def test_default_json_mode_does_not_import_writer(
 def test_default_json_mode_does_not_construct_engine(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    """默认模式下 `save_asset_library` 不构造 DB engine。"""
+    """`ASSET_LIBRARY_PRIMARY_WRITE=json`（数据 PR-23 反转后为显式回滚开关）时
+    `save_asset_library` 不构造 DB engine。"""
 
-    monkeypatch.delenv("ASSET_LIBRARY_PRIMARY_WRITE", raising=False)
+    monkeypatch.setenv("ASSET_LIBRARY_PRIMARY_WRITE", "json")
 
     from app.db import engine as db_engine
 

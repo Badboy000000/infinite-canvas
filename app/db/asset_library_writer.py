@@ -1,7 +1,12 @@
 """`app.db.asset_library_writer` — 数据 PR-9 AssetLibrary DB 主写路径。
 
 只有 `ASSET_LIBRARY_PRIMARY_WRITE=db` 时，`asset_library_store.save_asset_library`
-才 import 本模块（默认 `json` 路径**不 import**）。
+才 import 本模块（`json` 路径**不 import**）。
+
+**数据 PR-23**（Wave 3-N.5 主线 A · Batch 3 · M1 阶段 5 域反转最后一域）：
+AssetLibrary 域默认反转 —— 未设 env / 空 env 时默认 DB 主写（GM-22 反转）；
+回滚方式 = `export ASSET_LIBRARY_PRIMARY_WRITE=json` 立即生效（fail-fast
+值域校验保留）。
 
 关键契约（治理期）：
 
