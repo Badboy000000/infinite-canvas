@@ -11580,6 +11580,7 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
         content = await file.read()
         if not content:
             continue
+        _pr4a_check(content)  # PR-4a.1 CB-P5-22 · A1 + S8 + magic bytes 分层防御
         if len(content) > max_upload_bytes:
             raise HTTPException(status_code=413, detail=f"{file.filename or '文件'} 超过 50MB，无法上传")
         ext = os.path.splitext(file.filename or "")[1].lower()

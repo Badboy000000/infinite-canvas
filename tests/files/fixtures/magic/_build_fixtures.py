@@ -158,6 +158,56 @@ def build_attacks() -> None:
     _write(ROOT / "attacks" / "truncated.bin", b"\x89PNG\r\n")
 
 
+def build_pr4a1_attacks() -> None:
+    """PR-4a.1 · CB-P5-23 类型专属 attack fixtures + CB-P5-24 zip entry-name attacks.
+
+    所有 fixture 为可解析真实字节:
+    - 类型专属截断 / 头篡改:magic bytes 差一字节或首字节篡改 · detect_magic_kind 返回 None
+    - Zip entry-name attacks:zipfile.writestr 真实构造 · namelist 保留恶意名字供 sanitize 验证
+    """
+    # ------------------------------------------------------------------
+    # CB-P5-23 · 类型专属 attack fixtures
+    # ------------------------------------------------------------------
+    # WebP 12 字节头缺 1 字节(RIFF ???? WEB · 只有 11 字节)
+    # `_is_webp` 要求 data[8:12] == b"WEBP" 且总长 >= 12 · 11 字节直接不通过 len 检查
+    riff_size = struct.pack("<I", 4)
+    _write(ROOT / "attacks" / "webp_11byte_truncated.bin",
+           b"RIFF" + riff_size + b"WEB")  # 恰好 11 字节 · WEBP 少最后一个 P
+
+    # MOV 未知 brand(qt / M4V / M4A 之外)· 构造 ftyp box + 未知 brand "XXXX"
+    _write(ROOT / "attacks" / "mov_unknown_brand.mov", _mp4_ftyp(b"XXXX"))
+
+    # JPG 头首字节篡改(合法 JPG 是 FF D8 FF · 篡改后 00 D8 FF)
+    jpg = _pil_bytes("JPEG", (16, 16), (200, 100, 50))
+    _write(ROOT / "attacks" / "jpg_head_tampered.jpg", b"\x00" + jpg[1:])
+
+    # GIF 头缺 1 字节(合法 6 字节 GIF89a → 只写 GIF89)
+    gif = _pil_bytes("GIF", (16, 16), (50, 100, 200))
+    _write(ROOT / "attacks" / "gif_truncated.gif", b"GIF89" + gif[6:])
+
+    # WebM/EBML 头首字节篡改(合法 1A 45 DF A3 → 00 45 DF A3)
+    ebml_magic = b"\x1a\x45\xdf\xa3"
+    tampered_ebml = b"\x00" + ebml_magic[1:] + b"\x00" * 128
+    _write(ROOT / "attacks" / "webm_head_tampered.webm", tampered_ebml)
+
+    # ------------------------------------------------------------------
+    # CB-P5-24 · Zip entry-name path traversal attacks
+    # ------------------------------------------------------------------
+    def _make_zip_with_name(name: str, filename: str) -> None:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
+            # zipfile.writestr 允许任意 entry name · 真实字节输出
+            zf.writestr(name, b"payload-for-" + name.encode("utf-8", errors="replace"))
+        _write(ROOT / "attacks" / filename, buf.getvalue())
+
+    _make_zip_with_name("../../etc/passwd", "zip_entry_traversal.zip")
+    _make_zip_with_name("/tmp/evil", "zip_entry_absolute.zip")
+    # NUL byte 混入 · zipfile 允许 · 供 sanitize 层验证
+    _make_zip_with_name("evil.png\x00.php", "zip_entry_nullbyte.zip")
+    # Windows 保留名 CON.png
+    _make_zip_with_name("CON.png", "zip_entry_windows_reserved.zip")
+
+
 def main() -> None:
     build_png()
     build_jpg()
@@ -168,6 +218,7 @@ def main() -> None:
     build_webm()
     build_zip()
     build_attacks()
+    build_pr4a1_attacks()
     print("fixtures generated at", ROOT)
 
 
