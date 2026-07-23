@@ -42,3 +42,7 @@ data/shadow_diff/*/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Claude Code 本地 subagent worktree 隔离目录（GM-15 · CB-P5-27 承接）
+# 由 Agent 工具 isolation:"worktree" 自动创建 · 属临时工作树 · 不入库
+.claude/

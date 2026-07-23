@@ -55,6 +55,7 @@ Claude is the lead orchestrator. Subagents are optional specialists.
 - Use a subagent only when it improves quality or speed through specialized expertise, independent investigation, parallel work, or unbiased review. Do **not** delegate trivial edits or lookups.
 - **Every delegation must follow** [[70 开发过程跟踪/治理机制/subagent 任务书回写义务清单]] — the complete task-book template (objective, cross-topic write-back matrix, reserved shared identifiers, zero-touch evidence requirement, mandatory report fields) lives there. Do not paraphrase from memory.
 - The lead resolves contradictions between agent outputs, owns final synthesis, verifies actual repository state, and must not rely only on a self-report.
+- **Worktree isolation for concurrent writers (hard rule · GM-15 · CB-P5-27 承接)**: when dispatching ≥2 subagents concurrently and **any** of them may write files / commit / checkout / rebase, **every** such subagent MUST be launched with `isolation: "worktree"`. Sharing a working tree between concurrent writers is a data race — a later `git checkout` in one subagent silently wipes another's uncommitted work. GM-12 (≤2 concurrency) caps the **number**; GM-15 covers the **filesystem**. Read-only reconnaissance (codegraph / grep / Read only) may share the working tree. Single-subagent dispatch may share the working tree regardless of write intent.
 
 ## Delivery standard
 
