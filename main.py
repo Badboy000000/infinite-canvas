@@ -105,6 +105,11 @@ from app.modules.file.service import FileModuleFacade  # noqa: E402
 from app.api.routers.update import create_router as create_update_router  # noqa: E402
 from app.api.routers.conversations import create_router as create_conversations_router  # noqa: E402
 from app.api.routers.angle import create_router as create_angle_router  # noqa: E402
+# --- PR-BE-12 (收缩版) · 12 remaining routes extraction (Wave 3-N.7 Batch 4 主线 A) -----
+from app.api.routers.generate import create_router as create_generate_router  # noqa: E402
+from app.api.routers.shared_folders import create_router as create_shared_folders_router  # noqa: E402
+from app.api.routers.smart_canvas import create_router as create_smart_canvas_router  # noqa: E402
+from app.api.routers.canvas_llm import create_router as create_canvas_llm_router  # noqa: E402
 # ---------------------------------------------------------------------------
 import json
 import uuid
@@ -15160,7 +15165,6 @@ async def canvas_video(payload: CanvasVideoRequest):
 
 # --- Canvas LLM ---
 
-@app.post("/api/canvas-llm")
 async def canvas_llm(payload: CanvasLLMRequest):
     _provider = get_api_provider(payload.provider)
     if is_codex_provider(_provider):
@@ -15383,7 +15387,6 @@ async def list_canvas_assets():
     # （否则画布多时一次请求就会卡住整个 asyncio loop，连 WebSocket 一起掉线）。
     return await asyncio.to_thread(canvas_assets_index)
 
-@app.get("/api/smart-canvas/prompt-templates")
 async def smart_canvas_prompt_templates():
     try:
         template_path = prompt_template_markdown_path()
@@ -15710,7 +15713,6 @@ def smart_group_export_folder(folder: str, group_name: str) -> str:
     os.makedirs(path, exist_ok=True)
     return path
 
-@app.post("/api/smart-canvas/group-export")
 async def export_smart_canvas_group(payload: SmartCanvasGroupExportRequest):
     target_dir = smart_group_export_folder(payload.folder, payload.group_name)
     used_names = set()
@@ -16058,7 +16060,6 @@ async def batch_add_asset_library_items(payload: AssetLibraryBatchAddRequest):
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "items": added}
 
-@app.get("/api/shared-folders")
 async def list_shared_folders():
     data = shared_folders_load()
     folders = []
@@ -16074,7 +16075,6 @@ async def list_shared_folders():
         })
     return {"folders": folders}
 
-@app.post("/api/shared-folders")
 async def register_shared_folder(payload: SharedFolderRegister):
     abs_path, rel = shared_resolve_register(payload.path)
     name = sanitize_asset_name(payload.name or os.path.basename(abs_path), "共享文件夹")
@@ -16095,7 +16095,6 @@ async def register_shared_folder(payload: SharedFolderRegister):
         shared_folders_save(data)
     return {"folder": {**entry, "path": abs_path, "exists": True}}
 
-@app.delete("/api/shared-folders/{folder_id}")
 async def unregister_shared_folder(folder_id: str):
     with SHARED_FOLDERS_LOCK:
         data = shared_folders_load()
@@ -16106,7 +16105,6 @@ async def unregister_shared_folder(folder_id: str):
         shared_folders_save(data)
     return {"ok": True}
 
-@app.get("/api/shared-folders/{folder_id}/tree")
 async def get_shared_folder_tree(folder_id: str):
     entry = shared_folder_by_id(folder_id)
     if not entry:
@@ -16117,7 +16115,6 @@ async def get_shared_folder_tree(folder_id: str):
     tree = scan_shared_tree(folder_id, abs_path, "", entry.get("name") or os.path.basename(abs_path))
     return {"folder": {"id": folder_id, "name": entry.get("name"), "path": abs_path}, "tree": tree}
 
-@app.get("/api/shared-folders/{folder_id}/file")
 async def get_shared_folder_file(folder_id: str, path: str = ""):
     entry = shared_folder_by_id(folder_id)
     if not entry:
@@ -16131,7 +16128,6 @@ async def get_shared_folder_file(folder_id: str, path: str = ""):
         raise HTTPException(status_code=400, detail="不支持的文件类型")
     return FileResponse(abs_path, media_type=content_type_for_path(abs_path))
 
-@app.post("/api/shared-folders/import")
 async def import_shared_folder_files(payload: SharedFolderImport):
     entry = shared_folder_by_id(payload.folder_id)
     if not entry:
@@ -17429,7 +17425,6 @@ app.include_router(
 
 # --- ModelScope Z-Image 云端生图 ---
 
-@app.post("/generate")
 async def generate_cloud(req: CloudGenRequest):
     api_root = modelscope_image_api_root()
     clean_token = modelscope_api_key(req.api_key)
@@ -17530,7 +17525,6 @@ async def generate_cloud(req: CloudGenRequest):
 
 # --- ModelScope 通用图片生成（支持图生图） ---
 
-@app.post("/api/ms/generate")
 async def ms_generate(req: MsGenerateRequest):
     api_root = modelscope_image_api_root()
     clean_token = modelscope_api_key(req.api_key)
@@ -17648,7 +17642,6 @@ async def ms_generate(req: MsGenerateRequest):
 
 # --- 本地 ComfyUI 生图 ---
 
-@app.post("/api/generate")
 def generate(req: GenerateRequest):
     global NEXT_TASK_ID
     current_task = None
@@ -18530,6 +18523,49 @@ app.include_router(
         workflow_upload_dto=WorkflowUploadRequest,
         workflow_config_dto=WorkflowConfig,
         workflow_run_dto=WorkflowRunRequest,
+    )
+)
+
+# --- PR-BE-12 (收缩版) · 12 剩余路由抽出装配 (Wave 3-N.7 Batch 4 主线 A) -------
+# 上方 12 个 def / async def 函数体保留为 re-export 兼容层（`@app.` 装饰器已剥
+# 离）；下方 4 个 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/{generate,shared_folders,smart_canvas,canvas_llm}.py`。
+app.include_router(
+    create_canvas_llm_router(
+        canvas_llm_cb=canvas_llm,
+        canvas_llm_dto=CanvasLLMRequest,
+    )
+)
+
+app.include_router(
+    create_smart_canvas_router(
+        prompt_templates_cb=smart_canvas_prompt_templates,
+        group_export_cb=export_smart_canvas_group,
+        group_export_dto=SmartCanvasGroupExportRequest,
+    )
+)
+
+app.include_router(
+    create_shared_folders_router(
+        list_shared_folders_cb=list_shared_folders,
+        register_shared_folder_cb=register_shared_folder,
+        unregister_shared_folder_cb=unregister_shared_folder,
+        get_shared_folder_tree_cb=get_shared_folder_tree,
+        get_shared_folder_file_cb=get_shared_folder_file,
+        import_shared_folder_files_cb=import_shared_folder_files,
+        shared_folder_register_dto=SharedFolderRegister,
+        shared_folder_import_dto=SharedFolderImport,
+    )
+)
+
+app.include_router(
+    create_generate_router(
+        generate_cloud_cb=generate_cloud,
+        ms_generate_cb=ms_generate,
+        generate_cb=generate,
+        cloud_gen_dto=CloudGenRequest,
+        ms_generate_dto=MsGenerateRequest,
+        generate_dto=GenerateRequest,
     )
 )
 
