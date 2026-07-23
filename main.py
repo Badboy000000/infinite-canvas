@@ -88,6 +88,7 @@ from app.api.routers.providers import create_router as create_providers_router  
 from app.api.routers.runninghub import create_router as create_runninghub_router  # noqa: E402
 from app.api.routers.cli import create_router as create_cli_router  # noqa: E402
 from app.api.routers.generation import create_router as create_generation_router  # noqa: E402
+from app.api.routers.canvas_tasks import create_router as create_canvas_tasks_router  # noqa: E402
 from app.modules.provider.service import ProviderConfigService  # noqa: E402
 from app.modules.provider.store import ProviderStore  # noqa: E402
 from app.modules.provider.registry import ProviderRegistry, ProviderResolution  # noqa: E402,F401
@@ -17102,7 +17103,6 @@ async def get_history_api(type: str = None):
 
 app.include_router(create_history_router(get_history_api))
 
-@app.get("/api/queue_status")
 async def get_queue_status(client_id: str):
     with QUEUE_LOCK:
         total = len(QUEUE)
@@ -17110,7 +17110,6 @@ async def get_queue_status(client_id: str):
         position = positions[0] if positions else 0
     return {"total": total, "position": position}
 
-@app.post("/api/history/delete")
 async def delete_history(req: DeleteHistoryRequest):
     if not os.path.exists(HISTORY_FILE):
         return {"success": False, "message": "History file not found"}
@@ -17150,6 +17149,18 @@ async def delete_history(req: DeleteHistoryRequest):
     except Exception as e:
         print(f"Delete history error: {e}")
         return {"success": False, "message": str(e)}
+
+# --- PR-BE-09 canvas_tasks router (queue_status + history/delete) assembly ----
+# 上方 `get_queue_status` / `delete_history` 装饰器已剥离(方案 B 收缩承接 ·
+# GM-14 圆桌自治第 8 次实证 · CB-P5-31 挂账);函数体保留为 re-export 兼容
+# 层,通过 callback 注入 `app/api/routers/canvas_tasks.py`。
+app.include_router(
+    create_canvas_tasks_router(
+        get_queue_status_callback=get_queue_status,
+        delete_history_callback=delete_history,
+        delete_history_dto=DeleteHistoryRequest,
+    )
+)
 
 # --- ModelScope 角度控制 ---
 
