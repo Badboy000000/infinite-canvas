@@ -524,6 +524,62 @@
 - 追加 **CB-03（候选）**：§7 全表与源码事实全面重建（前端组件化 M0 -> M1 交叠期集中订正），Lead 决定是否单开或由后续前端 PR-3/4/5 分批承接。
 - 前端 PR-2 交付以 `endpoints.js` 常量表 + §7.4 三条订正 + 本 §7.9 复审报告为 CB-01 后续义务的完成证据。
 
+### 7.11 前端 PR-11 · PromptTemplateDrawer seam 契约（Wave 3-N.5 Batch 3 主线 B）
+
+依据 [[前端组件化治理实施计划与PR清单]]，前端 PR-11 把 canvas.js 内的提示词模板抽屉抽出为 `static/js/shared/prompt/PromptTemplateDrawer/` seam。契约与 §7 / §6 冻结项对齐（参考 PR-4 MediaEditor pattern）：
+
+**seam 结构**（三文件 · classic `<script src>` 加载 · 无构建 · 无 npm 依赖）：
+
+| 文件 | 定位 | 挂载 |
+|---|---|---|
+| `static/js/shared/prompt/PromptTemplateDrawer/templateRegistry.js` | 模块级状态承接（`canvasPromptTemplates` / `canvasPromptTemplatesLoaded` / `canvasPromptTemplateOverrides` 三条 `let` 迁走） | `window.__PromptTemplateDrawerRegistry`；同名 window 属性通过 `Object.defineProperty` getter/setter 代理到 registry（canvas.js 内既有的 `canvasPromptTemplates = X` 赋值语义保持） |
+| `static/js/shared/prompt/PromptTemplateDrawer/promptEditor.js` | 分派实现（open/close/render/loadTemplates/saveTemplate 转发给 adapter） | `window.__PromptTemplateDrawerEditor` |
+| `static/js/shared/prompt/PromptTemplateDrawer/index.js` | 门面 + `PromptTemplateDrawerReady` 就绪 Promise（对齐 MediaEditor bootstrap 语义） | `window.PromptTemplateDrawer` / `window.PromptTemplateDrawerReady` |
+
+**canvasKind 白名单**：`['classic']`（seam 期仅 canvas.js 使用抽屉；smart-canvas.js 无引用，扩展需同步本节 + 冻结清单 §6）。
+
+**冻结签名**（PR-11 wrapper 保持，参照 §6 「旧全局函数清单」）：
+
+- `openPromptTemplateModal(nodeId)` — 位于 `canvas.js`，通过 `window.openPromptTemplateModal = openPromptTemplateModal` 挂载。抽屉打开入口；byte-equivalent 于 baseline 97ba98a。
+- `renderPromptTemplateModal()` — 位于 `canvas.js`，通过 `window.renderPromptTemplateModal = renderPromptTemplateModal` 挂载。抽屉重渲染；byte-equivalent 于 baseline 97ba98a。
+- `closePromptTemplateModal()` — 位于 `canvas.js`，通过 `window.closePromptTemplateModal = closePromptTemplateModal` 挂载。抽屉关闭；byte-equivalent 于 baseline 97ba98a。
+
+**adapter 契约**（`PromptTemplateDrawer.register('classic', adapter)` 消费）：
+
+```
+{
+  open(nodeId, options): 打开抽屉（转发到 canvas.js openPromptTemplateModal）
+  close(): 关闭抽屉（转发到 canvas.js closePromptTemplateModal）
+  renderCallback(): 重渲染（转发到 canvas.js renderPromptTemplateModal）
+  loadTemplates(): 拉取模板（转发到 canvas.js loadCanvasPromptTemplates）
+  saveTemplate(payload): 保存（可选；转发到 canvas.js saveCurrentCanvasPromptAsTemplate）
+}
+```
+
+**外部调用面**（seam 期外部调用点走门面 · canvas.js 内 direct call 保持）：
+
+- `window.PromptTemplateDrawer.open({ canvasKind:'classic', nodeId, options? })` → Promise，`finally` 释放 active session。
+- `window.PromptTemplateDrawer.close()` / `.render()` / `.loadTemplates()` — 分派到已注册 adapter。
+- `window.PromptTemplateDrawer.isOpen()` / `.current()` — 会话状态查询。
+
+**状态代理契约**（byte-equivalent 承接）：
+
+- `canvasPromptTemplates` / `canvasPromptTemplatesLoaded` / `canvasPromptTemplateOverrides` 三条模块级变量的**语义**保持不变（`Array<object>` / `boolean` / `{hiddenBuiltinIds:string[], editedBuiltins:Record<string,object>}`）。
+- 三条 `let` 声明由 canvas.js 移到 templateRegistry.js 的 `Object.defineProperty(window, ..., {get,set})` 代理；canvas.js 函数体内所有 `canvasPromptTemplates = X` / `canvasPromptTemplates.filter(...)` 等表达式**逐字保持**，经非严格全局赋值语义转发到 registry。
+- localStorage key **不变**：`canvas_prompt_template_groups_v1` / `canvas_prompt_template_overrides`（seam 期兼容契约，见 §4）。
+- loader retry / fallback 语义**不变**：`loadCanvasPromptTemplates` 内 `canvasPromptTemplatesLoaded = true` 幂等短路 + `try/catch` 空态回落。
+
+**HTML 载入顺序**（`static/canvas.html`）：
+
+```html
+<script src="/static/js/shared/prompt/PromptTemplateDrawer/templateRegistry.js"></script>
+<script src="/static/js/shared/prompt/PromptTemplateDrawer/promptEditor.js"></script>
+<script src="/static/js/shared/prompt/PromptTemplateDrawer/index.js"></script>
+<script src="/static/js/canvas.js"></script>
+```
+
+**回归护栏**：`tests/frontend/test_pr_11_prompt_template_drawer.py`（T290-T299）冻结上述契约；改动 seam 或 wrapper 签名前必须先跑一次。
+
 ---
 
 ## 8. HTML 内联 onclick 计数基线
@@ -856,3 +912,4 @@ Wave 3-I 前端 PR-7（`NodeRenderRegistry` + `NodeConfigRegistry` seam + `escap
 
 - 2026-07-16：初版落地（前端 PR-0）。
 - 2026-07-20：Wave 3-I 前端 PR-7 消费本清单 —— §13.4 追加 `_renderPatchToken` fallback 分支收敛补丁；§16.1 追加"前端 PR-7 消费本清单情况"节，登记 `.node[data-id]` 未知类型 fallback 契约 + HTML 静态骨架 `onclick=` 第一层迁移计数。
+- 2026-07-23：Wave 3-N.5 Batch 3 主线 B 前端 PR-11 消费本清单 —— §7 追加 §7.11 「前端 PR-11 · PromptTemplateDrawer seam 契约」，冻结 `static/js/shared/prompt/PromptTemplateDrawer/` 三文件结构、adapter 契约、`openPromptTemplateModal` / `renderPromptTemplateModal` / `closePromptTemplateModal` 三个 wrapper 冻结签名、`canvasPromptTemplates*` 状态代理契约与 HTML 载入顺序；测试护栏 `tests/frontend/test_pr_11_prompt_template_drawer.py` T290-T299 就位。
