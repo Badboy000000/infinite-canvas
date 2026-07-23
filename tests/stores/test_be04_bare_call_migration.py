@@ -216,6 +216,8 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
     # 数据 PR-20 反转承接：强制 json 主写路径（Project 域）。
     monkeypatch.setenv("PROJECT_PRIMARY_WRITE", "json")
+    # 数据 PR-21 反转承接：强制 json 主写路径（PromptLibrary 域）。
+    monkeypatch.setenv("PROMPT_LIBRARY_PRIMARY_WRITE", "json")
     # 数据 PR-22 反转承接：强制 json 主写路径（WorkflowDefinition 域）。
     monkeypatch.setenv("WORKFLOW_DEFINITION_PRIMARY_WRITE", "json")
 
@@ -542,6 +544,9 @@ def client():
     # 数据 PR-20 反转承接：强制 project json 主写路径。
     _prev_project = os.environ.get("PROJECT_PRIMARY_WRITE")
     os.environ["PROJECT_PRIMARY_WRITE"] = "json"
+    # 数据 PR-21 反转承接：强制 prompt_library json 主写路径。
+    _prev_prompt_library = os.environ.get("PROMPT_LIBRARY_PRIMARY_WRITE")
+    os.environ["PROMPT_LIBRARY_PRIMARY_WRITE"] = "json"
     # 数据 PR-22 反转承接：强制 workflow_definition json 主写路径。
     _prev_workflow = os.environ.get("WORKFLOW_DEFINITION_PRIMARY_WRITE")
     os.environ["WORKFLOW_DEFINITION_PRIMARY_WRITE"] = "json"
@@ -571,6 +576,10 @@ def client():
             os.environ.pop("PROJECT_PRIMARY_WRITE", None)
         else:
             os.environ["PROJECT_PRIMARY_WRITE"] = _prev_project
+        if _prev_prompt_library is None:
+            os.environ.pop("PROMPT_LIBRARY_PRIMARY_WRITE", None)
+        else:
+            os.environ["PROMPT_LIBRARY_PRIMARY_WRITE"] = _prev_prompt_library
         if _prev_workflow is None:
             os.environ.pop("WORKFLOW_DEFINITION_PRIMARY_WRITE", None)
         else:
