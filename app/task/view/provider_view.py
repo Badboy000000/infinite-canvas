@@ -43,9 +43,20 @@ from app.task.view.error_category import ErrorCategoryMapper, TaskErrorCategory
 # ---------------------------------------------------------------------------
 
 #: [[Provider 适配体系治理方案]] §ProviderTaskView 明列的 6 canonical status。
+#:
+#: **CB-P5-01 承接(Provider PR-A · Wave 3-N.5 Batch 4 主线 B)**:新增 7-th
+#: canonical `rate_limited` — Provider 上游 rate_limit 通道显式识别值域。
+#: 骨架层:只做识别 · 不做限流;下游 `_VIEW_TO_TASK` boundary 与
+#: `ProviderTaskViewStatus` Literal 类型的扩展留待后续 provider 通信通道
+#: 专题 PR 承接,本 PR 不改动 provider 通信通道以对齐硬约束。
 KNOWN_VIEW_STATUSES: frozenset = frozenset(
-    {"queued", "running", "succeeded", "failed", "cancelled", "waiting_upstream"}
+    {"queued", "running", "succeeded", "failed", "cancelled", "waiting_upstream", "rate_limited"}
 )
+
+
+#: **CB-P5-01 承接** · comfyui 通道 queue 长度阈值。严格 `>` 阈值时视为
+#: rate limit 触发 · 阈值 `= 10` 时保持原类别。
+COMFYUI_QUEUE_RATE_LIMIT_THRESHOLD: int = 10
 
 
 #: 需要脱敏的字段名子串。命中任一即整字段值替换为 `"[REDACTED]"`。
@@ -821,6 +832,38 @@ def map_jimeng_task(raw: Mapping[str, Any]) -> ProviderTaskView:
     )
     error_raw = _pick_str(raw, "fail_reason", "failReason", "error", "message", "msg")
     fail_signal = str(error_raw or "").lower()
+    # CB-P5-01 承接(Provider PR-A):jimeng CLI 退避信号识别 · 只识别不限流。
+    # 汇总所有可能承载退避提示的字段(fail_signal + error_message +
+    # queue_status),做子串匹配。命中 → rate_limited canonical + 可恢复。
+    rate_limit_signal_parts: list = [fail_signal]
+    rate_limit_msg = _pick_str(raw, "error_message", "rate_limit_message", "retry_message")
+    if rate_limit_msg:
+        rate_limit_signal_parts.append(rate_limit_msg.lower())
+    queue_info_block = raw.get("queue_info") if isinstance(raw.get("queue_info"), Mapping) else {}
+    queue_status_hint = _pick_str(queue_info_block, "queue_status", "status") if queue_info_block else None
+    if queue_status_hint:
+        rate_limit_signal_parts.append(queue_status_hint.lower())
+    rate_limit_haystack = " ".join(part for part in rate_limit_signal_parts if part)
+    rate_limit_hit_flag = bool(raw.get("rate_limit_hit"))
+    has_retry_after = raw.get("retry_after") is not None
+    # CB-P5-01 承接:只在 CLI 退避阶段(gen_status ∈ {jimeng_pending, ""})
+    # 归 rate_limited。既有的 `gen_status='fail' + fail_reason='rate_limit'`
+    # 场景是**上游终态错误** · 继续走 failed+error+category=rate_limit 路径
+    # (保持 error_category T31 契约不变)。
+    remote_lower = remote_status.lower()
+    is_backoff_phase = (
+        remote_lower in {"", "jimeng_pending"}
+        or remote_lower in _WAITING_TOKENS
+    )
+    jimeng_rate_limit_hit = is_backoff_phase and (
+        rate_limit_hit_flag
+        or ("rate limit" in rate_limit_haystack)
+        or ("rate_limit" in rate_limit_haystack)
+        or ("retry after" in rate_limit_haystack)
+        or ("retry_after" in rate_limit_haystack and has_retry_after)
+        or ("throttl" in rate_limit_haystack)
+        or ("quota" in rate_limit_haystack)
+    )
     canonical: str
     recoverable_hint: bool
     partial = False
@@ -828,6 +871,8 @@ def map_jimeng_task(raw: Mapping[str, Any]) -> ProviderTaskView:
 
     if remote_status.lower() in _CANCELLED_TOKENS:
         canonical, recoverable_hint = ("cancelled", False)
+    elif jimeng_rate_limit_hit:
+        canonical, recoverable_hint = ("rate_limited", True)
     elif "timeout" in fail_signal or remote_status.lower() in _TIMEOUT_TOKENS:
         canonical, recoverable_hint = ("failed", True)
     elif "rate" in fail_signal and "limit" in fail_signal:
@@ -883,6 +928,21 @@ def map_jimeng_task(raw: Mapping[str, Any]) -> ProviderTaskView:
     )
 
 
+def _infer_rate_limit_from_queue(queue_len: int) -> bool:
+    """comfyui 通道:queue 总长度是否触发 rate_limit 识别。
+
+    **CB-P5-01 承接(Provider PR-A · Wave 3-N.5 Batch 4 主线 B)**。
+    骨架层:只做识别 · 不做限流。严格 `>` :data:`COMFYUI_QUEUE_RATE_LIMIT_THRESHOLD`
+    判据 · 阈值 `= 10` 保持原类别。
+    """
+
+    try:
+        length = int(queue_len)
+    except (TypeError, ValueError):
+        return False
+    return length > COMFYUI_QUEUE_RATE_LIMIT_THRESHOLD
+
+
 def map_comfy_task(raw: Mapping[str, Any]) -> ProviderTaskView:
     """映射 ComfyUI `/history/{prompt_id}` 响应。
 
@@ -918,6 +978,27 @@ def map_comfy_task(raw: Mapping[str, Any]) -> ProviderTaskView:
             remote_status="pending",
             raw_excerpt={},
         )
+
+    # CB-P5-01 承接(Provider PR-A):comfyui `/queue` shape rate_limit 识别。
+    # 顶层 `queue_running` + `queue_pending` 累计长度 > 阈值 → rate_limited。
+    # `/history/{prompt_id}` shape 不含这两个 key,不影响原路径。
+    if isinstance(raw.get("queue_running"), list) or isinstance(raw.get("queue_pending"), list):
+        running_block = raw.get("queue_running") if isinstance(raw.get("queue_running"), list) else []
+        pending_block = raw.get("queue_pending") if isinstance(raw.get("queue_pending"), list) else []
+        queue_len_total = len(running_block) + len(pending_block)
+        if _infer_rate_limit_from_queue(queue_len_total):
+            return _view(
+                provider_id="comfyui",
+                upstream_task_id=None,
+                status="rate_limited",
+                progress=None,
+                outputs=(),
+                error=None,
+                next_poll_after_ms=None,
+                recoverable=True,
+                remote_status="queue_saturated",
+                raw_excerpt=raw,
+            )
 
     prompt_id: Optional[str] = None
     payload: Mapping[str, Any] = {}
