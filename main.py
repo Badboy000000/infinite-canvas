@@ -201,6 +201,72 @@ app.add_middleware(RequestContextMiddleware)
 from app.api.errors import validation_error_handler  # noqa: E402
 app.add_exception_handler(RequestValidationError, validation_error_handler)
 
+# --- 权限 PR-1 · /api/whoami identity 契约路由 (Wave 3-N.5 Batch 4 主线 A · 停摆阶段 3 首开) ---
+# Lead 圆桌决议候选 A (GM-14 · GM-10 停下报告收敛):PR-0 (`app/identity/request_context.py`
+# 9 字段 frozen dataclass) + PR-BE-02 (`app/api/context.py` middleware + ContextVar +
+# Depends) 均已在位;本 PR-1 骨架层收缩为「principal 派生 + `/api/whoami` 契约」——
+# 不扩 dataclass 字段(留给 PR-3/PR-4)、不动 middleware、不改任何既有路由的鉴权行为。
+#
+# principal_kind 派生表(auth_mode × has_x_user_id × has_legacy_user_key):
+#   1. auth_mode=authenticated_user (PR-3 后启用) → "user"
+#   2. auth_mode=legacy_alias    · x_user_id set          → "user"
+#   3. auth_mode=legacy_alias    · x_user_id None · lk set → "session"
+#   4. auth_mode=anonymous_or_legacy · lk set               → "session"
+#   5. auth_mode=anonymous_or_legacy · lk None              → "anonymous"
+# 参考 [[40 实施计划/用户团队权限治理实施计划与PR清单]] PR-1、[[50 决策记录/决策 - 认证栈选型]]
+# §"Principal 服务端传递(RequestContext)"、[[70 开发过程跟踪/治理机制/subagent 任务书回写义务清单#GM-14]]。
+from app.identity.request_context import RequestContext as _PermRequestContext  # noqa: E402,F401
+from app.api.context import get_request_context as _get_perm_request_context  # noqa: E402
+
+
+class WhoamiResponse(BaseModel):
+    """`/api/whoami` 响应契约 (权限 PR-1 骨架层 · 5 字段固定 · 不返回额外字段)。
+
+    principal_kind 三态字面量,与 [[决策 - 认证栈选型]] 长期字段清单对齐,但**本 PR
+    仅在响应层派生**,不落入 :class:`RequestContext` dataclass(PR-0 字段冻结契约)。
+    """
+
+    principal_kind: str  # "user" | "session" | "anonymous"
+    user_id: Optional[str]
+    workspace_id: Optional[str]
+    project_id: Optional[str]
+    request_id: str
+
+
+def _derive_principal_kind(ctx: _PermRequestContext) -> str:
+    """principal_kind 派生纯函数 (权限 PR-1 · 派生表见模块头注释)。
+
+    独立于 FastAPI/HTTP 层,T308 单元测试 5 组组合直接消费本函数。
+    """
+    if ctx.auth_mode == "authenticated_user":
+        return "user"
+    if ctx.auth_mode == "legacy_alias":
+        return "user" if ctx.x_user_id else "session"
+    # anonymous_or_legacy
+    return "session" if ctx.legacy_user_key else "anonymous"
+
+
+@app.get("/api/whoami", response_model=WhoamiResponse, tags=["identity"])
+async def whoami() -> WhoamiResponse:
+    """返回当前请求的 principal identity (权限 PR-1 骨架层 · Wave 3-N.5 Batch 4 主线 A)。
+
+    骨架层不强制认证、不拒绝任何请求;`principal_kind="anonymous"` 也返回结构化响应。
+    principal_kind 派生规则见 :func:`_derive_principal_kind`;user_id 优先 `x_user_id`
+    header 原值,fallback `legacy_user_key`(cookie/query 通道);workspace_id / project_id
+    透传 RequestContext(PR-2 legacy_mapper 落地前恒 None);request_id 透传 middleware
+    值(X-Request-Id header 复用或 uuid4 hex)。
+
+    响应体确保零明文密码/token/API key(:class:`WhoamiResponse` schema pin 强类型)。
+    """
+    ctx = _get_perm_request_context()
+    return WhoamiResponse(
+        principal_kind=_derive_principal_kind(ctx),
+        user_id=ctx.x_user_id or ctx.legacy_user_key,
+        workspace_id=ctx.workspace_id,
+        project_id=ctx.project_id,
+        request_id=ctx.request_id,
+    )
+
 # --- WebSocket 状态管理器 ---
 class ConnectionManager:
     def __init__(self):
