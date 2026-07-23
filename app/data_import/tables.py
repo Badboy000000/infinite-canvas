@@ -358,6 +358,50 @@ legacy_url_refs = Table(
 )
 
 
+# ---------------------------------------------------------------------------
+# generation_history —— 生成历史 record 主表（数据 PR-12 · Wave 3-N.6 Batch 2 主线 B）
+#
+# **本 PR 的语义与 AssetLibrary 单文档不同**：
+# - AssetLibrary 是单文档 UPSERT（`legacy_id="__root__"` 单行 · raw_json 承载
+#   完整 payload）；GenerationHistory 是 **N record 集合**（每 record 一行 ·
+#   raw_json 承载单条 record · 5000 条 legacy 上限对齐 DB 侧 DELETE oldest）。
+# - `legacy_id TEXT UNIQUE NULL` 是幂等键：来源优先级
+#   `record["id"]` > `record["legacy_id"]` > `_synthesize_history_legacy_id`
+#   兜底合成（`task_id + request_id + timestamp + prompt_summary[:80]` SHA1
+#   头 16 位 · 参照 `app/task/history/writer.py::_canonical_record_key` pattern ·
+#   与本 writer 目录 + 域完全分离 · GM-16 已复核）。
+# - `raw_json TEXT NULL` 保留经密钥深度剪枝后的 record 字节（P0 硬约束 #5 ·
+#   provider `raw_response` / `api_key` / `secret` / `token` / `password` /
+#   `credential` / `Bearer` / `Authorization` 等字段深度剪枝后再入库）。
+# - 保留 4 个诊断字段（canvas_id / node_id / task_id / user_key）用于运维查询 ·
+#   不加 FK 保持迁移期简单。
+# ---------------------------------------------------------------------------
+
+generation_history = Table(
+    "generation_history",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, default=generate_id),
+    Column("legacy_id", Text, nullable=True),
+    Column("user_key", Text, nullable=True),
+    Column("canvas_id", Text, nullable=True),
+    Column("node_id", Text, nullable=True),
+    Column("task_id", Text, nullable=True),
+    Column("output_ref", Text, nullable=True),
+    Column("legacy_urls", Text, nullable=True),
+    Column("prompt_summary", Text, nullable=True),
+    Column("provider_id", Text, nullable=True),
+    Column("model", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("raw_json", Text, nullable=True),
+    Column("schema_version", Text, nullable=False, server_default="v1_legacy_json"),
+    UniqueConstraint("legacy_id", name="uq_generation_history_legacy_id"),
+    Index("ix_generation_history_created_at", "created_at"),
+    Index("ix_generation_history_canvas_id", "canvas_id"),
+    Index("ix_generation_history_task_id", "task_id"),
+    Index("ix_generation_history_user_key", "user_key"),
+)
+
+
 BASELINE_TABLE_NAMES = (
     "projects",
     "provider_configs",
@@ -384,5 +428,6 @@ __all__ = [
     "file_objects",
     "file_refs",
     "legacy_url_refs",
+    "generation_history",
     "BASELINE_TABLE_NAMES",
 ]

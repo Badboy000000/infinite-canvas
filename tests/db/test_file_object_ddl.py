@@ -150,14 +150,18 @@ def test_t136_upgrade_downgrade_round_trip(isolated_env, monkeypatch):
     for table in FILE_OBJECT_TABLES:
         assert table in names_after_up, f"upgrade 后 {table} 应存在"
 
-    # 2) downgrade -1（回退 0003 → 0002 baseline）
+    # 2) downgrade → 0003_canvas_content_hash（file_objects 引入前的
+    #    直接 parent · 与本 PR-3 revision graph 明示锚定，避免 head 推进后
+    #    `-1` 语义漂移到不再触碰 file_objects 的迁移。数据 PR-12
+    #    （Wave 3-N.6 Batch 2 主线 B · 承接 CB · head 推进 0004 → 0005）
+    #    引发过一次绿转红，改绝对引用后跨 head 推进稳定。
     #    通过 Alembic 内部 API 复用 engine._alembic_config()；参考 run_migrations。
     engine.dispose()
     db_engine.reset_engine()
     from alembic import command as alembic_command
 
     cfg = db_engine._alembic_config()
-    alembic_command.downgrade(cfg, "-1")
+    alembic_command.downgrade(cfg, "0003_canvas_content_hash")
 
     engine = get_engine()
     names_after_down = set(inspect(engine).get_table_names())

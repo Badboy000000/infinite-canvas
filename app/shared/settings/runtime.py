@@ -98,6 +98,7 @@ class Settings:
         prompt_library_primary_write           → PROMPT_LIBRARY_PRIMARY_WRITE    (数据 PR-8 新增)
         workflow_definition_primary_write      → WORKFLOW_DEFINITION_PRIMARY_WRITE (数据 PR-8 新增)
         asset_library_primary_write            → ASSET_LIBRARY_PRIMARY_WRITE     (数据 PR-9 新增)
+        history_primary_write                  → HISTORY_PRIMARY_WRITE           (数据 PR-12 新增)
         task_primary_write                     → TASK_PRIMARY_WRITE              (数据 PR-11 新增)
     """
 
@@ -167,6 +168,14 @@ class Settings:
     # 其他值走 `_validate_asset_library_primary_write` fail-fast。契约测试
     # 断言字段总数 33 → 34。
     asset_library_primary_write: str
+    # 数据 PR-12（Wave 3-N.6 Batch 2 主线 B · GM-22 pattern 第 7 次复用）新增 1 个
+    # 字段：GenerationHistory 主写机制门禁。默认 `"json"`（老 JSON 主写完全
+    # 等价 PR-0 行为 · `main.save_to_history` `HISTORY_FILE` `history[:5000]`
+    # 上限）；显式 `"db"` 才启用 `app.db.history_writer` 每 record UPSERT + DB
+    # 侧 DELETE oldest 5000 上限 + JSON 异步回写。值域 `{"json","db"}`，其他值
+    # 走 `_validate_history_primary_write` fail-fast。契约测试断言字段总数 35 → 36。
+    # **本 PR 只加机制不切默认**（GM-22 反转独立 PR）。
+    history_primary_write: str
     # 数据 PR-11（Wave 3-N.6 Batch 1 主线 A）新增 1 个字段：Task 层事实存储门禁。
     # 默认 `"memory"`（`MemoryTaskStore` 五件套，与 PR-0 memory_impl 行为等价）；
     # 显式 `"sqlite"` 才启用 `SqliteTaskStore` 五件套（消费 `app.task.tables`
@@ -196,6 +205,7 @@ _PROJECT_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _PROMPT_LIBRARY_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _WORKFLOW_DEFINITION_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _ASSET_LIBRARY_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
+_HISTORY_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _TASK_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"memory", "sqlite"})
 
 
@@ -280,6 +290,27 @@ def _validate_asset_library_primary_write(raw: object) -> str:
         allowed = ", ".join(sorted(_ASSET_LIBRARY_PRIMARY_WRITE_ALLOWED))
         raise ValueError(
             f"Invalid ASSET_LIBRARY_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
+        )
+    return text
+
+
+def _validate_history_primary_write(raw: object) -> str:
+    """校验 `main.HISTORY_PRIMARY_WRITE` 值域（数据 PR-12）。
+
+    - `None` / 空串 → 视为 `"json"`（本 PR 默认；GM-22 反转独立 PR）。
+    - `"json"` / `"db"`（大小写不敏感、strip 后）→ 返回小写值。
+    - 其他值 → `ValueError`（fail-fast，与 `IC_DEPLOYMENT_MODE` 语义一致）。
+    """
+
+    if raw is None:
+        return "json"
+    text = str(raw).strip().lower()
+    if not text:
+        return "json"
+    if text not in _HISTORY_PRIMARY_WRITE_ALLOWED:
+        allowed = ", ".join(sorted(_HISTORY_PRIMARY_WRITE_ALLOWED))
+        raise ValueError(
+            f"Invalid HISTORY_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
         )
     return text
 
@@ -393,6 +424,7 @@ def get_settings() -> Settings:
         prompt_library_primary_write=_validate_prompt_library_primary_write(main.PROMPT_LIBRARY_PRIMARY_WRITE),
         workflow_definition_primary_write=_validate_workflow_definition_primary_write(main.WORKFLOW_DEFINITION_PRIMARY_WRITE),
         asset_library_primary_write=_validate_asset_library_primary_write(main.ASSET_LIBRARY_PRIMARY_WRITE),
+        history_primary_write=_validate_history_primary_write(main.HISTORY_PRIMARY_WRITE),
         task_primary_write=_validate_task_primary_write(main.TASK_PRIMARY_WRITE),
         **_deployment_snapshot(),
     )

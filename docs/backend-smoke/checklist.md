@@ -501,6 +501,69 @@ asyncio.run(r())"`
 
 ---
 
+## 40. HISTORY_PRIMARY_WRITE flag 分派 · GenerationHistory 主写机制（数据 PR-12，Wave 3-N.6 §40）
+
+**定位**：本段是**五阶段运维手册**（观察 / 对账 / 切换 / 回滚 / HTTP 不可修改）。数据 PR-12 只交付 `HISTORY_PRIMARY_WRITE` env 门禁 + `app/db/history_writer.py` DB 主写路径 + `app/stores/history_store.py` 分派 wrapper + `Settings.history_primary_write` 校验器 + 新增 Alembic 迁移 `0005_generation_history`；**不切默认**（默认 `"json"`，GM-22 反转独立 PR），**不动 `main.save_to_history` 函数体**（P0 冻结区独立 pin `97cd7a0`），**不动 `main.get_history_api` 路由**（load facade 存在但当前无 caller · 备未来路由重写用）。承接 GM-22 pattern 第 7 次复用（继 canvas PR-15 / project PR-20 / prompt_library PR-21 / workflow PR-22 / asset_library PR-23 / task PR-11 之后）。
+
+### 40.1 观察阶段（灰度前）
+
+- 命令：
+  - `python -c "from app.shared.settings import get_settings; print('history_primary_write=', get_settings().history_primary_write)"`
+  - `HISTORY_PRIMARY_WRITE=invalid python -c "from app.shared.settings import get_settings; get_settings()"`（预期 `ValueError: Invalid HISTORY_PRIMARY_WRITE ...; expected one of: db, json`）
+  - `python -m pytest tests/db/test_history_writer.py tests/db/test_generation_history_ddl.py tests/db/test_history_flip_default.py tests/shared/test_settings.py -v`
+- 期望：默认 `history_primary_write=json`；非法值 fail-fast 且消息含 allowed set；PR-12 契约测试全绿（T370-T386 共 17+ 项 + Settings 追加 3 组参数化）。
+
+### 40.2 对账阶段（DB 模式 shadow 观察）
+
+- 命令：
+  - `export HISTORY_PRIMARY_WRITE=db && python main.py`（DB 主写；异步 JSON 回写默认打开）
+  - 触发少量生成任务；观察 `data/app.db` `generation_history` 表 row 增长 + `history.json` 落盘时延（异步 fallback · 约 <100ms）
+  - `sqlite3 data/app.db "SELECT COUNT(*) FROM generation_history"` 与 `jq 'length' history.json` 对齐（新增 record 幂等入库 + 5000 上限对齐）
+- 期望：两侧 count 差 ≤ 5（异步窗口内的落差）；`data/shadow_diff/history_json_fallback/*.jsonl` 空（无回写失败）。
+
+### 40.3 切换阶段（GM-22 反转 · 独立 PR）
+
+- **本 PR 不切默认**；反转 PR 承接条件：观察阶段 24 小时内无 P0/P1；对账阶段无非预期差；Lead 单独签核。
+- 切换命令：`unset HISTORY_PRIMARY_WRITE`（反转 PR 会把 `main.HISTORY_PRIMARY_WRITE` 默认改成 `"db"`）→ 服务重启 → 依赖 DB 主写 + JSON 异步回写兼容路径。
+
+### 40.4 回滚阶段（P0 快速回滚）
+
+- 命令：`export HISTORY_PRIMARY_WRITE=json && systemctl restart <service>`
+- 期望：立即回到 legacy `main.save_to_history` JSON 主写 · byte-equivalent PR-0 · **不 import** `app.db.history_writer`（P0 硬约束 #3 · sys.modules 隔离契约保护）。
+- 验证：`python -c "import sys; from app.stores import history_store; history_store.save_to_history({'type':'zimage','images':['a.png']}); print('writer imported:', 'app.db.history_writer' in sys.modules)"` 应输出 `writer imported: False`。
+
+### 40.5 HTTP 不可修改（配置面隔离契约）
+
+- `HISTORY_PRIMARY_WRITE` **只能**通过 env / systemd unit / docker `-e` 设置；HTTP 面所有 `PATCH /api/config`-类端点**不得**接受该键的修改。
+- 抗回归线：`Settings` 是 frozen dataclass；`_validate_history_primary_write` 只在 `get_settings()` 构造期读 env；HTTP 层不注册对应字段。
+
+### 关联事实
+
+- 新增机制：
+  - `main.py`：`HISTORY_PRIMARY_WRITE` 常量（紧邻 `ASSET_LIBRARY_PRIMARY_WRITE` · 1 行增量 · `save_to_history` 函数体零触碰）
+  - `app/db/migrations/versions/0005_generation_history.py`：新增迁移 · down_revision `0004_file_object_ddl` · 建表 `generation_history` + 4 个索引
+  - `app/data_import/tables.py`：新增 `generation_history` Table 挂到 metadata 单例
+  - `app/db/history_writer.py`：新模块 · `save_history_db` UPSERT + DELETE oldest 5000 上限 · `load_history_db` `ORDER BY created_at DESC LIMIT` · `delete_history_db` legacy_id 或 UUID 匹配 · `_safe_history_record` P0 密钥深度剪枝 · JSON 异步回写 + shadow diff jsonl 稳定键位
+  - `app/stores/history_store.py`：`_get_primary_write_mode` env 分派 · `save_to_history` wrapper（懒 import writer）· `load_history` facade 新增
+  - `app/shared/settings/runtime.py`：`Settings.history_primary_write` 字段 + `_HISTORY_PRIMARY_WRITE_ALLOWED` + `_validate_history_primary_write` + `get_settings()` mirror（字段总数 35 → 36）
+- 新增测试：`tests/db/test_history_writer.py`（T370-T380 · 11+ 项 · UPSERT 幂等 / 5000 上限 / async fallback / diff 稳定键位 / P0 主写抛 / Settings fail-fast / sentinel 抗回归 / DB dump grep / legacy round-trip / 跨模块 import 抗回归） + `tests/db/test_generation_history_ddl.py`（T381-T386 · 6 项 DDL 契约） + `tests/db/test_history_flip_default.py`（`save_to_history` 独立 AST pin baseline `97cd7a0` · 默认 json / main 常量存在）+ `tests/shared/test_settings.py` 追加 3 组参数化（default json / accepted / invalid fail-fast）
+- 冻结区 AST 3/3（`class StorageSettings` / `def apply_storage_settings` / `def storage_settings_snapshot`）byte-equivalent vs baseline `a6f863a`。5 save byte-identical vs baseline `31e0d3d`（5/5）。`save_to_history` 独立 pin baseline `97cd7a0`。OpenAPI diff exit=0。
+- Alembic head 推进：`0004_file_object_ddl` → `0005_generation_history`。
+- `main.py` 净改动 = **1 行**（`HISTORY_PRIMARY_WRITE` 常量声明；不触碰任何既有路由 / save 函数 / 冻结区）。
+
+### 回滚开关
+
+- `unset HISTORY_PRIMARY_WRITE` 或 `HISTORY_PRIMARY_WRITE=json` → 分派回 `main.save_to_history`（与 PR-0 参考实现 100% 字节等价）。
+- Alembic 下沉：`alembic downgrade 0004_file_object_ddl`（若已切 db 主写 · 需先切回 json 主写 · 再降级迁移 · 数据面 `generation_history` 表 drop）。
+
+### GM-22 反转独立 PR
+
+- 本 PR **只加机制不切默认**（默认仍 `"json"`）；治理方案要求的"GenerationHistory 落 DB 主写事实存储"需在独立 PR 反转默认（承接 PR-15/20/21/22/23 pattern）。反转 PR 触发条件：DB 主写 shadow 观察 24 小时无 P0/P1 + 对账阶段无非预期差 + Lead 单独签核。
+
+归属：数据 PR-12（[[70 开发过程跟踪/PR 状态总账/PR - 数据模型#数据 PR-12]]）。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：

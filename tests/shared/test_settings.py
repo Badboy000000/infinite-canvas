@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 
-# 路径字段名 → main.py 常量名映射（35 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6 + 1 数据 PR-7 + 3 数据 PR-8 + 1 数据 PR-9 + 1 数据 PR-11）
+# 路径字段名 → main.py 常量名映射（36 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6 + 1 数据 PR-7 + 3 数据 PR-8 + 1 数据 PR-9 + 1 数据 PR-11 + 1 数据 PR-12）
 FIELD_TO_MAIN_CONST = {
     "base_dir": "BASE_DIR",
     "workflow_dir": "WORKFLOW_DIR",
@@ -64,6 +64,9 @@ FIELD_TO_MAIN_CONST = {
     "workflow_definition_primary_write": "WORKFLOW_DEFINITION_PRIMARY_WRITE",
     # 数据 PR-9（Wave 3-H）新增 AssetLibrary primary write mode
     "asset_library_primary_write": "ASSET_LIBRARY_PRIMARY_WRITE",
+    # 数据 PR-12（Wave 3-N.6 Batch 2 主线 B · GM-22 pattern 第 7 次复用）新增
+    # GenerationHistory primary write mode（本 PR 只加机制不切默认）
+    "history_primary_write": "HISTORY_PRIMARY_WRITE",
     # 数据 PR-11（Wave 3-N.6 Batch 1 主线 A）新增 Task primary write mode
     "task_primary_write": "TASK_PRIMARY_WRITE",
 }
@@ -119,7 +122,7 @@ def test_settings_fields_preserve_main_constant_contract():
 
     fields = {f.name for f in dataclasses.fields(Settings)}
     expected_fields = set(FIELD_TO_MAIN_CONST) | DEPLOYMENT_FIELDS
-    assert len(FIELD_TO_MAIN_CONST) == 35
+    assert len(FIELD_TO_MAIN_CONST) == 36
     assert fields == expected_fields, (
         f"Settings 字段名与映射表不一致：\n"
         f"  Settings.fields = {sorted(fields)}\n"
@@ -554,3 +557,64 @@ def test_pr11_invalid_task_primary_write_fails_fast_at_settings(monkeypatch, raw
     msg = str(exc_info.value)
     assert "memory" in msg
     assert "sqlite" in msg
+
+
+# ---------------------------------------------------------------------------
+# 数据 PR-12（Wave 3-N.6 Batch 2 主线 B · GM-22 pattern 第 7 次复用）：
+# GenerationHistory 主写门禁 env 映射与 fail-fast
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw_value", [None, ""])
+def test_pr12_history_primary_write_default_is_json(monkeypatch, raw_value):
+    """未设 / 空值 → 默认 `"json"`（本 PR 只加机制不切默认 · GM-22 反转独立 PR）。"""
+
+    import main
+
+    from app.shared.settings import get_settings
+
+    monkeypatch.setattr(main, "HISTORY_PRIMARY_WRITE", raw_value)
+    s = get_settings()
+    assert s.history_primary_write == "json"
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("json", "json"),
+        ("JSON", "json"),
+        (" json ", "json"),
+        ("db", "db"),
+        ("DB", "db"),
+        (" db ", "db"),
+    ],
+)
+def test_pr12_history_primary_write_accepted_values(monkeypatch, raw_value, expected):
+    """`HISTORY_PRIMARY_WRITE` 接受 `json` / `db`（大小写不敏感、strip 后）。"""
+
+    import main
+
+    from app.shared.settings import get_settings
+
+    monkeypatch.setattr(main, "HISTORY_PRIMARY_WRITE", raw_value)
+    s = get_settings()
+    assert s.history_primary_write == expected
+
+
+@pytest.mark.parametrize("raw_value", ["memory", "sqlite", "postgres", "unknown"])
+def test_pr12_invalid_history_primary_write_fails_fast_at_settings(monkeypatch, raw_value):
+    """未知值必须在 `Settings` 构造期抛 `ValueError`（fail-fast · P0 硬约束）。
+
+    值域 `{"json","db"}` 之外全部拒绝；错误消息含 allowed set。
+    """
+
+    import main
+
+    from app.shared.settings import get_settings
+
+    monkeypatch.setattr(main, "HISTORY_PRIMARY_WRITE", raw_value)
+    with pytest.raises(ValueError, match="Invalid HISTORY_PRIMARY_WRITE") as exc_info:
+        get_settings()
+    msg = str(exc_info.value)
+    assert "json" in msg
+    assert "db" in msg
