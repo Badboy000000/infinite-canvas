@@ -1,9 +1,10 @@
-"""`app.data_import.importers` — 6 类 domain importer 注册表。"""
+"""`app.data_import.importers` — 7 类 domain importer 注册表。"""
 from __future__ import annotations
 
 from . import (
     asset_library,
     canvas,
+    identity,
     project,
     prompt_library,
     provider_config,
@@ -17,6 +18,7 @@ IMPORTERS = {
     "workflow_definition": workflow_definition,
     "asset_library": asset_library,
     "canvas": canvas,
+    "identity": identity,
 }
 
 
@@ -24,6 +26,7 @@ __all__ = [
     "IMPORTERS",
     "asset_library",
     "canvas",
+    "identity",
     "project",
     "prompt_library",
     "provider_config",
