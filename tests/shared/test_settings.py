@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 
-# 路径字段名 → main.py 常量名映射（36 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6 + 1 数据 PR-7 + 3 数据 PR-8 + 1 数据 PR-9 + 1 数据 PR-11 + 1 数据 PR-12）
+# 路径字段名 → main.py 常量名映射（38 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6 + 1 数据 PR-7 + 3 数据 PR-8 + 1 数据 PR-9 + 1 数据 PR-11 + 1 数据 PR-12 + 2 数据 PR-14）
 FIELD_TO_MAIN_CONST = {
     "base_dir": "BASE_DIR",
     "workflow_dir": "WORKFLOW_DIR",
@@ -69,6 +69,9 @@ FIELD_TO_MAIN_CONST = {
     "history_primary_write": "HISTORY_PRIMARY_WRITE",
     # 数据 PR-11（Wave 3-N.6 Batch 1 主线 A）新增 Task primary write mode
     "task_primary_write": "TASK_PRIMARY_WRITE",
+    # 数据 PR-14（Wave 3-N.7 Batch 4 主线 B · 数据模型收官）新增 JSON 读通道下线判据
+    "json_fallback_read": "JSON_FALLBACK_READ",
+    "json_async_mirror": "JSON_ASYNC_MIRROR",
 }
 
 DEPLOYMENT_FIELDS = {
@@ -122,7 +125,7 @@ def test_settings_fields_preserve_main_constant_contract():
 
     fields = {f.name for f in dataclasses.fields(Settings)}
     expected_fields = set(FIELD_TO_MAIN_CONST) | DEPLOYMENT_FIELDS
-    assert len(FIELD_TO_MAIN_CONST) == 36
+    assert len(FIELD_TO_MAIN_CONST) == 38
     assert fields == expected_fields, (
         f"Settings 字段名与映射表不一致：\n"
         f"  Settings.fields = {sorted(fields)}\n"

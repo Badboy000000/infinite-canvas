@@ -100,6 +100,8 @@ class Settings:
         asset_library_primary_write            → ASSET_LIBRARY_PRIMARY_WRITE     (数据 PR-9 新增)
         history_primary_write                  → HISTORY_PRIMARY_WRITE           (数据 PR-12 新增)
         task_primary_write                     → TASK_PRIMARY_WRITE              (数据 PR-11 新增)
+        json_fallback_read                     → JSON_FALLBACK_READ              (数据 PR-14 新增)
+        json_async_mirror                      → JSON_ASYNC_MIRROR               (数据 PR-14 新增)
     """
 
     base_dir: str
@@ -183,6 +185,12 @@ class Settings:
     # 其他值走 `_validate_task_primary_write` fail-fast。契约测试断言字段总数
     # 34 → 35。**本 PR 只加机制不切默认**（GM-22 反转独立 PR）。
     task_primary_write: str
+    # 数据 PR-14（Wave 3-N.7 Batch 4 主线 B · 数据模型收官）：JSON 读通道下线判据 +
+    # 异步镜像写开关。默认 `False`；走 PR-BE-03 "两步走"约定（`Settings` 加字段 +
+    # `main.py` 加对应常量）。运行时由各 writer / reader 现读 env 判据。
+    # 契约测试断言字段总数 36 → 38。
+    json_fallback_read: bool
+    json_async_mirror: bool
 
     # Deployment PR-01 adds a mode declaration and the non-secret switches that
     # later security PRs will consume. Defaults mirror today's runtime exactly;
@@ -426,6 +434,8 @@ def get_settings() -> Settings:
         asset_library_primary_write=_validate_asset_library_primary_write(main.ASSET_LIBRARY_PRIMARY_WRITE),
         history_primary_write=_validate_history_primary_write(main.HISTORY_PRIMARY_WRITE),
         task_primary_write=_validate_task_primary_write(main.TASK_PRIMARY_WRITE),
+        json_fallback_read=bool(main.JSON_FALLBACK_READ),
+        json_async_mirror=bool(main.JSON_ASYNC_MIRROR),
         **_deployment_snapshot(),
     )
 

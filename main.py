@@ -491,6 +491,11 @@ WORKFLOW_DEFINITION_PRIMARY_WRITE = str(os.environ.get("WORKFLOW_DEFINITION_PRIM
 ASSET_LIBRARY_PRIMARY_WRITE = str(os.environ.get("ASSET_LIBRARY_PRIMARY_WRITE", "db")).strip().lower()  # 数据 PR-9（Wave 3-H）AssetLibrary 主写门禁 · 数据 PR-23（Wave 3-N.5 主线 A · Batch 3）反转默认为 "db"（GM-22 pattern · M1 阶段 5 域反转最后一域）；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 HISTORY_PRIMARY_WRITE = str(os.environ.get("HISTORY_PRIMARY_WRITE", "json")).strip().lower()  # 数据 PR-12（Wave 3-N.6 Batch 2 主线 B）GenerationHistory 主写门禁 · GM-22 pattern 第 7 次复用；本 PR 只加机制不切默认（默认 "json" = 老 save_to_history JSON 主写，与 PR-0 字节等价）；显式 "db" 启用 `app.db.history_writer` 每 record UPSERT + 5000 条 DELETE oldest + JSON 异步回写；Settings 层校验值域 {"json","db"}；HTTP 不可修改
 TASK_PRIMARY_WRITE = str(os.environ.get("TASK_PRIMARY_WRITE", "memory")).strip().lower()  # 数据 PR-11（Wave 3-N.6 Batch 1 主线 A）Task 层事实存储门禁；本 PR 只加机制不切默认（GM-22 反转独立 PR）；默认 "memory" = MemoryTaskStore 五件套；显式 "sqlite" = SqliteTaskStore 五件套（消费 `app.task.tables` metadata + 0001_task_layer 迁移已建的 5 张表）；Settings 层校验值域 {"memory","sqlite"}；HTTP 不可修改
+# 数据 PR-14（Wave 3-N.7 Batch 4 主线 B · 数据模型收官）：JSON 读通道下线判据 +
+# 异步镜像写开关。默认 `off`；`on` 时启用对应行为。详见
+# [[40 实施计划/数据模型治理实施计划与PR清单]] PR-14。
+JSON_FALLBACK_READ = str(os.environ.get("JSON_FALLBACK_READ", "")).strip().lower() in _TRUTHY_SHADOW_READ
+JSON_ASYNC_MIRROR = str(os.environ.get("JSON_ASYNC_MIRROR", "")).strip().lower() in _TRUTHY_SHADOW_READ
 DEFAULT_STORAGE_DIRS = {
     "upload": OUTPUT_INPUT_DIR,
     "generated": OUTPUT_OUTPUT_DIR,
