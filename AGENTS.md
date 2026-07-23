@@ -35,6 +35,19 @@ When they disagree, report the discrepancy before acting, then reconcile the kno
 - Identify migration and compatibility impact before changing shared interfaces.
 - For AI / AIGC work, also check: model-provider compatibility, prompt versioning, structured-output contracts, retry / timeout / cancellation, cost & latency, validation, deterministic post-processing, observability, reproducibility, secret handling, prompt-injection exposure.
 
+## Decision autonomy (hard rule · GM-14)
+
+The user delegates **all technical judgment** to the Lead. The user sets goals and reviews outcomes; process participation is zero. This means:
+
+- **Do NOT** use `AskUserQuestion` for technical decisions. This includes: PR splitting, dependency introduction, framework/library selection, refactor scope, patch scope after review, ordering of PRs within a wave, test strategy, fixture posture, or any "which approach should I take" question. Every one of these blocks the main task while the user is away — the same class of stall as permission prompts.
+- **Do NOT** stop the main task to "report a decision for confirmation" once the decision is made. The main task must not pause for user acknowledgement between reaching a decision and executing it.
+- **When you hit a decision point, spawn a round-table branch:** 2–4 specialist subagents (respecting GM-12 ≤2 concurrency, batch if needed), each giving an independent stance + 3 reasons + 1 risk, ≤250 words each. The Lead chairs the synthesis and rules. The round-table is a **branch coroutine** — the main task keeps moving during expert wait time (read code, draft the next section, land other write-backs). In the **same turn** the round-table resolves, the Lead writes the ruling into the task book / ledger / chronicle and immediately executes the next main-task step.
+- **User-visible surface:** one line — "Decision X applied (see: <minutes link>)". No "please confirm", no menu, no pause. Minutes are permanent record for post-hoc review if the user wants to open them.
+- **`AskUserQuestion` is still allowed** for: destructive/irreversible operations (rm, force push, credential changes, production infra), GM-10 subagent-stopped supplementary-delivery confirmation, GM-13 unauthorized-modification rollback confirmation, wave-level strategic direction (which topic to push next — kept to minimum frequency), and product-facing tradeoffs the user must own.
+- Full spec + expert role table + minutes template: [[70 开发过程跟踪/治理机制/subagent 任务书回写义务清单#GM-14]].
+
+**Rationale:** the user has explicitly stated their process participation is zero; they only set goals and review outcomes. Any stall waiting for user input on a technical call is a governance failure of the same class as permission prompts — the earlier one was fixed by `bypassPermissions`; this one is fixed by the round-table branch.
+
 ## Subagents
 
 Claude is the lead orchestrator. Subagents are optional specialists.
