@@ -467,6 +467,40 @@ asyncio.run(r())"`
 
 ---
 
+## 39. TASK_PRIMARY_WRITE flag 分派工厂（数据 PR-11，Wave 3-N.6 §39）
+
+**定位**：本段是**运维手册**，不是烟测通过条件。数据 PR-11 只交付 `TASK_PRIMARY_WRITE` env 门禁 + `create_stores()` 分派工厂 + `Settings.task_primary_write` 校验器；**不改事实层**（`app/task/store/sqlite_impl.py` / `app/task/tables.py` / `0001_task_layer` 迁移均零触碰），**不切默认**（默认 `"memory"`，GM-22 反转独立 PR），**不接入 main 生成路径**（`app/task/service/*` 已消费的 Store 端口零改动）。承接 PR-21/22/23 flag pattern 第 4 次实证 · GM-14 圆桌自治第 4 次实证（CB-P5-29 挂账）。
+
+- 命令：
+  - `python -c "from app.shared.settings import get_settings; print('task_primary_write=', get_settings().task_primary_write)"`
+  - `TASK_PRIMARY_WRITE=sqlite python -c "from app.task.store import create_stores; s=create_stores(); print(type(s[0]).__name__, type(s[4]).__name__)"`（需要预先 `python main.py migrate head`）
+  - `TASK_PRIMARY_WRITE=invalid python -c "from app.task.store import create_stores; create_stores()"`（预期 `ValueError: Invalid TASK_PRIMARY_WRITE ...; expected one of: memory, sqlite`）
+  - `python -m pytest tests/task/test_create_stores_dispatch.py tests/shared/test_settings.py -v`
+- 期望：默认 `task_primary_write=memory`；sqlite 模式返回 `SqliteTaskStore ... SqliteArtifactStore`；非法值 fail-fast 且消息含 allowed set；PR-11 契约测试全绿（`tests/task/test_create_stores_dispatch.py` 12 项 T300-T307 + `tests/shared/test_settings.py` 追加 11 项参数化）。
+
+### 关联事实
+
+- 新增机制（唯一增量，收缩到 flag 承接）：
+  - `main.py` `TASK_PRIMARY_WRITE` 常量（紧邻 `ASSET_LIBRARY_PRIMARY_WRITE`）
+  - `app/shared/settings/runtime.py`：`Settings.task_primary_write` 字段 + `_TASK_PRIMARY_WRITE_ALLOWED = frozenset({"memory","sqlite"})` + `_validate_task_primary_write` + `get_settings()` mirror（字段总数 34 → 35）
+  - `app/task/store/__init__.py`：`create_stores() -> StoreBundle` 分派工厂（`memory_stores()` / `sqlite_stores()` 内部签名冻结不改）
+- 新增测试：`tests/task/test_create_stores_dispatch.py`（T300-T307 · 8 项 · 12 test cases 含参数化）+ `tests/shared/test_settings.py` 追加 3 组参数化（accepted / default / invalid）
+- 冻结区 AST 3/3（`class StorageSettings` / `def apply_storage_settings` / `def storage_settings_snapshot`）byte-equivalent vs baseline `a6f863a`。5 save byte-identical vs baseline `31e0d3d`（5/5）。OpenAPI diff exit=0。
+- `main.py` 净改动 = **1 行**（`TASK_PRIMARY_WRITE` 常量声明；不触碰任何既有路由 / save 函数 / 冻结区）。
+
+### 回滚开关
+
+- `unset TASK_PRIMARY_WRITE` 或 `TASK_PRIMARY_WRITE=memory` → 分派回 `memory_stores()`（与 PR-0 参考实现 100% 等价）。
+- 紧急下线：把 `create_stores()` 从 `app/task/store/__init__.py` 移除即可；调用方本 PR 不接入 main 生成路径，回滚零影响。
+
+### GM-22 反转独立 PR
+
+- 本 PR **只加机制不切默认**（默认仍 `"memory"`）；治理方案要求的"Task 层落 SQLite 事实存储"需在独立 PR 反转默认（承接 PR-20/21/22/23 pattern）。反转 PR 触发条件：`tests/task/test_store_contract.py` sqlite 分支全绿 + 24 小时熄火期 + Lead 单独签核。
+
+归属：数据 PR-11（[[70 开发过程跟踪/PR 状态总账/PR - 任务模型与后台任务治理#数据 PR-11]]）。
+
+---
+
 ## 附：OpenAPI baseline 差异校验
 
 作为烟测辅助，任一 PR 合入前追加执行：

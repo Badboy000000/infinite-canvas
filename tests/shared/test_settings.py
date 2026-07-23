@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 
-# 路径字段名 → main.py 常量名映射（34 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6 + 1 数据 PR-7 + 3 数据 PR-8 + 1 数据 PR-9）
+# 路径字段名 → main.py 常量名映射（35 项 = 22 首批 + 1 数据 PR-1 + 4 数据 PR-4 + 1 数据 PR-5 + 1 数据 PR-6 + 1 数据 PR-7 + 3 数据 PR-8 + 1 数据 PR-9 + 1 数据 PR-11）
 FIELD_TO_MAIN_CONST = {
     "base_dir": "BASE_DIR",
     "workflow_dir": "WORKFLOW_DIR",
@@ -64,6 +64,8 @@ FIELD_TO_MAIN_CONST = {
     "workflow_definition_primary_write": "WORKFLOW_DEFINITION_PRIMARY_WRITE",
     # 数据 PR-9（Wave 3-H）新增 AssetLibrary primary write mode
     "asset_library_primary_write": "ASSET_LIBRARY_PRIMARY_WRITE",
+    # 数据 PR-11（Wave 3-N.6 Batch 1 主线 A）新增 Task primary write mode
+    "task_primary_write": "TASK_PRIMARY_WRITE",
 }
 
 DEPLOYMENT_FIELDS = {
@@ -117,7 +119,7 @@ def test_settings_fields_preserve_main_constant_contract():
 
     fields = {f.name for f in dataclasses.fields(Settings)}
     expected_fields = set(FIELD_TO_MAIN_CONST) | DEPLOYMENT_FIELDS
-    assert len(FIELD_TO_MAIN_CONST) == 34
+    assert len(FIELD_TO_MAIN_CONST) == 35
     assert fields == expected_fields, (
         f"Settings 字段名与映射表不一致：\n"
         f"  Settings.fields = {sorted(fields)}\n"
@@ -489,3 +491,66 @@ def test_pr8_invalid_primary_write_fails_fast_at_settings(monkeypatch, const_nam
     monkeypatch.setattr(main, const_name, "invalid")
     with pytest.raises(ValueError, match=f"Invalid {const_name}"):
         get_settings()
+
+
+# ---------------------------------------------------------------------------
+# 数据 PR-11（Wave 3-N.6 Batch 1 主线 A）：Task 层事实存储门禁 env 映射与 fail-fast
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("memory", "memory"),
+        ("MEMORY", "memory"),
+        (" memory ", "memory"),
+        ("sqlite", "sqlite"),
+        ("SQLite", "sqlite"),
+    ],
+)
+def test_pr11_task_primary_write_accepted_values(monkeypatch, raw_value, expected):
+    """`TASK_PRIMARY_WRITE` 接受 `memory` / `sqlite`（大小写不敏感、strip 后）。
+
+    数据 PR-11 承接 PR-9 pattern；本 PR **只加机制不切默认**（默认 `memory`）。
+    """
+
+    import main
+
+    from app.shared.settings import get_settings
+
+    monkeypatch.setattr(main, "TASK_PRIMARY_WRITE", raw_value)
+    s = get_settings()
+    assert s.task_primary_write == expected
+
+
+@pytest.mark.parametrize("raw_value", [None, ""])
+def test_pr11_task_primary_write_default_is_memory(monkeypatch, raw_value):
+    """未设 / 空值 → 默认 `"memory"`（Task 层默认沿用 memory 承接 PR-0）。"""
+
+    import main
+
+    from app.shared.settings import get_settings
+
+    monkeypatch.setattr(main, "TASK_PRIMARY_WRITE", raw_value)
+    s = get_settings()
+    assert s.task_primary_write == "memory"
+
+
+@pytest.mark.parametrize("raw_value", ["json", "db", "postgres", "unknown"])
+def test_pr11_invalid_task_primary_write_fails_fast_at_settings(monkeypatch, raw_value):
+    """未知值必须在 `Settings` 构造期抛 `ValueError`（fail-fast · P0 硬约束）。
+
+    值域 `{"memory","sqlite"}` 之外全部拒绝；错误消息含 allowed set。
+    """
+
+    import main
+
+    from app.shared.settings import get_settings
+
+    monkeypatch.setattr(main, "TASK_PRIMARY_WRITE", raw_value)
+    with pytest.raises(ValueError, match="Invalid TASK_PRIMARY_WRITE") as exc_info:
+        get_settings()
+    # 错误消息必须列出 allowed set（memory / sqlite）供操作者定位
+    msg = str(exc_info.value)
+    assert "memory" in msg
+    assert "sqlite" in msg

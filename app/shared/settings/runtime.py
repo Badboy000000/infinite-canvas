@@ -98,6 +98,7 @@ class Settings:
         prompt_library_primary_write           → PROMPT_LIBRARY_PRIMARY_WRITE    (数据 PR-8 新增)
         workflow_definition_primary_write      → WORKFLOW_DEFINITION_PRIMARY_WRITE (数据 PR-8 新增)
         asset_library_primary_write            → ASSET_LIBRARY_PRIMARY_WRITE     (数据 PR-9 新增)
+        task_primary_write                     → TASK_PRIMARY_WRITE              (数据 PR-11 新增)
     """
 
     base_dir: str
@@ -166,6 +167,13 @@ class Settings:
     # 其他值走 `_validate_asset_library_primary_write` fail-fast。契约测试
     # 断言字段总数 33 → 34。
     asset_library_primary_write: str
+    # 数据 PR-11（Wave 3-N.6 Batch 1 主线 A）新增 1 个字段：Task 层事实存储门禁。
+    # 默认 `"memory"`（`MemoryTaskStore` 五件套，与 PR-0 memory_impl 行为等价）；
+    # 显式 `"sqlite"` 才启用 `SqliteTaskStore` 五件套（消费 `app.task.tables`
+    # metadata + `0001_task_layer` 已建的 5 张表）。值域 `{"memory","sqlite"}`，
+    # 其他值走 `_validate_task_primary_write` fail-fast。契约测试断言字段总数
+    # 34 → 35。**本 PR 只加机制不切默认**（GM-22 反转独立 PR）。
+    task_primary_write: str
 
     # Deployment PR-01 adds a mode declaration and the non-secret switches that
     # later security PRs will consume. Defaults mirror today's runtime exactly;
@@ -188,6 +196,7 @@ _PROJECT_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _PROMPT_LIBRARY_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _WORKFLOW_DEFINITION_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
 _ASSET_LIBRARY_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"json", "db"})
+_TASK_PRIMARY_WRITE_ALLOWED: frozenset[str] = frozenset({"memory", "sqlite"})
 
 
 def _validate_canvas_primary_write(raw: object) -> str:
@@ -271,6 +280,28 @@ def _validate_asset_library_primary_write(raw: object) -> str:
         allowed = ", ".join(sorted(_ASSET_LIBRARY_PRIMARY_WRITE_ALLOWED))
         raise ValueError(
             f"Invalid ASSET_LIBRARY_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
+        )
+    return text
+
+
+def _validate_task_primary_write(raw: object) -> str:
+    """校验 `main.TASK_PRIMARY_WRITE` 值域（数据 PR-11）。
+
+    - `None` / 空串 → 视为 `"memory"`（默认，Task 层与其他 domain
+      不同：memory 默认承接 Wave 3-N.6 前的行为，GM-22 反转是独立 PR）。
+    - `"memory"` / `"sqlite"`（大小写不敏感、strip 后）→ 返回小写值。
+    - 其他值 → `ValueError`（fail-fast，与 `IC_DEPLOYMENT_MODE` 语义一致）。
+    """
+
+    if raw is None:
+        return "memory"
+    text = str(raw).strip().lower()
+    if not text:
+        return "memory"
+    if text not in _TASK_PRIMARY_WRITE_ALLOWED:
+        allowed = ", ".join(sorted(_TASK_PRIMARY_WRITE_ALLOWED))
+        raise ValueError(
+            f"Invalid TASK_PRIMARY_WRITE {raw!r}; expected one of: {allowed}"
         )
     return text
 
@@ -362,6 +393,7 @@ def get_settings() -> Settings:
         prompt_library_primary_write=_validate_prompt_library_primary_write(main.PROMPT_LIBRARY_PRIMARY_WRITE),
         workflow_definition_primary_write=_validate_workflow_definition_primary_write(main.WORKFLOW_DEFINITION_PRIMARY_WRITE),
         asset_library_primary_write=_validate_asset_library_primary_write(main.ASSET_LIBRARY_PRIMARY_WRITE),
+        task_primary_write=_validate_task_primary_write(main.TASK_PRIMARY_WRITE),
         **_deployment_snapshot(),
     )
 
