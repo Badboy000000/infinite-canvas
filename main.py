@@ -98,6 +98,9 @@ from app.api.routers.asset_library import create_router as create_asset_library_
 from app.api.routers.prompt_libraries import create_router as create_prompt_libraries_router  # noqa: E402
 from app.modules.asset.service import AssetModuleFacade  # noqa: E402
 from app.modules.asset.store import AssetLibraryModuleStore, PromptLibraryModuleStore  # noqa: E402
+# --- PR-BE-10 file domain + storage_files router extraction (Wave 3-N.7 Batch 2 主线 A) -----
+from app.api.routers.storage_files import create_router as create_storage_files_router  # noqa: E402
+from app.modules.file.service import FileModuleFacade  # noqa: E402
 # ---------------------------------------------------------------------------
 import json
 import uuid
@@ -6844,7 +6847,6 @@ async def get_storage_settings():
 async def update_storage_settings(payload: Dict[str, str]):
     return save_storage_settings(payload or {})
 
-@app.get("/api/storage-files")
 async def list_storage_files(kind: str = "generated", offset: int = 0, limit: int = 80):
     root = storage_kind_dir(kind)
     os.makedirs(root, exist_ok=True)
@@ -6874,14 +6876,12 @@ async def list_storage_files(kind: str = "generated", offset: int = 0, limit: in
         "has_more": offset + len(page_items) < total,
     }
 
-@app.get("/api/storage-files/{kind}/{rel_path:path}")
 async def get_storage_file(kind: str, rel_path: str):
     path = storage_file_path(kind, rel_path)
     if not path or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="文件不存在")
     return FileResponse(path, media_type=content_type_for_path(path))
 
-@app.post("/api/storage-files/delete")
 async def delete_storage_files(payload: Dict[str, Any]):
     kind = str((payload or {}).get("kind") or "").strip()
     rels = [str(item or "").strip() for item in ((payload or {}).get("items") or []) if str(item or "").strip()]
@@ -6954,7 +6954,6 @@ def generate_video_preview_image(path: str, width: int) -> Image.Image:
         except OSError:
             pass
 
-@app.get("/api/media-preview")
 async def media_preview(url: str, w: int = 512):
     path = output_file_from_url(url)
     if not path or not os.path.isfile(path):
@@ -11563,7 +11562,6 @@ async def build_chat_text_reply(payload, conversation):
 async def index():
     return static_html_response("index.html")
 
-@app.get("/api/view")
 def view_image(filename: str, type: str = "input", subfolder: str = ""):
     # 先按原逻辑去各 ComfyUI 后端找
     for addr in COMFYUI_INSTANCES:
@@ -11586,7 +11584,6 @@ def view_image(filename: str, type: str = "input", subfolder: str = ""):
                 return FileResponse(local_path, media_type=content_type_for_path(local_path))
     raise HTTPException(status_code=404, detail="Image not found on any available backend")
 
-@app.get("/api/download-output")
 def download_output(request: Request, url: str, name: str = "", inline: bool = False):
     url = rewrite_runninghub_file_url(url)
     path = output_file_from_url(url)
@@ -17183,6 +17180,21 @@ app.include_router(
         add_prompt_library_category_cb=add_prompt_library_category,
         rename_prompt_library_category_cb=rename_prompt_library_category,
         delete_prompt_library_category_cb=delete_prompt_library_category,
+    )
+)
+
+# --- PR-BE-10 file domain + storage_files router assembly (Wave 3-N.7 Batch 2 主线 A) -----
+# 上方 6 个 async def / def 函数体保留为 re-export 兼容层(`@app.` 装饰器已剥离);
+# 下方 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/storage_files.py` 与 `app/modules/file/`。
+app.include_router(
+    create_storage_files_router(
+        list_storage_files_cb=list_storage_files,
+        get_storage_file_cb=get_storage_file,
+        delete_storage_files_cb=delete_storage_files,
+        media_preview_cb=media_preview,
+        view_image_cb=view_image,
+        download_output_cb=download_output,
     )
 )
 
