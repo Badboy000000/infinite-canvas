@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, AsyncMock
 
 import pytest
@@ -773,6 +774,299 @@ def test_t108_project_service_default_project_undeletable() -> None:
         service.delete_project(ProjectDeleteCommand(project_id="default"))
     assert exc_info.value.status_code == 400
     assert "默认项目" in str(exc_info.value.detail)
+
+
+# ---------------------------------------------------------------------------
+# T220-T225 · 项目 PR-A · CB-P5-15 承接 · Project 删除迁移契约补齐
+#
+# STRONG 语义澄清:project 域当前主写路径仍是 JSON 层(`data/canvases/*.json`
+# + `data/projects.json`)· `ProjectService.delete_project` 的唯一副作用是
+# 迭代 canvas JSON 文件并改写其中的 `project` 字段。任务书中的 "直接查 DB
+# 表 `canvases.project_id`" 与当前代码事实存在差异 —— canvas_workflows /
+# canvas_assets 表在数据模型里根本不存在(工作流/资产走 workflow_
+# definitions / asset_items · 与 canvas 无 FK 关联)。故本组测试将 STRONG
+# 落地到"实际持久化事实"= 文件系统 canvas JSON 内容,直接读文件断言,
+# 不信 service 返回值。这是 CB-P5-15 承接目标下最强可落地的断言强度。
+#
+# 未来路径:若 project 域走 canvases DB 主写(数据 PR-8 已就绪)· 应升级
+# 这组测试改直读 `canvases.project_legacy_id` 列;届时另 CB 登记升级。
+# ---------------------------------------------------------------------------
+
+
+def _build_project_workspace(tmp_path):
+    """构造真实文件系统 fixture · 返回 (canvas_dir, projects_ref, build_service)。
+
+    - `canvas_dir`:tmp_path / "canvases" · 真实目录,测试写 JSON 到这里
+    - `projects_ref`:list · in-memory 项目列表,ensure_default_project 归还
+      live reference(允许 service 通过 store.save_projects 回写 mutation)
+    - `build_service(default_missing=False)`:构造 ProjectService,`ensure_
+      default_project` mimic main.py 语义 · 若 default 不在 projects_ref
+      则自动 insert(与 `main.ensure_default_project` 逐字节等价)
+    """
+
+    canvas_dir = tmp_path / "canvases"
+    canvas_dir.mkdir(parents=True, exist_ok=True)
+    projects_ref: list[dict[str, Any]] = []
+
+    def build_service():
+        from app.modules.project.service import ProjectService
+
+        fake_store = MagicMock()
+
+        def _save_projects(p):
+            projects_ref.clear()
+            projects_ref.extend(p)
+
+        fake_store.save_projects = _save_projects
+
+        def _ensure_default():
+            # mimic main.ensure_default_project 逐字节:default 不存在时插入到头部
+            if not any(p.get("id") == "default" for p in projects_ref):
+                projects_ref.insert(0, {
+                    "id": "default", "name": "默认项目", "order": 0,
+                    "created_at": 1000, "updated_at": 1000,
+                })
+                fake_store.save_projects(list(projects_ref))
+            return projects_ref
+
+        return ProjectService(
+            store=fake_store,
+            list_projects=lambda: list(projects_ref),
+            new_project=lambda name: {"id": "new", "name": name},
+            project_record=lambda p: p,
+            ensure_default_project=_ensure_default,
+            canvas_lock=MagicMock(
+                __enter__=lambda s: None, __exit__=lambda *a: None,
+            ),
+            canvas_dir=str(canvas_dir),
+            default_project_id="default",
+            now_ms=lambda: 2000,
+        )
+
+    return canvas_dir, projects_ref, build_service
+
+
+def _write_canvas_json(canvas_dir, canvas_id: str, project_id: str, **extra) -> None:
+    """写一个 canvas JSON 文件到 canvas_dir · extra 字段并入(用于 T222)."""
+    import json
+
+    payload = {
+        "id": canvas_id,
+        "title": extra.get("title", canvas_id),
+        "kind": "classic",
+        "project": project_id,
+        "updated_at": 1000,
+    }
+    for k, v in extra.items():
+        payload[k] = v
+    path = canvas_dir / f"{canvas_id}.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _read_canvas_json(canvas_dir, canvas_id: str) -> dict[str, Any]:
+    """直读 canvas JSON · 不信 service 返回值 · STRONG 断言基础."""
+    import json
+
+    path = canvas_dir / f"{canvas_id}.json"
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def test_t220_delete_project_migrates_canvases_to_default(tmp_path) -> None:
+    """T220 · 删除非 default project · 其下画布 `project` 字段迁移到 default。
+
+    STRONG:直接读 canvas JSON 文件 · 断言 `project == "default"`(不信
+    service 返回的 `moved` 计数)。
+    """
+
+    from app.modules.project.commands import ProjectDeleteCommand
+
+    canvas_dir, projects_ref, build_service = _build_project_workspace(tmp_path)
+    projects_ref[:] = [
+        {"id": "default", "name": "默认项目", "order": 0, "created_at": 1000, "updated_at": 1000},
+        {"id": "A", "name": "项目A", "order": 1, "created_at": 1000, "updated_at": 1000},
+    ]
+    _write_canvas_json(canvas_dir, "c1", "A")
+    _write_canvas_json(canvas_dir, "c2", "A")
+
+    service = build_service()
+    result = service.delete_project(ProjectDeleteCommand(project_id="A"))
+
+    # 事实层 STRONG 断言:直接读文件 · 不信 service 返回
+    assert _read_canvas_json(canvas_dir, "c1")["project"] == "default"
+    assert _read_canvas_json(canvas_dir, "c2")["project"] == "default"
+    # projects_ref 内 A 已剔除 · default 保留
+    assert not any(p.get("id") == "A" for p in projects_ref)
+    assert any(p.get("id") == "default" for p in projects_ref)
+    # service 返回 shape 契约辅助断言
+    assert result == {"ok": True, "moved": 2}
+
+
+def test_t221_delete_project_when_default_missing_creates_default(tmp_path) -> None:
+    """T221 · default project 缺失时删除非 default · 应先建 default · 再迁移。
+
+    STRONG:直接读 canvas JSON · 断言 `project == "default"` + projects_ref
+    最终包含 default 记录(由 ensure_default_project 兜底创建)。
+    """
+
+    from app.modules.project.commands import ProjectDeleteCommand
+
+    canvas_dir, projects_ref, build_service = _build_project_workspace(tmp_path)
+    # default 缺失场景:只有 A · 没有 default
+    projects_ref[:] = [
+        {"id": "A", "name": "项目A", "order": 1, "created_at": 1000, "updated_at": 1000},
+    ]
+    _write_canvas_json(canvas_dir, "c1", "A")
+
+    service = build_service()
+    result = service.delete_project(ProjectDeleteCommand(project_id="A"))
+
+    # 事实断言:default 已被 ensure_default_project 兜底创建
+    assert any(p.get("id") == "default" for p in projects_ref), (
+        "default project 应由 ensure_default_project 兜底创建"
+    )
+    # 事实断言:c1 已迁移到 default
+    assert _read_canvas_json(canvas_dir, "c1")["project"] == "default"
+    # A 已剔除
+    assert not any(p.get("id") == "A" for p in projects_ref)
+    assert result["ok"] is True
+    assert result["moved"] == 1
+
+
+def test_t222_delete_project_preserves_canvas_workflows_and_assets(tmp_path) -> None:
+    """T222 · 删除 project 迁移 canvas 时 · workflows / assets / nodes 字段
+    应逐字节保留(负契约:迁移只改 `project` 字段)。
+
+    背景澄清:canvas_workflows / canvas_assets 独立 DB 表在当前数据模型不
+    存在(workflow_definitions / asset_items 与 canvas 无 FK)· canvas 侧
+    的工作流/资产以内嵌 JSON 字段形式存在于 canvas 文件里。STRONG 断言:
+    迁移前后 workflows / assets / nodes / connections 字段逐字节保留 · 只
+    有 `project` 字段被改。
+    """
+
+    from app.modules.project.commands import ProjectDeleteCommand
+
+    canvas_dir, projects_ref, build_service = _build_project_workspace(tmp_path)
+    projects_ref[:] = [
+        {"id": "default", "name": "默认项目", "order": 0, "created_at": 1000, "updated_at": 1000},
+        {"id": "A", "name": "项目A", "order": 1, "created_at": 1000, "updated_at": 1000},
+    ]
+    embedded_workflows = [
+        {"id": "wf1", "name": "WF 1", "graph": {"nodes": [1, 2], "edges": [[1, 2]]}},
+        {"id": "wf2", "name": "WF 2", "graph": {}},
+    ]
+    embedded_assets = [
+        {"id": "asset1", "url": "/local/a.png", "sha": "aaa"},
+        {"id": "asset2", "url": "/local/b.mp4", "sha": "bbb"},
+        {"id": "asset3", "url": "/local/c.wav", "sha": "ccc"},
+    ]
+    canvas_nodes = [
+        {"id": "n1", "type": "image", "asset_ref": "asset1"},
+        {"id": "n2", "type": "text", "content": "hello"},
+    ]
+    canvas_connections = [{"from": "n1", "to": "n2"}]
+
+    _write_canvas_json(
+        canvas_dir, "c1", "A",
+        workflows=embedded_workflows,
+        assets=embedded_assets,
+        nodes=canvas_nodes,
+        connections=canvas_connections,
+    )
+
+    service = build_service()
+    service.delete_project(ProjectDeleteCommand(project_id="A"))
+
+    # 事实断言:project 迁移
+    data = _read_canvas_json(canvas_dir, "c1")
+    assert data["project"] == "default"
+    # STRONG 负契约:workflows / assets / nodes / connections 字段逐字节保留
+    assert data["workflows"] == embedded_workflows, (
+        "迁移不允许丢/改 canvas 内嵌 workflows 字段"
+    )
+    assert data["assets"] == embedded_assets, (
+        "迁移不允许丢/改 canvas 内嵌 assets 字段"
+    )
+    assert data["nodes"] == canvas_nodes, (
+        "迁移不允许丢/改 canvas nodes 字段"
+    )
+    assert data["connections"] == canvas_connections, (
+        "迁移不允许丢/改 canvas connections 字段"
+    )
+
+
+def test_t223_delete_default_project_returns_400_and_does_not_touch_others(
+    tmp_path,
+) -> None:
+    """T223 · T108 姊妹强化 · delete_project('default') 抛 400 且不动其他 project。
+
+    姊妹强化点:除了 400 语义(T108 已覆盖)· 断言其他 project + 其 canvas
+    在异常路径下**未被触碰**(负副作用契约)。
+    """
+
+    from app.modules.project.commands import ProjectDeleteCommand
+
+    canvas_dir, projects_ref, build_service = _build_project_workspace(tmp_path)
+    projects_ref[:] = [
+        {"id": "default", "name": "默认项目", "order": 0, "created_at": 1000, "updated_at": 1000},
+        {"id": "A", "name": "项目A", "order": 1, "created_at": 1000, "updated_at": 1000},
+    ]
+    _write_canvas_json(canvas_dir, "c1", "A")
+
+    service = build_service()
+    with pytest.raises(HTTPException) as exc_info:
+        service.delete_project(ProjectDeleteCommand(project_id="default"))
+
+    # T108 姊妹:400 语义保留
+    assert exc_info.value.status_code == 400
+    assert "默认项目" in str(exc_info.value.detail)
+    # 负副作用:A 未被剔除 · c1 未被改动
+    assert any(p.get("id") == "A" for p in projects_ref)
+    assert _read_canvas_json(canvas_dir, "c1")["project"] == "A", (
+        "delete_default 抛 400 应立即返回 · 不许动其他 project 下的 canvas"
+    )
+
+
+def test_t224_delete_empty_project_no_canvases(tmp_path) -> None:
+    """T224 · 删除无 canvas 的空 project · 成功 · default 不受影响。
+
+    STRONG:project A 无任何 canvas 文件 · delete → moved=0 · projects_ref
+    去掉 A · default project 记录逐字节保留(未被误改)。
+    """
+
+    from app.modules.project.commands import ProjectDeleteCommand
+
+    canvas_dir, projects_ref, build_service = _build_project_workspace(tmp_path)
+    default_snapshot = {
+        "id": "default", "name": "默认项目", "order": 0,
+        "created_at": 1000, "updated_at": 1000,
+    }
+    projects_ref[:] = [
+        dict(default_snapshot),
+        {"id": "A", "name": "项目A", "order": 1, "created_at": 1000, "updated_at": 1000},
+    ]
+    # canvas_dir 存在 · 但里面没有任何属于 A 的 canvas(甚至完全空)
+
+    service = build_service()
+    result = service.delete_project(ProjectDeleteCommand(project_id="A"))
+
+    assert result == {"ok": True, "moved": 0}
+    assert not any(p.get("id") == "A" for p in projects_ref)
+    default_after = next(p for p in projects_ref if p.get("id") == "default")
+    assert default_after == default_snapshot, (
+        "empty project delete 不许触碰 default project 记录"
+    )
+
+
+# T225(可选强化 · test_t108g_delete_project_concurrent_canvas_write)按任务书
+# §决策边界"若 T225 并发场景实现复杂度过高 · 允许延后"条款延后:
+# - 现服务层用 threading.Lock 单进程锁 · pytest 内多线程真起 canvas PUT
+#   走 CanvasService.update_canvas · 涉及 broadcast callback / DB writer / json
+#   写盘多重外部依赖 fixture 组装 · 复杂度显著高于当前 PR 收益(该边界
+#   在现有单锁语义下"要么迁移完 PUT 落 default · 要么 PUT 等锁"是决定
+#   性行为)。延后归后续 project 域并发契约 PR · 登记为遗留项。
+
 
 
 # ---------------------------------------------------------------------------
