@@ -303,8 +303,8 @@ def test_t398_task_module_store_history_view_sort_and_limit() -> None:
     到 limit(legacy `get_history_api` sort_key 语义)。
     """
 
-    from app.modules.task import store as task_store_mod
-    from app.modules.task.store import TaskModuleStore
+    from app.adapters.task.in_memory import InMemoryTaskStore
+    from app.adapters.task import in_memory as task_adapter_mod
 
     fake_records = [
         {"timestamp": 100.0, "images": ["a"]},
@@ -312,7 +312,7 @@ def test_t398_task_module_store_history_view_sort_and_limit() -> None:
         {"timestamp": 200.0, "images": ["b"]},
     ]
 
-    orig_facade = task_store_mod._history_store_facade
+    orig_facade = task_adapter_mod._history_store_facade
     try:
         # 短路 load_history 返回 fixture
         class _FacadeStub:
@@ -320,14 +320,14 @@ def test_t398_task_module_store_history_view_sort_and_limit() -> None:
             def load_history() -> list[dict]:
                 return list(fake_records)
 
-        task_store_mod._history_store_facade = _FacadeStub  # type: ignore[assignment]
-        store = TaskModuleStore()
+        task_adapter_mod._history_store_facade = _FacadeStub  # type: ignore[assignment]
+        store = InMemoryTaskStore()
         result = store.history_view(limit=2)
         assert len(result) == 2
         assert result[0]["timestamp"] == 300.0
         assert result[1]["timestamp"] == 200.0
     finally:
-        task_store_mod._history_store_facade = orig_facade
+        task_adapter_mod._history_store_facade = orig_facade
 
 
 # ---------------------------------------------------------------------------

@@ -101,6 +101,10 @@ from app.modules.asset.store import AssetLibraryModuleStore, PromptLibraryModule
 # --- PR-BE-10 file domain + storage_files router extraction (Wave 3-N.7 Batch 2 主线 A) -----
 from app.api.routers.storage_files import create_router as create_storage_files_router  # noqa: E402
 from app.modules.file.service import FileModuleFacade  # noqa: E402
+# --- PR-BE-11 adapter consolidation + 23 route extraction (Wave 3-N.7 Batch 3 主线 A) -----
+from app.api.routers.update import create_router as create_update_router  # noqa: E402
+from app.api.routers.conversations import create_router as create_conversations_router  # noqa: E402
+from app.api.routers.angle import create_router as create_angle_router  # noqa: E402
 # ---------------------------------------------------------------------------
 import json
 import uuid
@@ -2250,7 +2254,6 @@ def update_connectivity_targets() -> List[Tuple[str, str, str, bool]]:
         ("Google 连通性", "https://www.google.com/generate_204", "reference", False),
     ]
 
-@app.get("/api/update-connectivity/probe")
 def update_connectivity_probe(name: str):
     """实时检测：只探测单个目标，前端可并发调用并逐条刷新。"""
     for t_name, url, source, required in update_connectivity_targets():
@@ -2261,7 +2264,6 @@ def update_connectivity_probe(name: str):
             return item
     raise HTTPException(status_code=404, detail="未知的连通性检测目标")
 
-@app.get("/api/update-connectivity")
 def update_connectivity():
     targets = update_connectivity_targets()
     results = []
@@ -2324,7 +2326,6 @@ def version_gt(a: str, b: str) -> bool:
     tb += [0] * (n - len(tb))
     return ta > tb
 
-@app.get("/api/check-update")
 def check_update():
     """服务端检测 GitHub 与 ModelScope 两个源的远端版本（走系统代理，避免浏览器跨域/被墙）。"""
     current = current_app_version()
@@ -2638,7 +2639,6 @@ def stage_update_from_source(source: str, staging_root: str) -> Tuple[List[str],
     download_github_update_files(files, staging_root)
     return root_files, static_files, files
 
-@app.post("/api/update-from-github")
 def update_from_github(req: UpdateRequest = UpdateRequest()):
     if not UPDATE_LOCK.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="正在更新中，请稍后再试")
@@ -2801,7 +2801,6 @@ def list_update_backups() -> List[Dict[str, Any]]:
         })
     return items
 
-@app.get("/api/update-backups")
 def get_update_backups():
     return {"backups": list_update_backups()}
 
@@ -2810,7 +2809,6 @@ class RollbackRequest(BaseModel):
     auto_restart: bool = False
     restart_delay: int = 3
 
-@app.post("/api/update-rollback")
 def rollback_update(req: RollbackRequest):
     if not req.name:
         raise HTTPException(status_code=400, detail="缺少备份名称")
@@ -2877,6 +2875,23 @@ def rollback_update(req: RollbackRequest):
         raise HTTPException(status_code=500, detail=f"回滚失败：{exc}") from exc
     finally:
         UPDATE_LOCK.release()
+
+# --- PR-BE-11 update / connectivity router assembly ---------------------------
+# 上方 6 个 def 函数体保留为 re-export 兼容层（`@app.` 装饰器已剥离）；
+# 下方 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/update.py`。
+app.include_router(
+    create_update_router(
+        update_connectivity_probe_cb=update_connectivity_probe,
+        update_connectivity_cb=update_connectivity,
+        check_update_cb=check_update,
+        update_from_github_cb=update_from_github,
+        get_update_backups_cb=get_update_backups,
+        rollback_update_cb=rollback_update,
+        update_request_dto=UpdateRequest,
+        rollback_request_dto=RollbackRequest,
+    )
+)
 
 class GenerateRequest(BaseModel):
     prompt: str = ""
@@ -11754,7 +11769,6 @@ async def upload_ai_base64(payload: Base64UploadRequest):
         )
     return {"files": [{"url": local_url, "name": payload.name or filename, "kind": kind}]}
 
-@app.post("/api/comfyui/upload-base64")
 async def upload_comfyui_base64(payload: Base64UploadRequest):
     """base64 方式把图片传到 ComfyUI 各后端的 input 目录，返回 comfy 用文件名（供 UXP 做 ComfyUI 图生图）。"""
     raw = (payload.data or "").strip()
@@ -13089,7 +13103,6 @@ async def save_providers(payload: List[ApiProviderPayload]):
 
 # --- ModelScope Token (从 env 读取，不再支持通过 UI 修改) ---
 
-@app.get("/api/config/token")
 async def get_global_token():
     # 优先读 env，回退到 global_config.json（兼容旧数据）
     saved_token = modelscope_api_key()
@@ -15235,22 +15248,18 @@ async def canvas_llm(payload: CanvasLLMRequest):
 
 # --- 对话管理 ---
 
-@app.get("/api/conversations")
 async def conversations(request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     return {"user_id": user_id, "conversations": list_conversations(user_id)}
 
-@app.post("/api/conversations")
 async def create_conversation(payload: ConversationCreateRequest, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     return {"conversation": new_conversation(user_id, payload.title)}
 
-@app.get("/api/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     return {"conversation": conversation_store.load_conversation(user_id, conversation_id)}
 
-@app.delete("/api/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     path = conversation_path(user_id, conversation_id)
@@ -16676,7 +16685,6 @@ app.include_router(
 
 # --- GPT 对话 ---
 
-@app.post("/api/chat")
 async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     conversation = (
@@ -16806,7 +16814,6 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
     conversation_store.save_conversation(user_id, conversation)
     return {"conversation": conversation, "message": assistant_message}
 
-@app.post("/api/chat/agent")
 async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
     user_id = safe_user_id(x_user_id, request)
     conversation = (
@@ -16892,7 +16899,6 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
     conversation_store.save_conversation(user_id, conversation)
     return {"conversation": conversation, "message": assistant_message, "agent": {"action": action, "decision": decision}}
 
-@app.post("/api/chat/stream")
 async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
     if payload.mode == "image":
         raise HTTPException(status_code=400, detail="图片模式请使用 /api/chat")
@@ -17039,6 +17045,24 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         yield sse_event({"type": "done", "conversation": conversation, "message": assistant_message})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+# --- PR-BE-11 conversations / chat router assembly ---------------------------
+# 上方 7 个 async def 函数体保留为 re-export 兼容层（`@app.` 装饰器已剥离）；
+# 下方 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/conversations.py`。
+app.include_router(
+    create_conversations_router(
+        conversations_cb=conversations,
+        create_conversation_cb=create_conversation,
+        get_conversation_cb=get_conversation,
+        delete_conversation_cb=delete_conversation,
+        chat_cb=chat,
+        chat_agent_cb=chat_agent,
+        chat_stream_cb=chat_stream,
+        conversation_create_dto=ConversationCreateRequest,
+        chat_request_dto=ChatRequest,
+    )
+)
 
 # --- 历史记录 ---
 
@@ -17200,7 +17224,6 @@ app.include_router(
 
 # --- ModelScope 角度控制 ---
 
-@app.post("/api/angle/poll_status")
 async def poll_angle_cloud(req: CloudPollRequest):
     api_root = modelscope_image_api_root()
     clean_token = modelscope_api_key(req.api_key)
@@ -17283,7 +17306,6 @@ async def poll_angle_cloud(req: CloudPollRequest):
         print(f"Angle polling error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.post("/api/angle/generate")
 async def generate_angle_cloud(req: CloudGenRequest):
     api_root = modelscope_image_api_root()
     clean_token = modelscope_api_key(req.api_key)
@@ -17386,6 +17408,19 @@ async def generate_angle_cloud(req: CloudGenRequest):
     except Exception as e:
         print(f"Angle generation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+
+# --- PR-BE-11 angle router assembly -------------------------------------------
+# 上方 2 个 async def 函数体保留为 re-export 兼容层（`@app.` 装饰器已剥离）；
+# 下方 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/angle.py`。
+app.include_router(
+    create_angle_router(
+        poll_angle_cloud_cb=poll_angle_cloud,
+        generate_angle_cloud_cb=generate_angle_cloud,
+        cloud_poll_dto=CloudPollRequest,
+        cloud_gen_dto=CloudGenRequest,
+    )
+)
 
 # --- ModelScope Z-Image 云端生图 ---
 
@@ -18291,9 +18326,6 @@ class ComfyInstancesPayload(BaseModel):
 def get_comfyui_instances():
     return {"instances": COMFYUI_INSTANCES}
 
-app.include_router(create_comfyui_router(get_comfyui_instances))
-
-@app.put("/api/comfyui/instances")
 def save_comfyui_instances(payload: ComfyInstancesPayload):
     # 宽容校验：去前后空白、去 http(s):// 前缀、去尾部斜杠；要求形如 host:port
     cleaned = []
@@ -18329,6 +18361,20 @@ def save_comfyui_instances(payload: ComfyInstancesPayload):
     BACKEND_LOCAL_LOAD = new_load
     return {"instances": COMFYUI_INSTANCES}
 
+# --- PR-BE-11 comfyui router assembly (extended) ------------------------------
+# 上方 2 个 def / async def 函数体保留为 re-export 兼容层（`@app.` 装饰器已剥
+# 离）；下方 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/comfyui.py`。
+app.include_router(
+    create_comfyui_router(
+        get_comfyui_instances,
+        upload_comfyui_base64_cb=upload_comfyui_base64,
+        save_comfyui_instances_cb=save_comfyui_instances,
+        base64_upload_dto=Base64UploadRequest,
+        comfy_instances_dto=ComfyInstancesPayload,
+    )
+)
+
 def list_workflows():
     if not os.path.isdir(WORKFLOW_DIR):
         return {"workflows": []}
@@ -18359,9 +18405,6 @@ def list_workflows():
     items.sort(key=lambda item: (0 if item["name"].startswith(f"{CUSTOM_WORKFLOW_FOLDER}/") else 1, item["title"]))
     return {"workflows": items}
 
-app.include_router(create_workflows_router(list_workflows))
-
-@app.get("/api/workflows/{name:path}")
 def get_workflow(name: str):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
@@ -18380,7 +18423,6 @@ def get_workflow(name: str):
             pass
     return {"name": name, "workflow": workflow, "config": cfg, "builtin": is_builtin_workflow(name)}
 
-@app.post("/api/workflows")
 def upload_workflow(payload: WorkflowUploadRequest):
     name = os.path.basename(payload.name.strip())
     if not name.endswith(".json"):
@@ -18401,7 +18443,6 @@ def upload_workflow(payload: WorkflowUploadRequest):
         json.dump(payload.workflow, f, ensure_ascii=False, indent=2)
     return {"name": stored_name}
 
-@app.put("/api/workflows/{name:path}/config")
 def save_workflow_config(name: str, payload: WorkflowConfig):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
@@ -18413,7 +18454,6 @@ def save_workflow_config(name: str, payload: WorkflowConfig):
         json.dump(payload.dict(), f, ensure_ascii=False, indent=2)
     return {"config": payload.dict()}
 
-@app.delete("/api/workflows/{name:path}")
 def delete_workflow(name: str):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
@@ -18428,7 +18468,6 @@ def delete_workflow(name: str):
         os.remove(cfg_path)
     return {"ok": True}
 
-@app.post("/api/workflows/{name:path}/run")
 def run_workflow(name: str, payload: WorkflowRunRequest):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
@@ -18469,6 +18508,25 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
         client_id=payload.client_id or str(uuid.uuid4()),
     )
     return generate(req)
+
+# --- PR-BE-11 workflows router assembly (extended) ----------------------------
+# 上方 6 个 def / async def 函数体保留为 re-export 兼容层（`@app.` 装饰器已剥
+# 离）；下方 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/workflows.py`。
+app.include_router(
+    create_workflows_router(
+        list_workflows,
+        get_workflow_cb=get_workflow,
+        upload_workflow_cb=upload_workflow,
+        save_workflow_config_cb=save_workflow_config,
+        delete_workflow_cb=delete_workflow,
+        run_workflow_cb=run_workflow,
+        get_global_token_cb=get_global_token,
+        workflow_upload_dto=WorkflowUploadRequest,
+        workflow_config_dto=WorkflowConfig,
+        workflow_run_dto=WorkflowRunRequest,
+    )
+)
 
 if __name__ == "__main__":
     # --- 数据模型治理 PR-1：`python main.py migrate [head|<rev>]` CLI ------

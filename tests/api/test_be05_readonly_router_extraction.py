@@ -82,6 +82,7 @@ def test_order_sensitive_neighbors_match_pre_extraction_order() -> None:
         (("/api/history", "GET"), ("/api/queue_status", "GET")),
         (
             ("/api/comfyui/instances", "GET"),
+            ("/api/comfyui/upload-base64", "POST"),
             ("/api/comfyui/instances", "PUT"),
             ("/api/workflows", "GET"),
             ("/api/workflows/{name:path}", "GET"),
@@ -235,17 +236,16 @@ def test_write_provider_runninghub_cli_and_websocket_routes_remain_in_main() -> 
 
     PR-BE-08(Wave 3-N.6 Batch 2 主线 A)已把 `/api/providers` / `/api/
     runninghub/*` / `/api/jimeng/*` 装饰器迁到独立 router 文件(函数体保
-    留在 main.py 作 re-export 兼容层)。故此处只断言:
-    - `/api/workflows` POST / PUT / DELETE 仍在 main.py(未抽出)
+    留在 main.py 作 re-export 兼容层)。PR-BE-11 进一步把 `/api/comfyui/
+    instances` PUT / `/api/workflows` POST / PUT / DELETE 迁出。
+
+    故此处只断言:
     - `/ws/stats` websocket 仍在 main.py
     - 6 条 PR-BE-05 抽出的只读路由**不再**保留 `@app.get(...)` 装饰器。
     """
 
     source = (ROOT / "main.py").read_text(encoding="utf-8")
     required_main_decorators = (
-        '@app.put("/api/comfyui/instances")',
-        '@app.get("/api/workflows/{name:path}")',
-        '@app.post("/api/workflows")',
         '@app.websocket("/ws/stats")',
     )
     for decorator in required_main_decorators:
