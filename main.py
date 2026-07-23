@@ -92,6 +92,12 @@ from app.api.routers.canvas_tasks import create_router as create_canvas_tasks_ro
 from app.modules.provider.service import ProviderConfigService  # noqa: E402
 from app.modules.provider.store import ProviderStore  # noqa: E402
 from app.modules.provider.registry import ProviderRegistry, ProviderResolution  # noqa: E402,F401
+# --- PR-BE-07 asset domain + 3 router group extraction (Wave 3-N.7 Batch 1 主线 A) -----
+from app.api.routers.local_assets import create_router as create_local_assets_router  # noqa: E402
+from app.api.routers.asset_library import create_router as create_asset_library_router  # noqa: E402
+from app.api.routers.prompt_libraries import create_router as create_prompt_libraries_router  # noqa: E402
+from app.modules.asset.service import AssetModuleFacade  # noqa: E402
+from app.modules.asset.store import AssetLibraryModuleStore, PromptLibraryModuleStore  # noqa: E402
 # ---------------------------------------------------------------------------
 import json
 import uuid
@@ -12059,7 +12065,6 @@ def migrate_mislabeled_image_extensions():
     if fixed:
         print(f"纠正图片扩展名(内容与后缀不符): {fixed} 个")
 
-@app.post("/api/local-assets/upload")
 async def upload_local_assets(files: List[UploadFile] = File(...), folder: str = Form("")):
     uploaded = []
     folder_rel, folder_abs = _local_upload_safe_folder(folder)
@@ -12097,7 +12102,6 @@ async def upload_local_assets(files: List[UploadFile] = File(...), folder: str =
         uploaded.append(_local_upload_item(rel_name))
     return {"files": uploaded}
 
-@app.post("/api/local-assets/import-urls")
 async def import_local_assets_from_urls(payload: LocalAssetUrlImportRequest):
     uploaded = []
     results = []
@@ -12175,12 +12179,10 @@ async def import_local_assets_from_urls(payload: LocalAssetUrlImportRequest):
             results.append(result)
     return {"ok": True, "count": len(uploaded), "files": uploaded, "items": results}
 
-@app.get("/api/local-assets")
 async def list_local_assets():
     tree, items = _local_upload_tree_and_items()
     return {"items": items, "tree": tree}
 
-@app.post("/api/local-assets/folders")
 async def create_local_asset_folder(payload: LocalAssetFolderRequest, request: Request):
     ensure_same_origin_request(request)
     parent_rel, parent_abs = _local_upload_safe_folder(payload.parent)
@@ -12195,7 +12197,6 @@ async def create_local_asset_folder(payload: LocalAssetFolderRequest, request: R
     tree, items = _local_upload_tree_and_items()
     return {"ok": True, "folder": {"path": rel, "name": name}, "tree": tree, "items": items}
 
-@app.patch("/api/local-assets/folders")
 async def rename_local_asset_folder(payload: LocalAssetFolderRequest, request: Request):
     ensure_same_origin_request(request)
     rel, abs_path = _local_upload_safe_folder(payload.path)
@@ -12213,7 +12214,6 @@ async def rename_local_asset_folder(payload: LocalAssetFolderRequest, request: R
     tree, items = _local_upload_tree_and_items()
     return {"ok": True, "folder": {"path": new_rel, "name": name}, "tree": tree, "items": items}
 
-@app.patch("/api/local-assets/items")
 async def rename_local_asset_item(payload: LocalAssetRenameRequest, request: Request):
     ensure_same_origin_request(request)
     rel, abs_path = _local_upload_safe_path(payload.path)
@@ -12244,7 +12244,6 @@ async def rename_local_asset_item(payload: LocalAssetRenameRequest, request: Req
     tree, items = _local_upload_tree_and_items()
     return {"ok": True, "item": _local_upload_item(new_rel), "old_path": rel, "tree": tree, "items": items}
 
-@app.post("/api/local-assets/delete")
 async def delete_local_assets(payload: dict, request: Request):
     ensure_same_origin_request(request)
     names = payload.get("names") if isinstance(payload, dict) else None
@@ -12270,7 +12269,6 @@ async def delete_local_assets(payload: dict, request: Request):
                 pass
     return {"deleted": deleted}
 
-@app.post("/api/local-assets/move")
 async def move_local_assets(payload: dict, request: Request):
     """把选中的本地素材移动到目标文件夹（folder 为空表示根目录）；连同 .txt / .classification.json 兄弟文件一起搬。"""
     ensure_same_origin_request(request)
@@ -12315,7 +12313,6 @@ async def move_local_assets(payload: dict, request: Request):
     tree, items = _local_upload_tree_and_items()
     return {"ok": True, "moved": moved, "items": items, "tree": tree}
 
-@app.post("/api/local-assets/caption")
 async def caption_local_assets(payload: LocalAssetCaptionRequest):
     prompt = (payload.prompt or "描述图片").strip() or "描述图片"
     items = []
@@ -12354,7 +12351,6 @@ async def caption_local_assets(payload: LocalAssetCaptionRequest):
         items.append(item)
     return {"ok": True, "count": ok_count, "items": items}
 
-@app.post("/api/local-assets/classify")
 async def classify_local_assets(payload: LocalAssetClassifyRequest):
     items = []
     ok_count = 0
@@ -12390,7 +12386,6 @@ async def classify_local_assets(payload: LocalAssetClassifyRequest):
         items.append(item)
     return {"ok": True, "count": ok_count, "items": items}
 
-@app.patch("/api/local-assets/caption")
 async def save_local_asset_caption(payload: LocalAssetCaptionSaveRequest):
     filename, path = _local_upload_safe_path(payload.name)
     if not os.path.isfile(path):
@@ -15559,7 +15554,6 @@ async def export_canvas_workflow_to_library(payload: CanvasWorkflowExportRequest
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "item": item}
 
-@app.post("/api/asset-library/workflows/upload")
 async def upload_asset_library_workflows(
     files: List[UploadFile] = File(...),
     library_id: str = Form(""),
@@ -15753,15 +15747,12 @@ async def export_smart_canvas_group(payload: SmartCanvasGroupExportRequest):
         raise HTTPException(status_code=404, detail="没有可导出的内容")
     return {"ok": True, "folder": target_dir, "count": count}
 
-@app.get("/api/asset-library")
 async def get_asset_library():
     return {"library": asset_library_store.load_asset_library()}
 
-@app.get("/api/prompt-libraries")
 async def get_prompt_libraries():
     return {"library": public_prompt_libraries()}
 
-@app.post("/api/prompt-libraries")
 async def create_prompt_library(payload: PromptLibraryRequest):
     data = prompt_library_store.load_prompt_libraries()
     library = {
@@ -15777,7 +15768,6 @@ async def create_prompt_library(payload: PromptLibraryRequest):
     new_lib = next((lib for lib in data.get("libraries", []) if lib.get("id") == library["id"]), library)
     return {"library": public_prompt_libraries(data), "prompt_library": new_lib}
 
-@app.patch("/api/prompt-libraries/{library_id}")
 async def rename_prompt_library(library_id: str, payload: PromptLibraryRequest):
     data = prompt_library_store.load_prompt_libraries()
     library = find_prompt_library(data, library_id)
@@ -15787,7 +15777,6 @@ async def rename_prompt_library(library_id: str, payload: PromptLibraryRequest):
     data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data), "prompt_library": library}
 
-@app.delete("/api/prompt-libraries/{library_id}")
 async def delete_prompt_library(library_id: str):
     if library_id == "system":
         raise HTTPException(status_code=400, detail="系统提示词库不能删除，可以删除其中的提示词")
@@ -15802,7 +15791,6 @@ async def delete_prompt_library(library_id: str):
     data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data)}
 
-@app.post("/api/prompt-libraries/items")
 async def add_prompt_library_item(payload: PromptLibraryItemRequest):
     data = prompt_library_store.load_prompt_libraries()
     library = find_prompt_library(data, payload.library_id)
@@ -15825,7 +15813,6 @@ async def add_prompt_library_item(payload: PromptLibraryItemRequest):
     data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data), "item": item}
 
-@app.patch("/api/prompt-libraries/items/{item_id}")
 async def update_prompt_library_item(item_id: str, payload: PromptLibraryItemRequest):
     data = prompt_library_store.load_prompt_libraries()
     for library in data.get("libraries", []) or []:
@@ -15847,7 +15834,6 @@ async def update_prompt_library_item(item_id: str, payload: PromptLibraryItemReq
                 return {"library": public_prompt_libraries(data), "item": next_item}
     raise HTTPException(status_code=404, detail="提示词不存在")
 
-@app.delete("/api/prompt-libraries/items/{item_id}")
 async def delete_prompt_library_item(item_id: str):
     data = prompt_library_store.load_prompt_libraries()
     removed = None
@@ -15864,7 +15850,6 @@ async def delete_prompt_library_item(item_id: str):
     data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data), "removed": 1}
 
-@app.post("/api/prompt-libraries/items/delete")
 async def batch_delete_prompt_library_items(payload: PromptLibraryBatchDeleteRequest):
     ids = {str(item) for item in (payload.ids or []) if str(item)}
     if not ids:
@@ -15884,7 +15869,6 @@ async def batch_delete_prompt_library_items(payload: PromptLibraryBatchDeleteReq
 
 PROMPT_BUILTIN_CATEGORY_IDS = {"view", "storyboard", "character", "product", "lighting", "custom"}
 
-@app.post("/api/prompt-libraries/categories")
 async def add_prompt_library_category(payload: PromptLibraryCategoryRequest):
     data = prompt_library_store.load_prompt_libraries()
     library = find_prompt_library(data, payload.library_id) or find_prompt_library(data, "system")
@@ -15900,7 +15884,6 @@ async def add_prompt_library_category(payload: PromptLibraryCategoryRequest):
     data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data), "category": category}
 
-@app.patch("/api/prompt-libraries/categories/{category_id}")
 async def rename_prompt_library_category(category_id: str, payload: PromptLibraryCategoryRequest):
     # 系统库（内置）分组也允许重命名：分组的 id 不变，只改显示名，
     # 这样画布与素材库管理共用同一份分组数据，重命名两端实时同步。
@@ -15919,7 +15902,6 @@ async def rename_prompt_library_category(category_id: str, payload: PromptLibrar
     data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data)}
 
-@app.delete("/api/prompt-libraries/categories/{category_id}")
 async def delete_prompt_library_category(category_id: str):
     # 系统库（内置）分组也允许删除，与素材库管理/画布保持一致。
     data = prompt_library_store.load_prompt_libraries()
@@ -15940,7 +15922,6 @@ async def delete_prompt_library_category(category_id: str):
     data = prompt_library_store.save_prompt_libraries(data)
     return {"library": public_prompt_libraries(data)}
 
-@app.post("/api/asset-library/libraries")
 async def create_asset_library(payload: AssetLibraryRequest):
     lib = asset_library_store.load_asset_library()
     library = {"id": f"lib_{uuid.uuid4().hex[:12]}", "name": sanitize_asset_name(payload.name, "资产库"), "type": "asset", "categories": []}
@@ -15951,7 +15932,6 @@ async def create_asset_library(payload: AssetLibraryRequest):
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "asset_library": library}
 
-@app.patch("/api/asset-library/libraries/{library_id}")
 async def rename_asset_library(library_id: str, payload: AssetLibraryRenameRequest):
     lib = asset_library_store.load_asset_library()
     library = find_asset_library(lib, library_id)
@@ -15961,7 +15941,6 @@ async def rename_asset_library(library_id: str, payload: AssetLibraryRenameReque
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "asset_library": library}
 
-@app.delete("/api/asset-library/libraries/{library_id}")
 async def delete_asset_library(library_id: str):
     lib = asset_library_store.load_asset_library()
     libraries = lib.get("libraries") or []
@@ -15975,7 +15954,6 @@ async def delete_asset_library(library_id: str):
     asset_library_store.save_asset_library(lib)
     return {"library": lib}
 
-@app.post("/api/asset-library/categories")
 async def create_asset_library_category(payload: AssetLibraryCategoryRequest):
     lib = asset_library_store.load_asset_library()
     library = find_asset_library(lib, payload.library_id)
@@ -15995,7 +15973,6 @@ async def create_asset_library_category(payload: AssetLibraryCategoryRequest):
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "category": category}
 
-@app.patch("/api/asset-library/categories/{category_id}")
 async def rename_asset_library_category(category_id: str, payload: AssetLibraryRenameRequest):
     lib = asset_library_store.load_asset_library()
     _, cat = find_asset_category_with_library(lib, category_id, payload.library_id)
@@ -16005,7 +15982,6 @@ async def rename_asset_library_category(category_id: str, payload: AssetLibraryR
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "category": cat}
 
-@app.delete("/api/asset-library/categories/{category_id}")
 async def delete_asset_library_category(category_id: str, library_id: str = ""):
     lib = asset_library_store.load_asset_library()
     library, cat = find_asset_category_with_library(lib, category_id, library_id)
@@ -16028,7 +16004,6 @@ async def delete_asset_library_category(category_id: str, library_id: str = ""):
     asset_library_store.save_asset_library(lib)
     return {"library": lib}
 
-@app.post("/api/asset-library/items")
 async def add_asset_library_item(payload: AssetLibraryAddRequest):
     lib = asset_library_store.load_asset_library()
     cat = find_asset_category_in_library(lib, payload.category_id, payload.library_id)
@@ -16048,7 +16023,6 @@ async def add_asset_library_item(payload: AssetLibraryAddRequest):
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "item": item}
 
-@app.post("/api/asset-library/items/batch")
 async def batch_add_asset_library_items(payload: AssetLibraryBatchAddRequest):
     added = []
     lib = asset_library_store.load_asset_library()
@@ -16236,7 +16210,6 @@ async def caption_image_with_provider(abs_path, prompt, provider_id, model, ms_m
     text = text_from_chat_response(raw).strip() if isinstance(raw, dict) else ""
     return text or "接口返回了空回复。", resolved_model
 
-@app.patch("/api/asset-library/items/{item_id}")
 async def rename_asset_library_item(item_id: str, payload: AssetLibraryRenameRequest):
     lib = asset_library_store.load_asset_library()
     for library in lib.get("libraries", []):
@@ -16258,7 +16231,6 @@ def find_asset_item_in_library(lib, item_id, library_id=""):
                     return item
     return None
 
-@app.post("/api/asset-library/items/classify")
 async def classify_asset_library_items(payload: AssetLibraryClassifyRequest):
     lib = asset_library_store.load_asset_library()
     results = []
@@ -16291,7 +16263,6 @@ async def classify_asset_library_items(payload: AssetLibraryClassifyRequest):
         asset_library_store.save_asset_library(lib)
     return {"library": lib, "count": sum(1 for item in results if item.get("ok")), "items": results}
 
-@app.post("/api/asset-library/items/{item_id}/register-avatar")
 async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterRequest):
     lib = asset_library_store.load_asset_library()
     target_item = find_asset_item_in_library(lib, item_id, payload.library_id)
@@ -16345,7 +16316,6 @@ async def register_asset_library_avatar(item_id: str, payload: AssetAvatarRegist
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "item": target_item}
 
-@app.post("/api/asset-library/items/{item_id}/avatar-status")
 async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterRequest):
     lib = asset_library_store.load_asset_library()
     target_item = find_asset_item_in_library(lib, item_id, payload.library_id)
@@ -16378,7 +16348,6 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "item": target_item}
 
-@app.delete("/api/asset-library/items/{item_id}")
 async def delete_asset_library_item(item_id: str):
     lib = asset_library_store.load_asset_library()
     removed = None
@@ -16397,7 +16366,6 @@ async def delete_asset_library_item(item_id: str):
     asset_library_store.save_asset_library(lib)
     return {"library": lib}
 
-@app.post("/api/asset-library/items/delete")
 async def batch_delete_asset_library_items(payload: AssetLibraryBatchDeleteRequest):
     ids = {str(item) for item in (payload.ids or []) if str(item)}
     if not ids:
@@ -16422,7 +16390,6 @@ async def batch_delete_asset_library_items(payload: AssetLibraryBatchDeleteReque
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "removed": removed}
 
-@app.post("/api/asset-library/items/move")
 async def batch_move_asset_library_items(payload: AssetLibraryBatchMoveRequest):
     ids = {str(item) for item in (payload.ids or []) if str(item)}
     if not ids:
@@ -16454,7 +16421,6 @@ async def batch_move_asset_library_items(payload: AssetLibraryBatchMoveRequest):
     asset_library_store.save_asset_library(lib)
     return {"library": lib, "moved": len(moved)}
 
-@app.post("/api/asset-library/items/crop")
 async def batch_crop_asset_library_items(payload: AssetLibraryBatchCropRequest):
     ids = {str(item) for item in (payload.ids or []) if str(item)}
     if not ids:
@@ -17159,6 +17125,64 @@ app.include_router(
         get_queue_status_callback=get_queue_status,
         delete_history_callback=delete_history,
         delete_history_dto=DeleteHistoryRequest,
+    )
+)
+
+# --- PR-BE-07 asset domain + 3 router group assembly (Wave 3-N.7 Batch 1 主线 A) -----
+# 上方 40 个 async def / def 函数体保留为 re-export 兼容层(`@app.` 装饰器已剥离);
+# 下方 3 个 include_router 是 FastAPI 上的实际路由绑定。设计详情见
+# `app/api/routers/{local_assets,asset_library,prompt_libraries}.py` 与
+# `app/modules/asset/`。
+app.include_router(
+    create_local_assets_router(
+        upload_local_assets_cb=upload_local_assets,
+        import_local_assets_from_urls_cb=import_local_assets_from_urls,
+        list_local_assets_cb=list_local_assets,
+        create_local_asset_folder_cb=create_local_asset_folder,
+        rename_local_asset_folder_cb=rename_local_asset_folder,
+        rename_local_asset_item_cb=rename_local_asset_item,
+        delete_local_assets_cb=delete_local_assets,
+        move_local_assets_cb=move_local_assets,
+        caption_local_assets_cb=caption_local_assets,
+        classify_local_assets_cb=classify_local_assets,
+        save_local_asset_caption_cb=save_local_asset_caption,
+    )
+)
+app.include_router(
+    create_asset_library_router(
+        upload_asset_library_workflows_cb=upload_asset_library_workflows,
+        get_asset_library_cb=get_asset_library,
+        create_asset_library_cb=create_asset_library,
+        rename_asset_library_cb=rename_asset_library,
+        delete_asset_library_cb=delete_asset_library,
+        create_asset_library_category_cb=create_asset_library_category,
+        rename_asset_library_category_cb=rename_asset_library_category,
+        delete_asset_library_category_cb=delete_asset_library_category,
+        add_asset_library_item_cb=add_asset_library_item,
+        batch_add_asset_library_items_cb=batch_add_asset_library_items,
+        rename_asset_library_item_cb=rename_asset_library_item,
+        classify_asset_library_items_cb=classify_asset_library_items,
+        register_asset_library_avatar_cb=register_asset_library_avatar,
+        check_asset_library_avatar_cb=check_asset_library_avatar,
+        delete_asset_library_item_cb=delete_asset_library_item,
+        batch_delete_asset_library_items_cb=batch_delete_asset_library_items,
+        batch_move_asset_library_items_cb=batch_move_asset_library_items,
+        batch_crop_asset_library_items_cb=batch_crop_asset_library_items,
+    )
+)
+app.include_router(
+    create_prompt_libraries_router(
+        get_prompt_libraries_cb=get_prompt_libraries,
+        create_prompt_library_cb=create_prompt_library,
+        rename_prompt_library_cb=rename_prompt_library,
+        delete_prompt_library_cb=delete_prompt_library,
+        add_prompt_library_item_cb=add_prompt_library_item,
+        update_prompt_library_item_cb=update_prompt_library_item,
+        delete_prompt_library_item_cb=delete_prompt_library_item,
+        batch_delete_prompt_library_items_cb=batch_delete_prompt_library_items,
+        add_prompt_library_category_cb=add_prompt_library_category,
+        rename_prompt_library_category_cb=rename_prompt_library_category,
+        delete_prompt_library_category_cb=delete_prompt_library_category,
     )
 )
 
