@@ -1,0 +1,12 @@
+{
+  "submit_id": "jm-4007",
+  "gen_status": "jimeng_pending",
+  "jimeng_pending": true,
+  "rate_limit_hit": true,
+  "retry_after": 30,
+  "error_message": "rate limit hit, retry after 30s",
+  "queue_info": {
+    "queue_idx": 1,
+    "queue_length": 25
+  }
+}

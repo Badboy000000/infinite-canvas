@@ -1,0 +1,18 @@
+{
+  "queue_running": [
+    {"prompt_id": "prompt-run-01"},
+    {"prompt_id": "prompt-run-02"},
+    {"prompt_id": "prompt-run-03"}
+  ],
+  "queue_pending": [
+    {"prompt_id": "prompt-pending-01"},
+    {"prompt_id": "prompt-pending-02"},
+    {"prompt_id": "prompt-pending-03"},
+    {"prompt_id": "prompt-pending-04"},
+    {"prompt_id": "prompt-pending-05"},
+    {"prompt_id": "prompt-pending-06"},
+    {"prompt_id": "prompt-pending-07"},
+    {"prompt_id": "prompt-pending-08"},
+    {"prompt_id": "prompt-pending-09"}
+  ]
+}
