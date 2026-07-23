@@ -1,0 +1,5 @@
+# Vite 构建产物
+dist/
+
+# npm 依赖
+node_modules/
