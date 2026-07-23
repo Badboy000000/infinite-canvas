@@ -126,6 +126,27 @@ from fastapi.responses import FileResponse, Response, StreamingResponse, JSONRes
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
+# --- 文件 PR-4a 安全硬门槛前置 ---------------------------------------------
+# S8 · Pillow decompression bomb 防护:限制单图像素上限,16 处 Image.open 全部
+# 自动继承。值与 app/services/files/validation.py::MAX_IMAGE_PIXELS 同源一致,
+# T193 单测会锁死两处一致。必须在其他模块首次 `from PIL import Image` 前执行。
+# GM-14 圆桌决议:手写 magic bytes + Pillow verify 分层防御,不引入新依赖。
+# 详见 [[40 实施计划/文件对象与 MinIO 治理实施计划与PR清单]] PR-4a。
+from app.services.files.validation import (  # noqa: E402
+    MAX_IMAGE_PIXELS as _PR4A_MAX_IMAGE_PIXELS,
+    MAX_SINGLE_UNPACK_BYTES as _PR4A_MAX_SINGLE_UNPACK_BYTES,
+    UploadRejected as _PR4AUploadRejected,
+    guard_to_http_status as _pr4a_http_status,
+    guard_upload_bytes as _pr4a_guard,
+)
+Image.MAX_IMAGE_PIXELS = _PR4A_MAX_IMAGE_PIXELS
+
+def _pr4a_check(data, **kw):
+    try:
+        _pr4a_guard(data, **kw)
+    except _PR4AUploadRejected as _e:
+        raise HTTPException(status_code=_pr4a_http_status(_e), detail=_e.message) from _e
+
 QUIET_ACCESS_PATHS = {
     "/api/queue_status",
     "/api/canvases",
@@ -11616,6 +11637,7 @@ async def upload_ai_base64(payload: Base64UploadRequest):
         raise HTTPException(status_code=400, detail="内容为空")
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="超过 50MB")
+    _pr4a_check(content)  # PR-4a A1 + S8 + magic bytes 分层防御
     kind, ext = _local_upload_kind_ext(payload.name or "", ct or "image/png")
     if kind is None:
         kind, ext = "image", ".png"
@@ -11944,6 +11966,7 @@ async def upload_local_assets(files: List[UploadFile] = File(...), folder: str =
         content = await file.read()
         if not content:
             continue
+        _pr4a_check(content)  # PR-4a A1 + S8 + magic bytes 分层防御
         kind, ext = _local_upload_kind_ext(file.filename, file.content_type)
         if kind is None:
             continue
@@ -12009,6 +12032,7 @@ async def import_local_assets_from_urls(payload: LocalAssetUrlImportRequest):
                     raise HTTPException(status_code=400, detail=f"不是图片或视频资源：{content_type or src_url}")
                 if not content:
                     raise HTTPException(status_code=400, detail="素材内容为空")
+                _pr4a_check(content)  # PR-4a A1 + S8 + magic bytes 分层防御
                 # entry.name 可能自带扩展名（采集器常传完整文件名），先 splitext 去掉，否则会和下面拼接的 ext 叠成 .png.png
                 if entry.name:
                     base = os.path.splitext(entry.name)[0]
@@ -15476,6 +15500,8 @@ async def upload_asset_library_workflows(
         lower = filename.lower()
         if not (lower.endswith(".json") or lower.endswith(".zip") or raw[:2] == b"PK"):
             continue
+        # PR-4a · archive_only=True 会自行按 magic 分流(JSON payload 只走 size 检查)
+        _pr4a_check(raw, archive_only=True)
         item = make_workflow_library_item_from_bytes(raw, filename, os.path.splitext(filename)[0])
         cat.setdefault("items", []).append(item)
         added.append(item)
@@ -15489,6 +15515,8 @@ async def import_canvas_workflow(file: UploadFile = File(...)):
     if not raw:
         raise HTTPException(status_code=400, detail="文件为空")
     name = str(file.filename or "").lower()
+    # PR-4a · JSON payload 只走 size · .zip / PK 走完整 zip 4 上限
+    _pr4a_check(raw, archive_only=True)
     resource_mapping = {}
     workflow = None
     try:
@@ -15509,7 +15537,28 @@ async def import_canvas_workflow(file: UploadFile = File(...)):
                     base = sanitize_export_filename(res.get("name") or os.path.basename(archive), os.path.basename(archive) or "resource.bin")
                     target = os.path.join(import_dir, f"{uuid.uuid4().hex[:8]}_{base}")
                     with zf.open(archive) as src, open(target, "wb") as dst:
-                        shutil.copyfileobj(src, dst)
+                        # 文件 PR-4a · 替换 shutil.copyfileobj 为带累计字节数的循环
+                        # 声明值(zipinfo.file_size)可被伪造 · 必须实际累计防御
+                        _pr4a_total = 0
+                        while True:
+                            _pr4a_chunk = src.read(64 * 1024)
+                            if not _pr4a_chunk:
+                                break
+                            _pr4a_total += len(_pr4a_chunk)
+                            if _pr4a_total > _PR4A_MAX_SINGLE_UNPACK_BYTES:
+                                dst.close()
+                                try:
+                                    os.unlink(target)
+                                except OSError:
+                                    pass
+                                raise HTTPException(
+                                    status_code=413,
+                                    detail=(
+                                        f"ZIP 内单文件解压超上限 "
+                                        f"{_PR4A_MAX_SINGLE_UNPACK_BYTES // (1024 * 1024)} MB"
+                                    ),
+                                )
+                            dst.write(_pr4a_chunk)
                     rel = os.path.relpath(target, ASSETS_DIR).replace("\\", "/")
                     new_url = f"/assets/{rel}"
                     await shadow_register_existing_async(target, new_url, "workflow_import", mimetypes.guess_type(target)[0] or "")
