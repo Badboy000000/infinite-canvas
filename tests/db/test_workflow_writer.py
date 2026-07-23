@@ -71,9 +71,13 @@ def _entry(wid: str, **fields) -> dict:
 def test_json_mode_default_does_not_import_workflow_writer(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    """P0 硬约束 #3：默认模式不 import `app.db.workflow_writer`。"""
+    """P0 硬约束 #3：`json` 回滚模式下不 import `app.db.workflow_writer`。
 
-    monkeypatch.delenv("WORKFLOW_DEFINITION_PRIMARY_WRITE", raising=False)
+    数据 PR-22（Wave 3-N.5 主线 B）反转默认后：默认已经是 db；本用例语义是
+    "显式 json 回滚开关"下不 import writer；因此必须 setenv，不能 delenv。
+    """
+
+    monkeypatch.setenv("WORKFLOW_DEFINITION_PRIMARY_WRITE", "json")
     sys.modules.pop("app.db.workflow_writer", None)
 
     from app.stores import workflow_store
@@ -93,7 +97,12 @@ def test_json_mode_default_does_not_import_workflow_writer(
 def test_json_mode_default_does_not_build_db_engine(
     monkeypatch, data_dir_fixture, tmp_path
 ):
-    monkeypatch.delenv("WORKFLOW_DEFINITION_PRIMARY_WRITE", raising=False)
+    """显式 `json` 回滚模式下不构造 DB engine（P0 硬约束）。
+
+    数据 PR-22 反转默认后：默认已经是 db；本用例语义是"显式 json"下不建 engine。
+    """
+
+    monkeypatch.setenv("WORKFLOW_DEFINITION_PRIMARY_WRITE", "json")
 
     from app.db import engine as db_engine
 

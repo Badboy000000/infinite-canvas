@@ -216,6 +216,8 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setenv("CANVAS_PRIMARY_WRITE", "json")
     # 数据 PR-20 反转承接：强制 json 主写路径（Project 域）。
     monkeypatch.setenv("PROJECT_PRIMARY_WRITE", "json")
+    # 数据 PR-22 反转承接：强制 json 主写路径（WorkflowDefinition 域）。
+    monkeypatch.setenv("WORKFLOW_DEFINITION_PRIMARY_WRITE", "json")
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -525,10 +527,11 @@ def client():
     避免污染仓库工作树。仅在文件是**测试期新建**（不存在于 fixture 进入前）
     时才清理，已存在的用户数据保留。
 
-    数据 PR-15 / PR-20 反转承接：本 fixture 模块作用域;走真实 main.app;
-    默认 `CANVAS_PRIMARY_WRITE=db` / `PROJECT_PRIMARY_WRITE=db` 会尝试触发
-    DB 主写(但 fixture 没有 `migrate_baseline`)。强制 env=json 保留原
-    JSON bootstrap 语义。测试结束后原样还原 env。
+    数据 PR-15 / PR-20 / PR-22 反转承接：本 fixture 模块作用域;走真实 main.app;
+    默认 `CANVAS_PRIMARY_WRITE=db` / `PROJECT_PRIMARY_WRITE=db` /
+    `WORKFLOW_DEFINITION_PRIMARY_WRITE=db` 会尝试触发 DB 主写(但 fixture 没有
+    `migrate_baseline`)。强制 env=json 保留原 JSON bootstrap 语义。测试结束后
+    原样还原 env。
     """
     from fastapi.testclient import TestClient
     import main
@@ -539,6 +542,9 @@ def client():
     # 数据 PR-20 反转承接：强制 project json 主写路径。
     _prev_project = os.environ.get("PROJECT_PRIMARY_WRITE")
     os.environ["PROJECT_PRIMARY_WRITE"] = "json"
+    # 数据 PR-22 反转承接：强制 workflow_definition json 主写路径。
+    _prev_workflow = os.environ.get("WORKFLOW_DEFINITION_PRIMARY_WRITE")
+    os.environ["WORKFLOW_DEFINITION_PRIMARY_WRITE"] = "json"
 
     to_clean = []
     for path_attr in ("PROJECTS_PATH", "PROMPT_LIBRARY_PATH"):
@@ -565,6 +571,10 @@ def client():
             os.environ.pop("PROJECT_PRIMARY_WRITE", None)
         else:
             os.environ["PROJECT_PRIMARY_WRITE"] = _prev_project
+        if _prev_workflow is None:
+            os.environ.pop("WORKFLOW_DEFINITION_PRIMARY_WRITE", None)
+        else:
+            os.environ["WORKFLOW_DEFINITION_PRIMARY_WRITE"] = _prev_workflow
 
 
 def test_e2e_get_providers(client):
