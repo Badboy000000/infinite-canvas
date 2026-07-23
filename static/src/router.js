@@ -8,6 +8,7 @@ import ComfyuiSettingsPage from './pages/ComfyuiSettingsPage.vue'
 import CanvasListPage from './pages/CanvasListPage.vue'
 import AssetManagerPage from './pages/AssetManagerPage.vue'
 import CanvasPage from './pages/CanvasPage.vue'
+import SmartCanvasPage from './pages/SmartCanvasPage.vue'
 
 export default createRouter({
   history: createWebHistory('/static/'),
@@ -21,5 +22,6 @@ export default createRouter({
     { path: '/canvas-list', component: CanvasListPage },
     { path: '/asset-manager', component: AssetManagerPage },
     { path: '/canvas', component: CanvasPage },
+    { path: '/smart-canvas', component: SmartCanvasPage },
   ]
 })
