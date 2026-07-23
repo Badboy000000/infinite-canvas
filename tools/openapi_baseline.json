@@ -2301,6 +2301,61 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "WhoamiResponse": {
+        "description": "`/api/whoami` 响应契约 (权限 PR-1 骨架层 · 5 字段固定 · 不返回额外字段)。\n\nprincipal_kind 三态字面量,与 [[决策 - 认证栈选型]] 长期字段清单对齐,但**本 PR\n仅在响应层派生**,不落入 :class:`RequestContext` dataclass(PR-0 字段冻结契约)。",
+        "properties": {
+          "principal_kind": {
+            "title": "Principal Kind",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "principal_kind",
+          "user_id",
+          "workspace_id",
+          "project_id",
+          "request_id"
+        ],
+        "title": "WhoamiResponse",
+        "type": "object"
+      },
       "WorkflowConfig": {
         "properties": {
           "fields": {
@@ -2450,13 +2505,9 @@
         "title": "WorkflowUploadRequest",
         "type": "object"
       }
-    }
+    },
+    "securitySchemes": {}
   },
-  "info": {
-    "title": "FastAPI",
-    "version": "0.1.0"
-  },
-  "openapi": "3.1.0",
   "paths": {
     "/": {
       "get": {
@@ -7672,6 +7723,28 @@
           }
         },
         "summary": "View Image"
+      }
+    },
+    "/api/whoami": {
+      "get": {
+        "description": "返回当前请求的 principal identity (权限 PR-1 骨架层 · Wave 3-N.5 Batch 4 主线 A)。\n\n骨架层不强制认证、不拒绝任何请求;`principal_kind=\"anonymous\"` 也返回结构化响应。\nprincipal_kind 派生规则见 :func:`_derive_principal_kind`;user_id 优先 `x_user_id`\nheader 原值,fallback `legacy_user_key`(cookie/query 通道);workspace_id / project_id\n透传 RequestContext(PR-2 legacy_mapper 落地前恒 None);request_id 透传 middleware\n值(X-Request-Id header 复用或 uuid4 hex)。\n\n响应体确保零明文密码/token/API key(:class:`WhoamiResponse` schema pin 强类型)。",
+        "operationId": "whoami_api_whoami_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhoamiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Whoami",
+        "tags": [
+          "identity"
+        ]
       }
     },
     "/api/workflows": {

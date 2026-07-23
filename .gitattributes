@@ -1,0 +1,5 @@
+# Agent 规则文件由 tools/sync_agent_configs.py 生成 · 目标 EOL 由 TARGETS 定义
+# `.trae/rule.md` 目标 LF · 不允许 core.autocrlf 转 CRLF(Windows 环境常见坑)
+# AGENTS.md / CLAUDE.md 目标 CRLF · 与 base.md 一致
+# 详见 [[70 开发过程跟踪/缺陷追踪/CB-P5-27]] · GM-15/GM-16 治理沉淀期发现
+.trae/rule.md text eol=lf
