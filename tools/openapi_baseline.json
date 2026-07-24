@@ -1642,6 +1642,62 @@
         "title": "LocalImageImportRequest",
         "type": "object"
       },
+      "LoginRequest": {
+        "description": "登录请求体。",
+        "properties": {
+          "password": {
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "LoginResponse": {
+        "description": "登录成功响应。",
+        "properties": {
+          "code": {
+            "default": "ok",
+            "title": "Code",
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          }
+        },
+        "title": "LoginResponse",
+        "type": "object"
+      },
+      "LogoutResponse": {
+        "description": "登出响应。",
+        "properties": {
+          "code": {
+            "default": "ok",
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "default": "已登出",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "title": "LogoutResponse",
+        "type": "object"
+      },
       "MsGenerateRequest": {
         "properties": {
           "api_key": {
@@ -2306,6 +2362,68 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WhoAmIResponse": {
+        "description": "增强版 whoami 响应（替代 main.py 内 `/api/whoami`）。\n\n当 AUTH_ENABLED=true 且 session 有效时，返回 principal 信息。\n当 AUTH_ENABLED=false 或 session 无效时，返回 anonymous 信息。",
+        "properties": {
+          "principal_kind": {
+            "default": "anonymous",
+            "description": "\"user\" | \"session\" | \"anonymous\"",
+            "title": "Principal Kind",
+            "type": "string"
+          },
+          "request_id": {
+            "default": "",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "title": "WhoAmIResponse",
         "type": "object"
       },
       "WhoamiResponse": {
@@ -3475,6 +3593,92 @@
           }
         },
         "summary": "Upload Asset Library Workflows"
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "description": "登录：验证用户名密码，设置 session Cookie。\n\n401 错误使用统一 error_code 格式，不泄露用户存在性。",
+        "operationId": "login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "description": "登出：撤销当前 session，清除 Cookie。",
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/whoami": {
+      "get": {
+        "description": "增强版 whoami。\n\nAUTH_ENABLED=true 且 session 有效时：\n- principal_kind=\"user\"\n- 返回 user_id / username / session_id\n\nAUTH_ENABLED=false 或 session 无效时：\n- principal_kind 从 ctx 派生\n- user_id 从 ctx.x_user_id 或 ctx.legacy_user_key 派生",
+        "operationId": "whoami_api_auth_whoami_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhoAmIResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Whoami",
+        "tags": [
+          "auth"
+        ]
       }
     },
     "/api/canvas-assets": {

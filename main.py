@@ -110,6 +110,8 @@ from app.api.routers.generate import create_router as create_generate_router  # 
 from app.api.routers.shared_folders import create_router as create_shared_folders_router  # noqa: E402
 from app.api.routers.smart_canvas import create_router as create_smart_canvas_router  # noqa: E402
 from app.api.routers.canvas_llm import create_router as create_canvas_llm_router  # noqa: E402
+# --- 权限 PR-3 · auth router (Wave 3-N.9 Batch 1 主线 B) --------------------
+from app.api.routers.auth import create_auth_router  # noqa: E402
 # ---------------------------------------------------------------------------
 import json
 import uuid
@@ -18584,6 +18586,11 @@ app.include_router(
         generate_dto=GenerateRequest,
     )
 )
+
+# --- 权限 PR-3 · auth router (Wave 3-N.9 Batch 1 主线 B) --------------------
+# 认证入口骨架：/api/auth/login /api/auth/logout /api/auth/whoami
+# 默认关闭 flag：AUTH_ENABLED=false (GM-22 defaults-off pattern 第 9 次复用)。
+app.include_router(create_auth_router())
 
 if __name__ == "__main__":
     # --- 数据模型治理 PR-1：`python main.py migrate [head|<rev>]` CLI ------

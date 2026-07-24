@@ -49,6 +49,7 @@ from app.db.base import metadata as target_metadata  # noqa: E402
 # 顺序敏感：外键引用者晚于被引用者，本 PR 单一文件无顺序问题。
 import app.task.tables  # noqa: E402,F401
 import app.data_import.tables  # noqa: E402,F401
+import app.services.auth.tables  # noqa: E402,F401
 
 # 读时求值 URL；覆盖 alembic.ini 中的 `${DB_URL}` 占位符
 from app.db.engine import get_database_url  # noqa: E402

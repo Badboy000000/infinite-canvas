@@ -1,0 +1,1 @@
+"""tests/auth 包（权限 PR-3 · Wave 3-N.9 Batch 1 主线 B）。"""
