@@ -36,6 +36,10 @@ class InProcessDispatcher:
     async def cancel(
         self, task_id: str, scope: CancelScope
     ) -> CancelResult:
+        # PR-8 · 三层取消语义传递:local / upstream / attention 均先在本地
+        # 调用 TaskService.cancel(内部走状态机)· accepted=True 表示本地已
+        # 记录 cancel_requested;upstream 是否真取消由 Provider adapter 承接
+        # (cancel_scope 声明能力 · 见 Provider 专题)。
         task = self.service.cancel(task_id)
         return CancelResult(task=task, scope=scope, accepted=True)
 
