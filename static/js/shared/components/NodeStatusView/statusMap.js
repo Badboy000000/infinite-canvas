@@ -4,13 +4,18 @@
 //
 // **Canonical 状态值来源（硬约束）**：
 //   `app/task/view/provider_view.py::KNOWN_VIEW_STATUSES` frozenset
-//     = {"queued", "running", "succeeded", "failed", "cancelled", "waiting_upstream"}
+//     = {"queued", "running", "succeeded", "failed", "cancelled", "waiting_upstream", "rate_limited"}
+//
+//   **CB-P5-35 承接**(2026-07-24):Provider PR-A(a3565f7 · Wave 3-N.5 Batch 4
+//   主线 B)引入 rate_limit 通道时,后端 mapper 加了 `rate_limited` 第 7 项,
+//   但前端 seam `CANONICAL_STATUSES` 未同步 → 3 层契约漂移(mapper ↔ 前端
+//   canonical 表 ↔ fixture 语料)。本次补齐。
 //
 // **Legacy alias（视觉契约兼容）**：
 //   canvas.js 长期使用 4 值口径 `{queued, running, done, failed}`；`done` 对应
 //   canonical `succeeded`。为了让 status badge 迁移前后**视觉字节等价**（含
 //   `.node-run-status.done { display:none }` CSS 规则），本表同时导出：
-//     - `CANONICAL_STATUSES`：6 canonical（对齐后端 view 层）
+//     - `CANONICAL_STATUSES`：7 canonical（对齐后端 view 层)
 //     - `LEGACY_STATUS_ALIASES`：`done` → `succeeded`
 //     - `resolveStatus(input)`：先走 alias，再匹配 canonical
 //
@@ -19,7 +24,7 @@
 //   - **只做映射，不做 DOM**（DOM 组装在 index.js）
 //   - 未知状态返回 `null`（由调用方决定 fallback 分支）
 
-// Canonical 6 值（严格对齐 KNOWN_VIEW_STATUSES；不允许漂移）。
+// Canonical 7 值（严格对齐 KNOWN_VIEW_STATUSES；不允许漂移）。
 export const CANONICAL_STATUSES = Object.freeze([
     'queued',
     'running',
@@ -27,6 +32,7 @@ export const CANONICAL_STATUSES = Object.freeze([
     'failed',
     'cancelled',
     'waiting_upstream',
+    'rate_limited',
 ]);
 
 // legacy → canonical 别名。仅一条 alias：canvas.js legacy `done` 词面。
@@ -78,6 +84,11 @@ export const STATUS_MAP = Object.freeze({
         cssClass: 'waiting-upstream',
         labelZh: '等待上游',
         iconChar: 'link',
+    }),
+    rate_limited: Object.freeze({
+        cssClass: 'rate-limited',
+        labelZh: '限流中',
+        iconChar: 'clock-alert',
     }),
 });
 

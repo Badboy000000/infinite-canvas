@@ -71,21 +71,25 @@ def test_project_import_reconcile_idempotent(monkeypatch, tmp_path):
     with _isolated_db(monkeypatch, tmp_path) as db:
         from app.data_import import import_domain, reconcile_domain
 
+        # migration 0006_identity 预置 `__default__` seed 行(identity 层需要)
+        # · 此 seed 不来自 JSON · 由 alembic 迁移写入 · 见 CB-P5-34 承接说明。
+        assert _row_count(db, "projects") == 1  # seed 行
+
         first = import_domain("project", source_path=str(projects_path))
         assert first.inserted == 2
         assert first.skipped == 0
-        assert _row_count(db, "projects") == 2
+        assert _row_count(db, "projects") == 3  # seed + 2 imported
 
         report = reconcile_domain("project")
         # reconcile 读的是 store.snapshot() 默认路径。改为按 legacy_id 断言，
         # 我们用 `source_path=None` 走 store → PROJECTS_PATH 也已 monkeypatch。
-        assert report.counts["db"] == 2
+        assert report.counts["db"] == 3  # seed + 2 imported
         assert report.missing == []
 
         second = import_domain("project", source_path=str(projects_path))
         assert second.inserted == 0
         assert second.skipped == 2
-        assert _row_count(db, "projects") == 2
+        assert _row_count(db, "projects") == 3
 
 
 # ---------------------------------------------------------------------------
@@ -303,16 +307,21 @@ def test_dry_run_does_not_persist(monkeypatch, tmp_path):
     with _isolated_db(monkeypatch, tmp_path) as db:
         from app.data_import import import_domain
 
+        # migration 0006_identity 预置 `__default__` seed(见 CB-P5-34 承接)。
+        # dry_run 语义:候选 = JSON 侧 1 项;DB 侧行数不应变(仍是 1 = seed)。
+        baseline = _row_count(db, "projects")
+        assert baseline == 1  # seed 行
+
         outcome = import_domain("project", source_path=str(projects_path), dry_run=True)
         assert outcome.dry_run is True
-        # dry-run 应该报告可插入数，但 DB 未提交
+        # dry-run 应该报告可插入数，但 DB 未提交(行数保持 baseline)
         assert outcome.candidate_count == 1
-        assert _row_count(db, "projects") == 0
+        assert _row_count(db, "projects") == baseline
 
-        # 之后真跑一次，验证 DB 空表 → 落 1 行（说明 dry_run 未把 legacy_id 提交）
+        # 之后真跑一次，验证 seed 之上多落 1 行(说明 dry_run 未把 legacy_id 提交)
         real = import_domain("project", source_path=str(projects_path))
         assert real.inserted == 1
-        assert _row_count(db, "projects") == 1
+        assert _row_count(db, "projects") == baseline + 1
 
 
 def test_unknown_domain_rejected():

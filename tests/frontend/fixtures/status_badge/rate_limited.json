@@ -1,0 +1,12 @@
+{
+  "input_status": "rate_limited",
+  "expected_css_class": "rate-limited",
+  "expected_label_zh": "限流中",
+  "expected_html_contains": ["node-run-status rate-limited", "限流中"],
+  "note": "canonical `rate_limited` (underscore) → CSS class `rate-limited` (dash) — canonical-to-CSS class convention; Provider PR-A(a3565f7 · Wave 3-N.5 Batch 4 主线 B) 引入的 KNOWN_VIEW_STATUSES 第 7 项,前端 seam 补齐契约(CB-P5-35 承接)",
+  "expected_no_escape_bypass": {
+    "sentinel_input": "rate_limited<script>alert(1)</script>",
+    "must_contain_escaped": ["&lt;script&gt;"],
+    "must_not_contain": ["<script>alert(1)</script>"]
+  }
+}

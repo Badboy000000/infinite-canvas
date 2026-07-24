@@ -345,6 +345,16 @@ def _load_db_snapshot(domain: str) -> dict[str, dict[str, Any]]:
         legacy_id = mapping.get("legacy_id")
         if legacy_id is None:
             continue
+        # **CB-P5-36 承接**(2026-07-24 · Wave 3-N.7 收官清账):
+        # migration `0006_identity` 在 projects 表预置 `__default__` seed 行(供
+        # identity 层 default_project 引用 · 见 `app/db/migrations/versions/0006_identity.py`
+        # L223-234)。此 seed 行不来自 JSON 主写通道 · shadow_read 是对账 JSON ↔
+        # DB **用户数据** · 应过滤 seed 行 · 否则 project 域 shadow_read 永远误报
+        # `missing_in_json = ['__default__']`。跨 domain 影响面已扫:只有 project
+        # 域受此 seed 影响(prompt_library / workflow_definition / asset_library /
+        # canvas 4 domain 无 identity 预置 · 走过 shadow_read 全量 pass)。
+        if domain == "project" and str(legacy_id) == "__default__":
+            continue
         record = _project_db_row_to_stable(domain, mapping)
         out[str(legacy_id)] = record
     return out
