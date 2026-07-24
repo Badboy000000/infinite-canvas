@@ -22,6 +22,7 @@ from app.identity.request_context import AuthMode, RequestContext
 
 
 EXPECTED_FIELDS: list[str] = [
+    # Wave 0 最小契约（9 字段 · 权限 PR-0 冻结 · 位置 + 名字 + 类型不许改）
     "request_id",
     "legacy_user_key",
     "x_user_id",
@@ -31,19 +32,34 @@ EXPECTED_FIELDS: list[str] = [
     "ip",
     "user_agent",
     "auth_mode",
+    # 权限 PR-3 尾附加长期字段（4 字段 · 全部 Optional 带默认值 · 只增不改
+    # · PR-0 docstring 显式允许："长期字段（principal_kind / scopes /
+    # session_id / api_key_id）由 PR-3 / PR-4 落地时另加"）
+    "principal_kind",
+    "scopes",
+    "session_id",
+    "api_key_id",
 ]
 
 
 def test_request_context_field_names_frozen() -> None:
     actual = [f.name for f in dataclasses.fields(RequestContext)]
     assert actual == EXPECTED_FIELDS, (
-        "RequestContext 字段清单已被协调纲要冻结；擅自增删字段视为破坏 Wave 0 "
-        "字段冻结契约。"
+        "RequestContext 字段清单已被协调纲要冻结（Wave 0 前 9 字段 + 权限 PR-3 "
+        "尾附加 4 长期字段）；擅自增删字段视为破坏冻结契约。扩字段规则："
+        "只允许尾附加带默认值的新长期字段，前 9 字段位置永久锁定。"
     )
 
 
-def test_request_context_field_count_is_nine() -> None:
-    assert len(dataclasses.fields(RequestContext)) == 9
+def test_request_context_field_count_is_thirteen() -> None:
+    """字段总数 = 9(Wave 0)+ 4(权限 PR-3 长期字段)= 13"""
+    assert len(dataclasses.fields(RequestContext)) == 13
+
+
+def test_request_context_wave0_first_nine_fields_frozen() -> None:
+    """Wave 0 最小契约:前 9 字段位置 + 名字 + 类型永久冻结"""
+    actual_first_nine = [f.name for f in dataclasses.fields(RequestContext)][:9]
+    assert actual_first_nine == EXPECTED_FIELDS[:9]
 
 
 def test_request_context_is_frozen() -> None:
