@@ -47,6 +47,15 @@ from app.security.pillow_guard import (
     estimate_pixel_bytes,
     is_pillow_guard_enforce_enabled,
 )
+from app.security.cors import (
+    CORS_MODE_AWARE_ENABLED_ENV,
+    CorsPolicy,
+    DEFAULT_CORS_POLICY,
+    DeploymentMode,
+    build_cors_policy,
+    is_cors_mode_aware_enabled,
+    parse_allowed_origins,
+)
 
 __all__ = [
     # upload_guard
@@ -77,4 +86,12 @@ __all__ = [
     "check_image_dimensions",
     "estimate_pixel_bytes",
     "is_pillow_guard_enforce_enabled",
+    # cors
+    "CORS_MODE_AWARE_ENABLED_ENV",
+    "CorsPolicy",
+    "DEFAULT_CORS_POLICY",
+    "DeploymentMode",
+    "build_cors_policy",
+    "is_cors_mode_aware_enabled",
+    "parse_allowed_origins",
 ]

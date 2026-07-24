@@ -1,0 +1,8 @@
+{
+  "provider_id": "openai",
+  "status": "succeeded",
+  "upstream_task_id": "task-abc-123",
+  "outputs_count": 1,
+  "outputs_first_url": "https://cdn.example.com/img/abc-123.png",
+  "remote_status": "succeeded"
+}

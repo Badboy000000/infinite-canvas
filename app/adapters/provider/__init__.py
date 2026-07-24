@@ -30,6 +30,24 @@ from app.adapters.provider.status import (
     provider_view_status_to_task_status,
     task_status_to_provider_view_status,
 )
+from app.adapters.provider.mappers import (
+    canvas_task_payload_to_view,
+    comfyui_payload_to_view,
+    generic_image_payload_to_view,
+    jimeng_payload_to_view,
+    runninghub_payload_to_view,
+    video_payload_to_view,
+)
+from app.adapters.provider.classifiers import (
+    classify_chat_error,
+    classify_generic_image_error,
+    classify_jimeng_error,
+    classify_runninghub_error,
+    classify_video_error,
+    is_retryable,
+)
+from app.adapters.provider import error_messages_zh
+from app.adapters.provider import schema_v2
 
 __all__ = [
     "BaseAdapter",

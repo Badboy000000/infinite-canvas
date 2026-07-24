@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "task_id": "task-rtl-456",
+  "error": {
+    "code": "rate_limit_exceeded",
+    "message": "Rate limit exceeded. Please try again in 30 seconds."
+  },
+  "http_status": 429
+}
