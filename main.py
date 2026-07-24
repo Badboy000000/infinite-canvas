@@ -15464,9 +15464,25 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
     headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"}
     return Response(buffer.getvalue(), media_type="application/zip", headers=headers)
 
+_WINDOWS_RESERVED_NAMES = frozenset({
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+})
+
+
 def sanitize_export_filename(name: str, fallback: str) -> str:
-    base = os.path.basename(str(name or "").strip()) or fallback
+    """PR-4a.1 CB-P5-25 承接 · 显式防御深度补齐:
+    - null byte(\\x00)剥离(避免 posix path 截断 + Windows 层 ValueError)
+    - Windows 保留名(CON/PRN/AUX/NUL/COM1-9/LPT1-9)加下划线前缀
+    - 原有:basename 化 + `\\/:*?"<>|` 类字符替换为下划线
+    """
+    raw = str(name or "").replace("\x00", "").strip()
+    base = os.path.basename(raw) or fallback
     base = re.sub(r'[\\/:*?"<>|]+', "_", base)
+    stem = base.split(".", 1)[0].upper() if "." in base else base.upper()
+    if stem in _WINDOWS_RESERVED_NAMES:
+        base = "_" + base
     return base or fallback
 
 def canvas_workflow_collect_resource_refs(value, found=None):

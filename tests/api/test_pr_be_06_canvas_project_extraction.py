@@ -799,16 +799,19 @@ def _build_project_workspace(tmp_path):
     - `canvas_dir`:tmp_path / "canvases" · 真实目录,测试写 JSON 到这里
     - `projects_ref`:list · in-memory 项目列表,ensure_default_project 归还
       live reference(允许 service 通过 store.save_projects 回写 mutation)
-    - `build_service(default_missing=False)`:构造 ProjectService,`ensure_
-      default_project` mimic main.py 语义 · 若 default 不在 projects_ref
-      则自动 insert(与 `main.ensure_default_project` 逐字节等价)
+    - `build_service(monkeypatch=None)`:构造 ProjectService。
+      * 未传 monkeypatch(默认):`_ensure_default` 使用 mimic(向后兼容)
+      * 传 monkeypatch:**CB-P5-26 承接** · `_ensure_default` 直接调用产品
+        `main.ensure_default_project` · 通过 monkeypatch 注入 `main.project_store`
+        的 load_projects / save_projects 到本 in-memory ref · 使断言强度落到
+        产品函数层 · 若产品函数漂移则测试立即 fail(而非 mimic 静默通过)。
     """
 
     canvas_dir = tmp_path / "canvases"
     canvas_dir.mkdir(parents=True, exist_ok=True)
     projects_ref: list[dict[str, Any]] = []
 
-    def build_service():
+    def build_service(monkeypatch=None):
         from app.modules.project.service import ProjectService
 
         fake_store = MagicMock()
@@ -819,15 +822,35 @@ def _build_project_workspace(tmp_path):
 
         fake_store.save_projects = _save_projects
 
-        def _ensure_default():
-            # mimic main.ensure_default_project 逐字节:default 不存在时插入到头部
-            if not any(p.get("id") == "default" for p in projects_ref):
-                projects_ref.insert(0, {
-                    "id": "default", "name": "默认项目", "order": 0,
-                    "created_at": 1000, "updated_at": 1000,
-                })
-                fake_store.save_projects(list(projects_ref))
-            return projects_ref
+        if monkeypatch is not None:
+            # CB-P5-26 · 走真实产品函数 · monkeypatch 注入 project_store 读写通道
+            import main as main_mod
+
+            def _load_projects_real():
+                return list(projects_ref)
+
+            def _save_projects_real(p):
+                projects_ref.clear()
+                projects_ref.extend(p)
+
+            monkeypatch.setattr(
+                main_mod.project_store, "load_projects", _load_projects_real
+            )
+            monkeypatch.setattr(
+                main_mod.project_store, "save_projects", _save_projects_real
+            )
+
+            _ensure_default = main_mod.ensure_default_project
+        else:
+            def _ensure_default():
+                # mimic main.ensure_default_project 逐字节:default 不存在时插入到头部
+                if not any(p.get("id") == "default" for p in projects_ref):
+                    projects_ref.insert(0, {
+                        "id": "default", "name": "默认项目", "order": 0,
+                        "created_at": 1000, "updated_at": 1000,
+                    })
+                    fake_store.save_projects(list(projects_ref))
+                return projects_ref
 
         return ProjectService(
             store=fake_store,
@@ -903,11 +926,14 @@ def test_t220_delete_project_migrates_canvases_to_default(tmp_path) -> None:
     assert result == {"ok": True, "moved": 2}
 
 
-def test_t221_delete_project_when_default_missing_creates_default(tmp_path) -> None:
+def test_t221_delete_project_when_default_missing_creates_default(tmp_path, monkeypatch) -> None:
     """T221 · default project 缺失时删除非 default · 应先建 default · 再迁移。
 
+    **CB-P5-26 承接**:build_service(monkeypatch) 走**真实产品 main.ensure_default_project**
+    · 不再走测试文件内 mimic · 若产品函数漂移则测试立即 fail(而非静默通过)。
+
     STRONG:直接读 canvas JSON · 断言 `project == "default"` + projects_ref
-    最终包含 default 记录(由 ensure_default_project 兜底创建)。
+    最终包含 default 记录(由 **产品函数** ensure_default_project 兜底创建)。
     """
 
     from app.modules.project.commands import ProjectDeleteCommand
@@ -919,12 +945,13 @@ def test_t221_delete_project_when_default_missing_creates_default(tmp_path) -> N
     ]
     _write_canvas_json(canvas_dir, "c1", "A")
 
-    service = build_service()
+    # CB-P5-26 · 注入真实产品 ensure_default_project(monkeypatch project_store)
+    service = build_service(monkeypatch=monkeypatch)
     result = service.delete_project(ProjectDeleteCommand(project_id="A"))
 
-    # 事实断言:default 已被 ensure_default_project 兜底创建
+    # 事实断言:default 已被 **产品** ensure_default_project 兜底创建
     assert any(p.get("id") == "default" for p in projects_ref), (
-        "default project 应由 ensure_default_project 兜底创建"
+        "default project 应由产品 main.ensure_default_project 兜底创建"
     )
     # 事实断言:c1 已迁移到 default
     assert _read_canvas_json(canvas_dir, "c1")["project"] == "default"

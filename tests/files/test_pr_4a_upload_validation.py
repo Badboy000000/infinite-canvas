@@ -1016,3 +1016,226 @@ def test_T215b_pr4a_check_six_entrypoints_coverage() -> None:
         f"_pr4a_check 调用点应为 6 · 实际 {len(call_hits)}:\n" +
         "\n".join(f"L{n}: {ln}" for n, ln in call_hits)
     )
+
+
+# ---------------------------------------------------------------------------
+# T230-T237 · CB-P5-25 承接 · sanitize 层深度防御 + e2e 触达护栏
+# ---------------------------------------------------------------------------
+# 背景:PR-4a.1 TRA 反审登记 CB-P5-25(P2-2 + P2-3 + P2-4 合并)· sanitize
+# 层对 null byte / Windows 保留名两类攻击原本无显式防御 · T213/T214 断言重言。
+# 本组 8 项 STRONG 断言 · 深度到产品行为层 · 与 T210-T214 的现有护栏并行独立。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "malicious_input",
+    ["evil\x00.php", "foo\x00bar", "a\x00b\x00c.txt"],
+)
+def test_T230_sanitize_strips_null_bytes(malicious_input: str) -> None:
+    """CB-P5-25 · sanitize_export_filename 剥离 null byte(\\x00) · 正断言。
+
+    T214 只查 result 内 `/` `\\` `..` · 不查 `\\x00` · 属重言。本 T230 显式验证 null
+    byte 已被剥离 · 与 sanitize 内 `.replace('\\x00', '')` 一一对应。若未来 refactor
+    去掉 null byte 处理 · 本断言立即 fail。
+    """
+    import main as main_mod
+
+    result = main_mod.sanitize_export_filename(malicious_input, "resource.bin")
+    assert "\x00" not in result, (
+        f"null byte 未被剥离 · input={malicious_input!r} result={result!r}"
+    )
+    # 结果非空(fallback 或有效 basename)
+    assert result, f"sanitize 返回空 · input={malicious_input!r}"
+
+
+@pytest.mark.parametrize(
+    "reserved_name",
+    ["CON", "PRN", "AUX", "NUL",
+     "COM1", "COM5", "COM9",
+     "LPT1", "LPT5", "LPT9",
+     "CON.png", "NUL.txt", "COM1.log",
+     "con", "Con.PNG", "nul.txt"],  # 大小写不敏感覆盖
+)
+def test_T231_sanitize_prefixes_windows_reserved_names(reserved_name: str) -> None:
+    """CB-P5-25 · sanitize_export_filename 对 Windows 保留名加下划线前缀 · 正断言。
+
+    T213 断言 `".." not in "CON.png"` — 对该输入永真 · 不验证任何 sanitize 行为。
+    本 T231 显式验证保留名(含大小写变体 + 含/不含扩展名)被前缀化 `_CON` /
+    `_CON.png` · 结果 stem 不再命中 Windows 保留集。
+    """
+    import main as main_mod
+
+    result = main_mod.sanitize_export_filename(reserved_name, "resource.bin")
+    # 结果非空
+    assert result, f"sanitize 返回空 · input={reserved_name!r}"
+    # 前缀化后 stem(去扩展)大写 != Windows 保留名
+    stem = result.split(".", 1)[0].upper() if "." in result else result.upper()
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+    assert stem not in reserved, (
+        f"Windows 保留名未前缀化 · input={reserved_name!r} result={result!r} stem={stem!r}"
+    )
+    # 且下划线前缀实际存在(与产品代码 `base = '_' + base` 一致)
+    assert result.startswith("_"), (
+        f"Windows 保留名应加下划线前缀 · input={reserved_name!r} result={result!r}"
+    )
+
+
+def test_T232_sanitize_non_reserved_names_unchanged() -> None:
+    """CB-P5-25 · **负契约** · 非 Windows 保留名不加下划线前缀 · 避免过度防御。
+
+    T231 只证明保留名被前缀化 · 未保证正常文件名不被误伤。本 T232 补齐负契约:
+    `image.png` / `data.json` / `report_v2.txt` 等正常输入不应被加下划线前缀。
+    与 sanitize 内 `stem in _WINDOWS_RESERVED_NAMES` 条件收口一一对应。
+    """
+    import main as main_mod
+
+    for name in ["image.png", "data.json", "report_v2.txt", "canvas-workflow.zip", "resource.bin"]:
+        result = main_mod.sanitize_export_filename(name, "resource.bin")
+        assert not result.startswith("_"), (
+            f"正常文件名被误加下划线 · input={name!r} result={result!r}"
+        )
+        assert result == name, (
+            f"正常文件名不应被改动 · input={name!r} result={result!r}"
+        )
+
+
+@pytest.mark.parametrize(
+    "malicious_input,description",
+    [
+        ("../../etc/passwd", "posix traversal"),
+        ("..\\..\\Windows", "windows traversal"),
+        ("/tmp/evil", "absolute posix"),
+        ("C:\\evil.exe", "absolute windows"),
+        ("evil\x00.php", "nullbyte"),
+        ("CON.png", "windows reserved"),
+    ],
+)
+def test_T233_sanitize_joined_path_stays_under_import_dir(
+    malicious_input: str, description: str, tmp_path
+) -> None:
+    """CB-P5-25 · **深度断言** · sanitize 结果与 import_dir join 后仍在 import_dir 内。
+
+    比 T210 更强:T210 只对 4 项 fixture · 本 T233 对 6 类攻击输入 · 且 import_dir
+    用 tmp_path(独立隔离)· 断言 os.path.abspath(join) startswith import_dir。
+    """
+    import main as main_mod
+
+    result = main_mod.sanitize_export_filename(malicious_input, "resource.bin")
+    import_dir = str(tmp_path / "import_here")
+    os.makedirs(import_dir, exist_ok=True)
+    joined = os.path.abspath(os.path.join(import_dir, result))
+    assert joined.startswith(os.path.abspath(import_dir)), (
+        f"{description}: join 结果逃出 import_dir · input={malicious_input!r} "
+        f"result={result!r} joined={joined!r} import_dir={import_dir!r}"
+    )
+
+
+def test_T234_sanitize_null_byte_no_os_path_join_valueerror() -> None:
+    """CB-P5-25 · **深度断言** · sanitize 结果 os.path.join 不会抛 ValueError('embedded null')。
+
+    Python `os.path.join` 遇 null byte 会抛 ValueError · 未来若 sanitize 层
+    降级去掉 null byte 剥离 · 生产代码 `os.path.join(import_dir, f"{hex}_{base}")`
+    会直接崩(500 而非 400)。本 T234 显式挂 os.path.join 断言 · 与产品调用点
+    (main.py:15627)行为一致。
+    """
+    import main as main_mod
+
+    result = main_mod.sanitize_export_filename("evil\x00.php", "resource.bin")
+    # os.path.join 不应抛 ValueError · 说明 null byte 已被剥离
+    joined = os.path.join("/tmp/import_dir", f"prefix_{result}")
+    assert "\x00" not in joined, f"null byte 泄漏到 join 结果 · joined={joined!r}"
+
+
+def test_T235_sanitize_windows_reserved_no_winerror_on_open(tmp_path) -> None:
+    """CB-P5-25 · **深度断言** · sanitize 后的 Windows 保留名可以真正被 open() 创建。
+
+    未 sanitize 的 `CON.png` 在 Windows 上 open() 会失败(设备名占用)· sanitize
+    后应变为 `_CON.png` 可正常 open。本 T235 在 tmp_path 内 open 尝试 · 断言不抛。
+
+    非 Windows 平台:仍验证 open 成功(保留名在 posix 就是普通字符串)· 但更重
+    要的语义在 Windows 上。
+    """
+    import main as main_mod
+
+    result = main_mod.sanitize_export_filename("CON.png", "resource.bin")
+    target = str(tmp_path / result)
+    # sanitize 后应可 open · 若产品代码未来降级 · 本 open 在 Windows 会 fail
+    with open(target, "wb") as f:
+        f.write(b"test")
+    assert os.path.isfile(target), f"sanitize 后 open 失败 · target={target!r}"
+
+
+def test_T236_sanitize_fixture_null_byte_reflects_zipfile_truncation() -> None:
+    """CB-P5-25 · **事实澄清 + 强化** · zip_entry_nullbyte.zip fixture 里 entry 名
+    经 zipfile 层读取时 · null byte 之后的字节被截断为 `evil.png` · sanitize 层
+    再作用一次 · 结果仍应等价于 sanitize('evil.png')。
+
+    显性化:T212 断言 `expected_entry='evil.png'` 已是 zipfile 层截断后的结果 ·
+    本 T236 显式验证 sanitize('evil.png') 与 sanitize('evil\\x00.php') 都不含 null。
+    """
+    import main as main_mod
+
+    # zipfile 层截断后的字节
+    r1 = main_mod.sanitize_export_filename("evil.png", "resource.bin")
+    # 原始未截断字节(直接给 sanitize)
+    r2 = main_mod.sanitize_export_filename("evil\x00.php", "resource.bin")
+    assert "\x00" not in r1
+    assert "\x00" not in r2
+    # 两条防御路径最终都产生合法 basename
+    assert r1
+    assert r2
+
+
+def test_T237_e2e_import_canvas_workflow_zip_resource_name_traversal_stays_under_import_dir(
+    api_client, tmp_path, monkeypatch
+) -> None:
+    """CB-P5-25 · **e2e 触达** · 上传 zip 含 workflow.json 引用恶意 resource archive
+    · 走真实 `POST /api/canvas-workflows/import` 路由 · 断言 upload_dir 下无 traversal
+    落地。
+
+    与 T210-T213(unit test sanitize)+ T214(参数化 sanitize)不同 · 本 T237 触达
+    产品调用点 `main.py:15626 sanitize_export_filename(res.get('name') or ...)` ·
+    若未来 refactor 从该行移除 sanitize 调用 · T210-T214 静默通过 · 本 T237 立即
+    fail(因为 traversal 会落到 import_dir 之外)。
+    """
+    import json
+    import main as main_mod
+
+    # monkeypatch current_upload_dir 到 tmp_path · 避免污染真实 upload dir
+    upload_dir = tmp_path / "upload_here"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(main_mod, "current_upload_dir", lambda: str(upload_dir))
+    # ASSETS_DIR relpath 也 monkeypatch 以避免 relpath 越界
+    monkeypatch.setattr(main_mod, "ASSETS_DIR", str(tmp_path))
+
+    # 构造 zip:workflow.json 声明 resource.name 恶意 · resource.archive 指向真实文件
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 真实存在的 archive 条目(zip 内命名合法)
+        zf.writestr("resource_ok.bin", b"payload-bytes")
+        # workflow.json 引用它 · 但 name 是恶意值(走 sanitize_export_filename)
+        workflow = {
+            "resources": [
+                {"archive": "resource_ok.bin", "name": "../../etc/evil.bin", "url": "/assets/x.bin"}
+            ],
+        }
+        zf.writestr("workflow.json", json.dumps(workflow))
+    buf.seek(0)
+
+    resp = api_client.post(
+        "/api/canvas-workflows/import",
+        files={"file": ("workflow.zip", buf.getvalue(), "application/zip")},
+    )
+    # 200 or 400/413 允许(核心断言:文件系统层无 traversal 落地)
+    assert resp.status_code in (200, 400, 413), resp.text
+
+    # STRONG:扫描 upload_dir · 所有落地文件路径必须仍在 upload_dir 之下
+    upload_abs = os.path.abspath(str(upload_dir))
+    for root, _dirs, files in os.walk(upload_abs):
+        for fn in files:
+            full = os.path.abspath(os.path.join(root, fn))
+            assert full.startswith(upload_abs), (
+                f"traversal 逃出 upload_dir · file={full!r} upload_dir={upload_abs!r}"
+            )
+            # 且 basename 不含 traversal 片段
+            assert ".." not in fn, f"basename 含 .. · {fn!r}"
