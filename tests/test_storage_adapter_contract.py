@@ -1,8 +1,17 @@
-"""StorageAdapter 契约测试（文件对象与 MinIO 治理 PR-1）。
+"""StorageAdapter 契约测试（文件对象与 MinIO 治理 PR-1 / PR-3）。
 
 参数化 fixture：`adapter` 参数化到 `LocalDirAdapter` 与 `MinioAdapter`
-两个后端；后者用 `pytest.mark.skip(reason="pending PR-8")` 占位——
-PR-8 落地 MinioAdapter 时，同一份契约测试直接对上。
+两个后端。
+
+- `local` 分支：CI 默认跑，保留 PR-1 全部契约。
+- `minio` 分支：由环境变量 `MINIO_INTEGRATION=1` 门控（默认 skip）。
+  开发者本地跑集成测试时设置：
+      MINIO_INTEGRATION=1
+      MINIO_ENDPOINT=http://localhost:9000
+      MINIO_ACCESS_KEY=...
+      MINIO_SECRET_KEY=...
+      MINIO_BUCKET=infinite-canvas-test
+  单元测试（不需真连）见 `tests/files/test_minio_adapter_unit.py`。
 
 覆盖：
 - 写入-读回
@@ -33,8 +42,15 @@ from app.adapters.storage.local_dir import LocalDirAdapter
 
 
 # ---------------------------------------------------------------------------
-# fixture 参数化：Local + Minio（后者 skip）
+# fixture 参数化：Local + Minio（后者由 MINIO_INTEGRATION env 门控）
 # ---------------------------------------------------------------------------
+
+
+_MINIO_INTEGRATION = os.environ.get("MINIO_INTEGRATION", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 
 BACKENDS = [
@@ -42,7 +58,10 @@ BACKENDS = [
     pytest.param(
         "minio",
         id="minio",
-        marks=pytest.mark.skip(reason="pending PR-8"),
+        marks=pytest.mark.skipif(
+            not _MINIO_INTEGRATION,
+            reason="set MINIO_INTEGRATION=1 to run MinioAdapter contract tests",
+        ),
     ),
 ]
 
@@ -52,8 +71,10 @@ def adapter(request, tmp_path: Path) -> StorageAdapter:
     backend = request.param
     if backend == "local":
         return LocalDirAdapter(root=tmp_path, url_prefix="/assets")
-    if backend == "minio":  # pragma: no cover - PR-8 承接
-        raise RuntimeError("MinioAdapter pending PR-8")
+    if backend == "minio":  # pragma: no cover - 需要真 MinIO 集成环境
+        from app.adapters.storage.minio_adapter import build_minio_adapter_from_env
+
+        return build_minio_adapter_from_env()
     raise RuntimeError(f"unknown backend {backend!r}")
 
 
@@ -411,3 +432,15 @@ def test_local_dir_module_does_not_import_main():
     for name, value in vars(local_mod).items():
         module = getattr(value, "__module__", None)
         assert module != "main", f"local_dir.{name} 意外来自 main"
+
+
+def test_minio_adapter_module_does_not_import_main():
+    """MinioAdapter 模块级契约层不许出现 main 引用。
+
+    本断言强制在 import 后立即成立；导入 minio_adapter 本身应无副作用。
+    """
+    import app.adapters.storage.minio_adapter as minio_mod
+
+    for name, value in vars(minio_mod).items():
+        module = getattr(value, "__module__", None)
+        assert module != "main", f"minio_adapter.{name} 意外来自 main"
