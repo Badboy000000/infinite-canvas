@@ -3721,7 +3721,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "title": "Response Canvas Llm Api Canvas Llm Post"
+                }
               }
             },
             "description": "Successful Response"
@@ -4962,7 +4964,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "title": "Response Generate Api Generate Post"
+                }
               }
             },
             "description": "Successful Response"
@@ -5796,7 +5800,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "title": "Response Ms Generate Api Ms Generate Post"
+                }
               }
             },
             "description": "Successful Response"
@@ -7060,7 +7066,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "title": "Response Register Shared Folder Api Shared Folders Post"
+                }
               }
             },
             "description": "Successful Response"
@@ -7096,7 +7104,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "title": "Response Import Shared Folder Files Api Shared Folders Import Post"
+                }
               }
             },
             "description": "Successful Response"
@@ -7253,7 +7263,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "title": "Response Export Smart Canvas Group Api Smart Canvas Group Export Post"
+                }
               }
             },
             "description": "Successful Response"
@@ -8010,7 +8022,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "title": "Response Generate Cloud Generate Post"
+                }
               }
             },
             "description": "Successful Response"
